@@ -34,6 +34,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 	}
 
 	switch ctx.lang.Name {
+	case "ada":
+		normalizeAdaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "apex":
 		normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "authzed":
