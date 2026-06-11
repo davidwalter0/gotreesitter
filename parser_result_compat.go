@@ -107,6 +107,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "just":
 		normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang)
+	case "ledger":
+		normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "kotlin":
 		normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "lua":
