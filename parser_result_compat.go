@@ -158,6 +158,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeSchemeCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "solidity":
 		normalizeSolidityMemberObjectWrappers(ctx.root, ctx.lang)
+		normalizeSolidityCallExpressionAliases(ctx.root, ctx.lang)
 	case "sql":
 		normalizeSQLRecoveredSelectRoot(ctx.root, ctx.lang)
 		normalizeSQLTrailingSelectListError(ctx.root, ctx.lang)
