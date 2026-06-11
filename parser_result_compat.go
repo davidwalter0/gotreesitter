@@ -115,6 +115,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeNickelCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "nginx":
 		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
+	case "ninja":
+		normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "nim":
 		normalizeNimTopLevelCallEnd(ctx.root, ctx.source, ctx.lang)
 	case "pascal":
