@@ -172,6 +172,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeSvelteTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "swift":
 		normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+	case "wolfram":
+		normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "tsx", "typescript":
 		normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "yaml":
