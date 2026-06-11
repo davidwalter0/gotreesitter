@@ -72,6 +72,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "elixir":
 		normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "enforce":
+		normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ebnf":
 		normalizeEBNFCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "eds":
