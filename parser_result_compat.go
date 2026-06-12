@@ -127,6 +127,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "lua":
 		normalizeLuaChunkLocalDeclarationFields(ctx.root, ctx.source, ctx.lang)
+	case "luau":
+		normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "make":
 		normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang)
 	case "nickel":
