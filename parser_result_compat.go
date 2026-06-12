@@ -96,6 +96,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "fortran":
 		normalizeFortranStatementLineBreaks(ctx.root, ctx.source, ctx.lang)
 		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
+	case "fsharp":
+		normalizeFSharpCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "forth":
 		normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "fidl":
