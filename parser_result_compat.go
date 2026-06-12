@@ -109,6 +109,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 		normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "http":
 		normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "hyprlang":
+		normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
 		normalizeIniCompatibility(ctx.root, ctx.lang)
 	case "java":
