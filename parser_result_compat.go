@@ -7,30 +7,37 @@ type resultCompatibilityContext struct {
 	lang   *Language
 }
 
+type resultCompatibilityResult struct {
+	iniMypyEnableErrorContinuation bool
+	iniContinuationStart           uint32
+	iniContinuationEnd             uint32
+}
+
 // normalizeResultCompatibility applies narrow post-build tree rewrites that
 // keep gotreesitter output aligned with C tree-sitter and existing recovery
 // expectations for grammars with known normalization gaps.
-func normalizeResultCompatibility(root *Node, source []byte, p *Parser) {
+func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCompatibilityResult {
 	var lang *Language
 	if p != nil {
 		lang = p.language
 	}
 	if root == nil || lang == nil {
-		return
+		return resultCompatibilityResult{}
 	}
-	runLanguageResultCompatibility(resultCompatibilityContext{
+	result := runLanguageResultCompatibility(resultCompatibilityContext{
 		root:   root,
 		source: source,
 		parser: p,
 		lang:   lang,
 	})
 	normalizeResultCollapsedNamedLeafChildren(root, lang)
+	return result
 }
 
-func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
+func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompatibilityResult {
 	if isCobolLanguage(ctx.lang) {
 		normalizeCobolCompatibility(ctx.root, ctx.source, ctx.lang)
-		return
+		return resultCompatibilityResult{}
 	}
 
 	switch ctx.lang.Name {
@@ -114,7 +121,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 	case "hyprlang":
 		normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
-		normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
+		return normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "java":
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
@@ -193,4 +200,5 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) {
 	case "zig":
 		normalizeZigEmptyInitListFields(ctx.root, ctx.lang)
 	}
+	return resultCompatibilityResult{}
 }
