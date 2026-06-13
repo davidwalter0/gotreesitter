@@ -130,6 +130,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
 		normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "julia":
+		normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "just":
 		normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang)
 	case "ledger":
