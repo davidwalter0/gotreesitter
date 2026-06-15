@@ -263,6 +263,17 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// spans. Remaining Cooklang-local result shape is normalized in
 		// parser_result_cooklang.go.
 		return true
+	case "jinja2", "rego", "cairo", "kdl", "haxe", "hare", "glsl":
+		// Stage-2 widening sweep (corpus_sources, GOT_C_RECOVERY=all vs
+		// baseline, N=40): the faithful cost-competition net-improves these
+		// no-normalizer IV-recovery grammars without touching any clean grammar
+		// (jinja2 3->21, rego 8->24, cairo 1->11, kdl 12->20, haxe 10->18,
+		// hare 20->25, glsl 11->16). None carry a per-grammar result normalizer
+		// or recovery unit test, so enabling the shared recovery cannot break a
+		// locked-in leaf-path expectation. Remaining divergences are grammar/
+		// table-level (not recovery), so they stay IV-recovery pending the
+		// last-mile work — but the recovery shape now matches C far more often.
+		return true
 	}
 	return false
 }
