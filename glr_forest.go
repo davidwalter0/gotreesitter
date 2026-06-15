@@ -1,10 +1,19 @@
 package gotreesitter
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"unsafe"
 )
+
+// forestStrat1Enabled gates the generalized forest error-recovery (tree-sitter
+// ts_parser__recover strategy 1) ported to the GSS forest. When stuck, instead of
+// flat-absorbing tokens at the dead state, pop the primary chain to the shallowest
+// ancestor whose state has a valid action for the lookahead, wrap the skipped
+// subtrees in ONE error node, and resume — keeping the named root with a localized
+// error, the way the C parser does universally. Gated until ratchet-validated.
+var forestStrat1Enabled = os.Getenv("GOT_FOREST_STRAT1") == "1"
 
 // GSS-FOREST REWRITE (perf/glr-gss-forest) — the only safe cut at the #1
 // machinery gap vs tree-sitter C: deep stack-merge node-equivalence is ~46% of
@@ -108,8 +117,7 @@ func ForestLastDeclineReason() string { return forestLastDeclineReason }
 // and validation in packages that attach external scanners (e.g. grammars) can
 // drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
-	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	root, ok, arena := p.parseForestWithRetry(source)
 	if !ok || root == nil {
 		arena.Release()
 		return nil, false
@@ -209,12 +217,52 @@ func languageWantsForest(name string) bool {
 // truncation routes to production. Gated by glrForestEnabled (GOT_GLR_FOREST);
 // off by default so the production path is unchanged until per-language corpus
 // parity is verified and the gate is lifted.
+func (p *Parser) parseForestWithRetry(source []byte) (*Node, bool, *nodeArena) {
+	arena := acquireNodeArena(arenaClassFull)
+	root, ok := p.parseForest(arena, source)
+	// Only retry with strategy-1 when the flat-absorb result is a whole-file ERROR
+	// root that COVERS the input (truly catastrophic, e.g. make/commonlisp). A
+	// non-covering ERROR root already declines to the production parser in
+	// tryForestFastPath; retrying there would bypass that (better) fallback and can
+	// regress clean grammars (e.g. ledger). End = last non-trivia byte.
+	covers := false
+	if root != nil && root.symbol == errorSymbol {
+		end := len(source)
+		for end > 0 {
+			switch source[end-1] {
+			case ' ', '\t', '\r', '\n':
+				end--
+				continue
+			}
+			break
+		}
+		covers = int(root.endByte) >= end
+	}
+	if ok && root != nil && root.symbol == errorSymbol && covers && forestStrat1Enabled &&
+		!p.forestStrat1Active && languageWantsForestRecover(p.language.Name) {
+		arena2 := acquireNodeArena(arenaClassFull)
+		p.forestStrat1Active = true
+		root2, ok2 := p.parseForest(arena2, source)
+		p.forestStrat1Active = false
+		// Cost competition (tree-sitter): adopt the strategy-1 recovery only if its
+		// faithful error cost is strictly lower than the flat-absorb result. This
+		// keeps C's choice — named root where recovery is cheaper (make/commonlisp),
+		// ERROR root where C itself keeps one (ledger) — so clean grammars cannot
+		// regress.
+		if ok2 && root2 != nil && cNodeErrorCostLang(p.language, root2)+cRecoverMaxCostDifference < cNodeErrorCostLang(p.language, root) {
+			arena.Release()
+			return root2, ok2, arena2
+		}
+		arena2.Release()
+	}
+	return root, ok, arena
+}
+
 func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	if !glrForestEnabled || p == nil || p.language == nil || !languageWantsForest(p.language.Name) {
 		return nil
 	}
-	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source)
+	root, ok, arena := p.parseForestWithRetry(source)
 	if !ok || root == nil {
 		arena.Release()
 		return nil
@@ -898,6 +946,59 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // returned, or (nil,false) if the parse dies. This is the forest path the
 // GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
 // external scanners, full GLR-lexing) is layered on this core.
+// forestStrategy1Recover ports tree-sitter ts_parser__recover strategy 1 to the
+// forest. It walks n's primary (bestLink) chain to the shallowest ancestor whose
+// state has a valid parse action for the lookahead, wraps the subtrees skipped
+// (from n down to that ancestor) in one extra ERROR node, pushes it at the
+// ancestor's state, and returns the resulting node. The caller then re-runs the
+// lookahead on the returned frontier (the lookahead now shifts/reduces normally).
+// Returns nil if no chain state accepts the lookahead.
+func (p *Parser) forestStrategy1Recover(n *gssForestNode, tok Token, arena *nodeArena, slab *gssForestNodeSlab, index *gssForestIndex) *gssForestNode {
+	if n == nil || tok.Symbol == errorSymbol {
+		return nil
+	}
+	var popped []*Node // top-first
+	cur := n
+	for depth := 0; cur != nil && depth <= cRecoverMaxSummaryDepth; depth++ {
+		link := cur.bestLink()
+		if link == nil {
+			return nil
+		}
+		popped = append(popped, (*Node)(link.subtree.node))
+		anc := link.prev
+		if anc == nil {
+			return nil
+		}
+		if p.lookupActionIndex(anc.state, tok.Symbol) != 0 {
+			children := make([]*Node, len(popped))
+			for i := range popped {
+				children[len(popped)-1-i] = popped[i]
+			}
+			errNode := newParentNodeInArena(arena, errorSymbol, true, children, nil, 0)
+			errNode.setHasError(true)
+			errNode.setExtra(true)
+			errNode.preGotoState = anc.state
+			errNode.parseState = anc.state
+			skip := 0
+			if n.byteOffset > anc.byteOffset {
+				skip = int(n.byteOffset - anc.byteOffset)
+			}
+			forestTracef("STRAT1 popTo state=%d off=%d popped=%d (from n state=%d off=%d) tok=%d\n", anc.state, anc.byteOffset, len(popped), n.state, n.byteOffset, tok.Symbol)
+			return coalesceForest(index, slab, anc.state, n.byteOffset, anc,
+				stackEntry{node: unsafe.Pointer(errNode), state: anc.state, kind: stackEntryKindNode},
+				0, anc.errorCost+skip)
+		}
+		cur = anc
+	}
+	return nil
+}
+
+func forestTracef(format string, args ...any) {
+	if os.Getenv("GOT_REC_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "FOREST "+format, args...)
+	}
+}
+
 func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
@@ -934,6 +1035,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 	var work, nextFrontier []*gssForestNode
 	processEpoch := int32(0)
 	recoverCount := 0
+	var pendingTok *Token // set by strategy-1 recovery to re-run the same lookahead
+	lastStrat1Off := ^uint32(0) // last byte offset where strategy-1 fired (progress guard)
 	recoverActive := glrForestRecover || languageWantsForestRecover(lang.Name)
 
 	for {
@@ -945,14 +1048,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			return nil, false
 		}
 		// GLR-lex over the union of frontier states; lead = the most-advanced.
-		glrStates = glrStates[:0]
-		for _, n := range frontier {
-			glrStates = append(glrStates, n.state)
+		var tok Token
+		if pendingTok != nil {
+			tok = *pendingTok
+			pendingTok = nil
+		} else {
+			glrStates = glrStates[:0]
+			for _, n := range frontier {
+				glrStates = append(glrStates, n.state)
+			}
+			ts.SetGLRStates(glrStates)
+			ts.SetParserState(frontier[len(frontier)-1].state)
+			tok = ts.Next()
+			p.updateCurrentExternalTokenCheckpoint(ts, tok)
 		}
-		ts.SetGLRStates(glrStates)
-		ts.SetParserState(frontier[len(frontier)-1].state)
-		tok := ts.Next()
-		p.updateCurrentExternalTokenCheckpoint(ts, tok)
 		eof := tok.Symbol == 0
 
 		// Reduces coalesce into curIndex (same position, seeded with the
@@ -1132,6 +1241,23 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			if !recoverActive || eof || recoverCount >= forestRecoverCap || tok.EndByte <= tok.StartByte {
 				forestLastDeclineReason = "no-shift-death"
 				return nil, false
+			}
+			if forestStrat1Enabled && p.forestStrat1Active && tok.StartByte != lastStrat1Off {
+				nextIndex.reset()
+				var recovered []*gssForestNode
+				for _, n := range frontier {
+					if rn := p.forestStrategy1Recover(n, tok, arena, slab, &nextIndex); rn != nil {
+						recovered = append(recovered, rn)
+					}
+				}
+				if len(recovered) > 0 {
+					recoverCount++
+					lastStrat1Off = tok.StartByte
+					frontier = append(frontier[:0], recovered...)
+					tt := tok
+					pendingTok = &tt
+					continue
+				}
 			}
 			// error_cost recovery (tree-sitter C model, reusing production's
 			// recover-action table): for each stuck frontier node, prefer a

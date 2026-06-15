@@ -85,6 +85,7 @@ type Parser struct {
 	included                            []Range
 	logger                              ParserLogger
 	glrTrace                            bool // verbose GLR stack tracing
+	forestStrat1Active                  bool // strategy-1 forest recovery active (retry pass only)
 	ambiguityProfile                    *AmbiguityProfile
 	maxConflictWidth                    int // widest N-way conflict in the parse table
 	timeoutMicros                       uint64
