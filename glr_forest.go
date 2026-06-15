@@ -13,7 +13,7 @@ import (
 // ancestor whose state has a valid action for the lookahead, wrap the skipped
 // subtrees in ONE error node, and resume — keeping the named root with a localized
 // error, the way the C parser does universally. Gated until ratchet-validated.
-var forestStrat1Enabled = os.Getenv("GOT_FOREST_STRAT1") == "1"
+var forestStrat1Enabled = os.Getenv("GOT_FOREST_STRAT1") != "0" // default ON; GOT_FOREST_STRAT1=0 disables
 
 // GSS-FOREST REWRITE (perf/glr-gss-forest) — the only safe cut at the #1
 // machinery gap vs tree-sitter C: deep stack-merge node-equivalence is ~46% of
@@ -239,7 +239,8 @@ func (p *Parser) parseForestWithRetry(source []byte) (*Node, bool, *nodeArena) {
 		covers = int(root.endByte) >= end
 	}
 	if ok && root != nil && root.symbol == errorSymbol && covers && forestStrat1Enabled &&
-		!p.forestStrat1Active && languageWantsForestRecover(p.language.Name) {
+		!p.forestStrat1Active && languageWantsForestRecover(p.language.Name) &&
+		!languageHasResultNormalizer(p.language.Name) {
 		arena2 := acquireNodeArena(arenaClassFull)
 		p.forestStrat1Active = true
 		root2, ok2 := p.parseForest(arena2, source)
