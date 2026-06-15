@@ -993,6 +993,36 @@ func (p *Parser) forestStrategy1Recover(n *gssForestNode, tok Token, arena *node
 	return nil
 }
 
+// forestMissingTokenInsert ports tree-sitter recovery's missing-token step to the
+// forest: if inserting a single zero-width terminal at n's state reaches a state
+// that has a leading reduce toward the lookahead, push that missing leaf and
+// return the new node. Cheaper than strategy-1 (no skipped content / extra ERROR),
+// so it is tried first — matching C, which prefers a missing token over an error.
+func (p *Parser) forestMissingTokenInsert(n *gssForestNode, tok Token, arena *nodeArena, slab *gssForestNodeSlab, index *gssForestIndex) *gssForestNode {
+	if n == nil || tok.Symbol == errorSymbol {
+		return nil
+	}
+	tokenCount := Symbol(p.language.TokenCount)
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		nextState, _, ok := p.cTerminalNextState(n.state, ms)
+		if !ok || nextState == 0 || nextState == n.state {
+			continue
+		}
+		if !p.stateHasLeadingReduceAction(nextState, tok.Symbol) {
+			continue
+		}
+		miss := newLeafNodeInArena(arena, ms, p.isNamedSymbol(ms), tok.StartByte, tok.StartByte, tok.StartPoint, tok.StartPoint)
+		miss.setMissing(true)
+		miss.preGotoState = n.state
+		miss.parseState = nextState
+		forestTracef("MISSING ins=%d at state=%d -> %s tok=%d off=%d\n", ms, n.state, "next", tok.Symbol, tok.StartByte)
+		return coalesceForest(index, slab, nextState, tok.StartByte, n,
+			stackEntry{node: unsafe.Pointer(miss), state: nextState, kind: stackEntryKindNode},
+			0, n.errorCost+cErrCostPerMissingTree)
+	}
+	return nil
+}
+
 func forestTracef(format string, args ...any) {
 	if os.Getenv("GOT_REC_TRACE") != "" {
 		fmt.Fprintf(os.Stderr, "FOREST "+format, args...)
@@ -1246,6 +1276,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				nextIndex.reset()
 				var recovered []*gssForestNode
 				for _, n := range frontier {
+					// Generate both candidate recoveries and let the forest's errorCost
+					// competition (coalesce + collectForestErrorRoot) pick C's choice.
+					if rn := p.forestMissingTokenInsert(n, tok, arena, slab, &nextIndex); rn != nil {
+						recovered = append(recovered, rn)
+					}
 					if rn := p.forestStrategy1Recover(n, tok, arena, slab, &nextIndex); rn != nil {
 						recovered = append(recovered, rn)
 					}
