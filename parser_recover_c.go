@@ -263,6 +263,16 @@ func errorCostCompetitionLanguage(lang *Language) bool {
 		// spans. Remaining Cooklang-local result shape is normalized in
 		// parser_result_cooklang.go.
 		return true
+	case "scss", "prolog":
+		// Stage-2 widening sweep (corpus_sources, N=40): no-normalizer
+		// IV-recovery grammars net-improved by the shared cost-competition
+		// (scss 6->9, prolog 4->6) with zero clean-grammar regression. Their
+		// only unit-test references (scss GLR stack cap, none for prolog) are
+		// unrelated to recovery output. (hurl/caddy also net-improve but carry
+		// result normalizers with locked-in ERROR-root expectations —
+		// TestNormalizeHurlDoesNotRetagNonFileDelimiterErrorRoot — so they need
+		// per-grammar normalizer review before gating; excluded for now.)
+		return true
 	case "jinja2", "rego", "cairo", "kdl", "haxe", "hare", "glsl":
 		// Stage-2 widening sweep (corpus_sources, GOT_C_RECOVERY=all vs
 		// baseline, N=40): the faithful cost-competition net-improves these
