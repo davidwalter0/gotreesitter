@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -197,7 +198,13 @@ func TestMeasureDtierVsC(t *testing.T) {
 				matchC++
 			} else {
 				divergeC++
-				if os.Getenv("REPRO_DUMP_DIVERGENCE") == "1" && divergeC <= 6 {
+				dumpMax := 6
+				if v := os.Getenv("REPRO_DUMP_MAX"); v != "" {
+					if n, err := strconv.Atoi(v); err == nil {
+						dumpMax = n
+					}
+				}
+				if os.Getenv("REPRO_DUMP_DIVERGENCE") == "1" && divergeC <= dumpMax {
 					fmt.Printf("DIVERGE %s %s: %s\n", name, filepath.Base(f),
 						strings.Join(errs[:min(2, len(errs))], " || "))
 				}

@@ -2,6 +2,8 @@ package gotreesitter
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -941,6 +943,23 @@ const (
 func (p *Parser) resyncTopLevelLanguage() bool {
 	if p == nil || p.language == nil {
 		return false
+	}
+	// GOT_RESYNC mirrors GOT_C_RECOVERY: "0" force-disables, "all"/"1"
+	// force-enables, a comma list force-enables named grammars. Used by the
+	// stage-2 widening sweep to A/B the top-level resync without a per-grammar
+	// rebuild. Default (empty) keeps the verified per-grammar allowlist below.
+	switch v := os.Getenv("GOT_RESYNC"); v {
+	case "":
+	case "0":
+		return false
+	case "all", "1":
+		return true
+	default:
+		for _, n := range strings.Split(v, ",") {
+			if strings.TrimSpace(n) == p.language.Name {
+				return true
+			}
+		}
 	}
 	switch p.language.Name {
 	case "c":
