@@ -133,6 +133,13 @@ func TestMeasureDtierVsC(t *testing.T) {
 	var totGo, totC time.Duration
 	var ratios []float64
 	dispatched, matchC, divergeC, trunc, panics, errTree := 0, 0, 0, 0, 0, 0
+	recoveryFiles, goFail := 0, 0
+	// ECOSYSTEM mode (GTS_ECOSYSTEM=1): a file where EITHER parser errors is
+	// "recovery" (bucketed out of the structural pass/fail) UNLESS only Go errors
+	// while C parses cleanly — that is goFail, a real Go bug on valid code.
+	// .scm-query / corpus consumers only exercise cleanly-parsing code; pair with
+	// GTS_PARITY_COMPARE_SPANS=0 so matchC/divergeC measure pure structure.
+	ecosystemMode := os.Getenv("GTS_ECOSYSTEM") == "1"
 	for _, f := range files {
 		src, rerr := os.ReadFile(f)
 		if rerr != nil || len(src) == 0 {
@@ -191,6 +198,30 @@ func TestMeasureDtierVsC(t *testing.T) {
 			}
 		}()
 		if gtree != nil && gtree.RootNode() != nil {
+			if ecosystemMode {
+				cErr := cTree.RootNode().HasError()
+				if hasErr || cErr {
+					if hasErr && !cErr {
+						// Go errors where C parses cleanly: a REAL Go failure on
+						// valid code (breaks queries/corpus), not recovery noise.
+						goFail++
+						if os.Getenv("REPRO_DUMP_DIVERGENCE") == "1" {
+							fmt.Printf("GOFAIL %s %s\n", name, filepath.Base(f))
+						}
+					} else {
+						recoveryFiles++
+					}
+					gtree.Release()
+					if cBest > 0 {
+						ratios = append(ratios, float64(goDur)/float64(cBest))
+					}
+					totGo += goDur
+					totC += cBest
+					cTree.Close()
+					cParser.Close()
+					continue
+				}
+			}
 			var errs []string
 			compareNodes(gtree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
 			if len(errs) == 0 {
@@ -235,6 +266,6 @@ func TestMeasureDtierVsC(t *testing.T) {
 	if dispatched > 0 {
 		parityPct = 100 * float64(matchC) / float64(dispatched)
 	}
-	fmt.Printf("MEASURE-DTIER %s mode=%s files=%d medianRatio=%.2fx aggRatio=%.2fx parityMatch=%d/%d(%.0f%%) diverge=%d trunc=%d errTree=%d panics=%d\n",
-		name, mode, dispatched, median, agg, matchC, dispatched, parityPct, divergeC, trunc, errTree, panics)
+	fmt.Printf("MEASURE-DTIER %s mode=%s files=%d medianRatio=%.2fx aggRatio=%.2fx parityMatch=%d/%d(%.0f%%) diverge=%d trunc=%d errTree=%d panics=%d recovery=%d goFail=%d\n",
+		name, mode, dispatched, median, agg, matchC, dispatched, parityPct, divergeC, trunc, errTree, panics, recoveryFiles, goFail)
 }

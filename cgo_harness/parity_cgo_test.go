@@ -220,6 +220,21 @@ var parityCompareFields = func() bool {
 	}
 }()
 
+// parityCompareSpans gates byte-span (StartByte/EndByte) checking. Default ON
+// (byte-exact, the historical gate). Set GTS_PARITY_COMPARE_SPANS=0 for the
+// ECOSYSTEM gate: structural fidelity (type/named/missing/childcount, plus
+// FieldName when enabled) without byte spans — span differences in
+// recovery/ERROR regions are the dominant Tier-IV divergence and are
+// irrelevant to .scm-query / corpus-test consumers.
+var parityCompareSpans = func() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GTS_PARITY_COMPARE_SPANS"))) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}()
+
 var parityIgnoreKnownSkips = func() bool {
 	raw := strings.TrimSpace(os.Getenv("GTS_PARITY_IGNORE_KNOWN_SKIPS"))
 	switch strings.ToLower(raw) {
@@ -310,11 +325,13 @@ func compareNodes(goNode *gotreesitter.Node, goLang *gotreesitter.Language, cNod
 	if gs.Type != cs.Type {
 		*errs = append(*errs, fmt.Sprintf("%s: Type go=%q c=%q", path, gs.Type, cs.Type))
 	}
-	if gs.StartByte != cs.StartByte {
-		*errs = append(*errs, fmt.Sprintf("%s: StartByte go=%d c=%d", path, gs.StartByte, cs.StartByte))
-	}
-	if gs.EndByte != cs.EndByte {
-		*errs = append(*errs, fmt.Sprintf("%s: EndByte go=%d c=%d", path, gs.EndByte, cs.EndByte))
+	if parityCompareSpans {
+		if gs.StartByte != cs.StartByte {
+			*errs = append(*errs, fmt.Sprintf("%s: StartByte go=%d c=%d", path, gs.StartByte, cs.StartByte))
+		}
+		if gs.EndByte != cs.EndByte {
+			*errs = append(*errs, fmt.Sprintf("%s: EndByte go=%d c=%d", path, gs.EndByte, cs.EndByte))
+		}
 	}
 	if gs.IsNamed != cs.IsNamed {
 		*errs = append(*errs, fmt.Sprintf("%s: IsNamed go=%v c=%v", path, gs.IsNamed, cs.IsNamed))
