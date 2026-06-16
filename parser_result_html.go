@@ -113,6 +113,17 @@ func htmlExtendOpenElementChain(node *Node, endByte uint32, endPoint Point, lang
 
 func htmlExtendLeadingElementChain(node *Node, endByte uint32, endPoint Point, lang *Language) {
 	for cur := node; cur != nil && lang != nil && cur.Type(lang) == "element"; {
+		// Only extend genuinely unclosed elements. An element that already
+		// terminates with its own end_tag, a self_closing_tag, or text/comment
+		// content has an authoritative endByte. Extending such an element
+		// across trailing trivia up to an enclosing close tag is exactly the
+		// off-by-one / sibling-absorption divergence from the C oracle that
+		// this normalizer must avoid on well-formed input. Only a recovered
+		// chain of unclosed start tags (the malformed-HTML shape this routine
+		// was written for) should grow to reach the close token.
+		if !htmlElementIsUnclosedChain(cur, lang) {
+			return
+		}
 		cur.endByte = endByte
 		cur.endPoint = endPoint
 		child := resultChildAt(cur, 1)
@@ -120,6 +131,35 @@ func htmlExtendLeadingElementChain(node *Node, endByte uint32, endPoint Point, l
 			return
 		}
 		cur = child
+	}
+}
+
+// htmlElementIsUnclosedChain reports whether an element node is an unclosed
+// (implicitly open) element: its last child is a bare start_tag, or another
+// element that is itself an unclosed chain. Such elements were opened in the
+// source but never closed by a matching end_tag or self_closing_tag, so the C
+// parser ends them at the next enclosing close tag rather than at their last
+// concrete child. Elements terminated by an end_tag, self_closing_tag, text, or
+// any other concrete child are NOT unclosed and must keep their own endByte.
+func htmlElementIsUnclosedChain(node *Node, lang *Language) bool {
+	if node == nil || lang == nil || node.Type(lang) != "element" {
+		return false
+	}
+	n := resultChildCount(node)
+	if n == 0 {
+		return false
+	}
+	last := resultChildAt(node, n-1)
+	if last == nil {
+		return false
+	}
+	switch last.Type(lang) {
+	case "start_tag":
+		return true
+	case "element":
+		return htmlElementIsUnclosedChain(last, lang)
+	default:
+		return false
 	}
 }
 
