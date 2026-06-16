@@ -375,6 +375,7 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssN
 			n.prev = prev
 			n.depth = depth
 			n.hash = hash
+			n.extraLinks = nil
 			return n
 		}
 	}
@@ -425,6 +426,7 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 		n.prev = prev
 		n.depth = depth
 		n.hash = hash
+		n.extraLinks = nil
 		if s.audit != nil {
 			s.audit.recordGSSAlloc(n)
 		}

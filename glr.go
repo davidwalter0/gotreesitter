@@ -1859,6 +1859,59 @@ func stackErrorRank(s *glrStack) int {
 	return 0
 }
 
+// gssMainCanMerge mirrors C ts_stack_can_merge (stack.c:709): two same-key
+// versions are losslessly mergeable iff same status (alive, same accepted) and
+// same error_cost rank. State + byteOffset are guaranteed equal by the merge-key
+// bucket; depth is deliberately NOT compared (C never tiebreaks on it).
+func gssMainCanMerge(a, b *glrStack) bool {
+	if a.gss.head == nil || b.gss.head == nil {
+		return false
+	}
+	if a.dead || b.dead || a.accepted != b.accepted {
+		return false
+	}
+	return stackErrorRank(a) == stackErrorRank(b)
+}
+
+// gssMainLinkExists reports whether node n already carries a (prev, entry) link
+// (same predecessor + same subtree node) so the union does not duplicate a
+// reading (mirrors stack_node_add_link dedup).
+func gssMainLinkExists(n *gssNode, prev *gssNode, entry stackEntry) bool {
+	for i := 0; i < n.linkCount(); i++ {
+		p, e := n.link(i)
+		if p == prev && e.node == entry.node {
+			return true
+		}
+	}
+	return false
+}
+
+// gssMainMerge folds version b's head links into version a's head as added
+// alternative links (C ts_stack_merge -> stack_node_add_link): both readings
+// become one multi-link version instead of two re-forking versions. O(1)/link,
+// no prefix copy, capped at maxMainLinkCount. Caller drops b after.
+func gssMainMerge(a, b *glrStack) bool {
+	ah, bh := a.gss.head, b.gss.head
+	if ah == nil || bh == nil {
+		return false
+	}
+	if ah == bh {
+		return true
+	}
+	for i := 0; i < bh.linkCount(); i++ {
+		if ah.linkCount() >= maxMainLinkCount {
+			break
+		}
+		prev, entry := bh.link(i)
+		if gssMainLinkExists(ah, prev, entry) {
+			continue
+		}
+		ah.extraLinks = append(ah.extraLinks, gssMainLink{prev: prev, entry: entry})
+	}
+	ah.hash = 0
+	return true
+}
+
 func preferOverflowCandidate(candidate, incumbent *glrStack, candidateHash, incumbentHash uint64) bool {
 	cmp := stackCompareMerge(candidate, incumbent)
 	if cmp != 0 {
@@ -1895,6 +1948,14 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 				if cmp < 0 {
 					duplicateIndex = j
 					break
+				}
+				if glrFaithfulCapOneMerge && gssMainCanMerge(&result[j], &stack) {
+					// Lossless GSS link-union (C ts_stack_merge): keep both readings
+					// as one multi-link version, not a 2nd full re-forking version.
+					if gssMainMerge(&result[j], &stack) {
+						duplicateIndex = j
+						break
+					}
 				}
 			}
 			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
