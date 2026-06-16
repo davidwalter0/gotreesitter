@@ -123,33 +123,13 @@ func jsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool,
 			return true
 		}
 		if ch == '}' {
-			lexer.Advance(true)
-			for unicode.IsSpace(lexer.Lookahead()) {
-				lexer.Advance(true)
-			}
-			switch lexer.Lookahead() {
-			case ':':
-				return jsValid(validSymbols, jsTokLogicalOr)
-			default:
-				if jsValid(validSymbols, jsTokJsxText) {
-					return false
-				}
-				if jsLooksLikeJSXAttributeContinuation(lexer) {
-					return false
-				}
-			}
-			switch lexer.Lookahead() {
-			case '>':
-				return false
-			case '/':
-				lexer.Advance(true)
-				return lexer.Lookahead() != '>'
-			case '<':
-				lexer.Advance(true)
-				return lexer.Lookahead() != '/'
-			default:
-				return true
-			}
+			// tree-sitter-javascript scanner.c (scan_automatic_semicolon): at a
+			// closing brace, ASI is ALWAYS inserted — do not consume '}', and do
+			// NOT apply any JSX-attribute lookahead. The previous block was a
+			// mis-port (a JSX/TSX-flavored variant) that suppressed ASI for
+			// `}<ident>=...`, collapsing `{a}b=c` and real minified bundles
+			// (`if(c){...}next=...`) into a root ERROR — GitHub issue #111.
+			return true
 		}
 		if !unicode.IsSpace(ch) {
 			return false
