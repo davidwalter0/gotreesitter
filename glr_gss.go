@@ -13,6 +13,36 @@ type gssNode struct {
 	prev  *gssNode
 	depth int
 	hash  uint64
+	// extraLinks holds links 1..k after a lossless condense merge (the multi-link
+	// union, mirroring C StackNode.links and the forest's gssLink). It is nil on
+	// the single-link hot path (every shift/reduce push) so there is zero overhead
+	// there. Multi-link readers go through linkCount()/link(i). Only ever populated
+	// under glrFaithfulCapOneMerge (the faithful-condense gate).
+	extraLinks []gssMainLink
+}
+
+// gssMainLink is one alternative incoming (predecessor, subtree) pair on a
+// multi-link gssNode — the main-parse analog of C's StackLink and the forest's
+// gssLink. The node's own inline (prev, entry) is link[0].
+type gssMainLink struct {
+	prev  *gssNode
+	entry stackEntry
+}
+
+// maxMainLinkCount mirrors C's MAX_LINK_COUNT (and forestMaxLinksPerNode): the
+// per-node cap on merged alternative readings.
+const maxMainLinkCount = 8
+
+// linkCount reports the number of incoming links (1 + merged extras).
+func (n *gssNode) linkCount() int { return 1 + len(n.extraLinks) }
+
+// link returns the i-th incoming (prev, entry); i==0 is the inline link.
+func (n *gssNode) link(i int) (prev *gssNode, entry stackEntry) {
+	if i == 0 {
+		return n.prev, n.entry
+	}
+	l := n.extraLinks[i-1]
+	return l.prev, l.entry
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.
