@@ -3046,6 +3046,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						if next, ok := erlangMacroCallExprConflictChoice(p.language, actions); ok {
 							chosen, choice = next, true
 						}
+					case "rego":
+						if next, ok := regoListRepeatReduceConflictChoice(p.language, actions); ok {
+							chosen, choice = next, true
+						}
 					}
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
@@ -4830,6 +4834,44 @@ func cReduceIsCollapsibleListRepeat(lang *Language, actions []ParseAction) bool 
 		found = true
 	}
 	return found
+}
+
+// regoListRepeatReduceConflictChoice resolves rego's policy-list shift-reduce
+// conflict the way tree-sitter-C's generated table does. At a conflict between
+// closing a top-level list repetition (module/policy/rule _repeat1) and
+// shifting deeper (e.g. extending a bare name into a dotted ref argument),
+// tree-sitter-C resolves to the REDUCE at table generation, so C never forks
+// here. Go's table keeps the conflict; without this choice Go forks and the
+// spurious ref-extension version survives and wins the error-cost competition,
+// shattering the whole policy into an ERROR root (the rego recovery-shatter).
+// Guarded to the top-level list repeats only so legitimate inner repetitions
+// (object/ref/string _repeat1) keep their normal greedy-shift behavior.
+func regoListRepeatReduceConflictChoice(lang *Language, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || len(actions) < 2 {
+		return ParseAction{}, false
+	}
+	var reduce ParseAction
+	reduceOK, shiftOK := false, false
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionShift:
+			shiftOK = true
+		case ParseActionReduce:
+			if symbolHasName(lang, act.Symbol, "module_repeat1") ||
+				symbolHasName(lang, act.Symbol, "policy_repeat1") ||
+				symbolHasName(lang, act.Symbol, "rule_repeat1") {
+				reduce, reduceOK = act, true
+			} else {
+				return ParseAction{}, false
+			}
+		default:
+			return ParseAction{}, false
+		}
+	}
+	if shiftOK && reduceOK {
+		return reduce, true
+	}
+	return ParseAction{}, false
 }
 
 func javaArrayInitializerCommaHasFollowingElement(source []byte, offset uint32) bool {
