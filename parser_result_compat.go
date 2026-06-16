@@ -162,6 +162,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "nim":
 		normalizeNimTopLevelCallEnd(ctx.root, ctx.source, ctx.lang)
+	case "org":
+		normalizeOrgCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pascal":
 		normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
 		normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
