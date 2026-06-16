@@ -128,6 +128,12 @@ type Parser struct {
 	// slice the GSS-forest path reuses when a scoped conflict rule collapses a
 	// multi-action set to one C-preferred action, avoiding a per-node allocation.
 	forestConflictChoice [1]ParseAction
+	// pendingForkStacks buffers extra glrStack instances produced by a
+	// forking reduce (applyReduceActionForked) under glrFaithfulCapOneMerge.
+	// The outer dispatch loop drains this slice into stacks[] immediately
+	// after applyActionWithReduceChain returns, so the forks participate in
+	// the re-dispatch on the same token. Reset to [:0] after each drain.
+	pendingForkStacks []glrStack
 }
 
 var snippetParserPools sync.Map
@@ -3123,6 +3129,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if act.Type == ParseActionReduce && !disableBashReduceChain {
 				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
 					forceAdvanceAfterReduce = true
+				}
+				// Drain any extra fork stacks produced by a forking reduce
+				// (applyReduceActionForked under glrFaithfulCapOneMerge).
+				// Append them to stacks so they participate in the re-dispatch
+				// on the same token (numStacks was snapshotted before this for
+				// loop, so these are not processed until the next outer iteration
+				// when anyReduced keeps the token unchanged).
+				if glrFaithfulCapOneMerge && len(p.pendingForkStacks) > 0 {
+					stacks = append(stacks, p.pendingForkStacks...)
+					p.pendingForkStacks = p.pendingForkStacks[:0]
 				}
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()

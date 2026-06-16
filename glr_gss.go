@@ -494,6 +494,34 @@ func (s *glrStack) toGSS(scratch *gssScratch) gssStack {
 	return buildGSSStack(s.entries, scratch)
 }
 
+// gssSpanIsLinear returns true if the childCount-entry span starting at
+// head has no multi-link nodes — i.e. every visited node has only its
+// inline (prev, entry) link and no extraLinks. This is the hot-path guard
+// that lets the existing single-path reduce code run unmodified.
+//
+// Walk rules mirror reduceWindowFromGSS: advance via link[0] (n.prev), count
+// non-extra entries, stop when childCount non-extra entries have been seen.
+// Return false as soon as any visited node in that span has extraLinks.
+// Only meaningful under glrFaithfulCapOneMerge.
+func gssSpanIsLinear(head *gssNode, childCount int) bool {
+	if childCount == 0 {
+		return true
+	}
+	nonExtraFound := 0
+	for n := head; n != nil; n = n.prev {
+		if len(n.extraLinks) > 0 {
+			return false
+		}
+		if stackEntryHasNode(n.entry) && !stackEntryNodeIsExtra(n.entry) {
+			nonExtraFound++
+			if nonExtraFound == childCount {
+				return true
+			}
+		}
+	}
+	return true
+}
+
 func gssNodeBytesForCap(n int) int64 {
 	if n <= 0 {
 		return 0

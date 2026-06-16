@@ -2036,6 +2036,86 @@ func truncateStackForReduce(s *glrStack, targetDepth int) bool {
 	return true
 }
 
+// reduceFork is one parse path produced by reduceWindowsFromGSS: a window
+// of stack entries (base-first, matching reduceWindowFromGSS output order),
+// the predecessor node to pop to, and the state that predecessor holds.
+// Used only under glrFaithfulCapOneMerge.
+type reduceFork struct {
+	window   []stackEntry
+	topState StateID
+	popTo    *gssNode
+}
+
+// reduceWindowsFromGSS enumerates all Cartesian paths through multi-link
+// gssNodes in the childCount-entry span atop s.gss.head, mirroring C's
+// forestReducer.dfs (glr_forest.go:1654). Each complete path (one that
+// finds exactly childCount non-extra entries and has a non-nil predecessor)
+// becomes one reduceFork. Paths are collected most-recent-first then
+// reversed to base-first order, matching reduceWindowFromGSS. Total forks
+// are capped at maxForks; extras are silently dropped (deterministic:
+// lower-index links are preferred).
+//
+// Only called under glrFaithfulCapOneMerge when gssSpanIsLinear is false.
+func reduceWindowsFromGSS(s *glrStack, childCount int, maxForks int) []reduceFork {
+	if s == nil || s.gss.head == nil || childCount <= 0 {
+		return nil
+	}
+
+	var forks []reduceFork
+
+	// revBuf holds entries top-first during DFS traversal.
+	var revBuf [64]stackEntry
+	revPath := revBuf[:0]
+
+	var dfs func(n *gssNode, remaining int)
+	dfs = func(n *gssNode, remaining int) {
+		if n == nil || len(forks) >= maxForks {
+			return
+		}
+		count := n.linkCount()
+		for i := 0; i < count; i++ {
+			if len(forks) >= maxForks {
+				return
+			}
+			prev, entry := n.link(i)
+			isExtra := stackEntryHasNode(entry) && stackEntryNodeIsExtra(entry)
+			mark := len(revPath)
+			revPath = append(revPath, entry)
+			rem := remaining
+			if stackEntryHasNode(entry) && !isExtra {
+				rem--
+			}
+			if rem == 0 {
+				// Complete path: build a fork.
+				if prev == nil {
+					// No predecessor — cannot determine topState; skip this path.
+					revPath = revPath[:mark]
+					continue
+				}
+				// Reverse revPath to base-first order.
+				pathLen := len(revPath)
+				window := make([]stackEntry, pathLen)
+				for j := 0; j < pathLen; j++ {
+					window[j] = revPath[pathLen-1-j]
+				}
+				forks = append(forks, reduceFork{
+					window:   window,
+					topState: prev.entry.state,
+					popTo:    prev,
+				})
+				revPath = revPath[:mark]
+				continue
+			}
+			// Need more entries: descend into prev.
+			dfs(prev, rem)
+			revPath = revPath[:mark]
+		}
+	}
+
+	dfs(s.gss.head, childCount)
+	return forks
+}
+
 func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
@@ -2158,6 +2238,10 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 }
 
 func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
+	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+		p.applyReduceActionForked(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, false, trackChildErrors)
+		return
+	}
 	timing := p.reduceTiming
 	rangeStart := time.Time{}
 	if timing != nil {
@@ -2199,6 +2283,10 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		return
 	}
 	if p.tryFastVisibleReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
+		return
+	}
+	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+		p.applyReduceActionForked(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors)
 		return
 	}
 	timing := p.reduceTiming
@@ -2350,6 +2438,115 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 
 	markReduceApplied(s, act, anyReduced)
 	releaseReduceWindowEntries(tmpEntries, windowEntries)
+}
+
+// applyReduceActionForked handles the multi-link case under glrFaithfulCapOneMerge.
+// It enumerates all Cartesian paths through multi-link gssNodes in the reduce
+// span, applies fork[0] in-place to s, and buffers forks[1..] into
+// p.pendingForkStacks for draining by the outer loop after this call returns.
+//
+// This mirrors C's ts_stack_pop / forestReducer.dfs: each path through the
+// GSS links is one valid parse reading, and each produces a distinct result
+// stack. The outer dispatch loop appends the pending forks to stacks[] so
+// they are re-dispatched on the same token (anyReduced is set, keeping the
+// token unchanged).
+func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	forks := reduceWindowsFromGSS(s, int(act.ChildCount), maxStacksPerMergeKey)
+	if len(forks) == 0 {
+		s.dead = true
+		return
+	}
+
+	named := p.isNamedSymbol(act.Symbol)
+
+	// applyForkToStack applies one reduceFork to a clone of the base stack.
+	// It replaces the stack's GSS head with fork.popTo (the predecessor node),
+	// builds the parent node from the fork's window, and pushes it.
+	applyForkToStack := func(target *glrStack, fork reduceFork) {
+		window := fork.window
+		reducedEnd := reducedEndBeforeTrailingExtras(window)
+		actualEnd := len(window)
+		childCount := int(act.ChildCount)
+
+		children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(window, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
+
+		// Pop: set the GSS head to the predecessor.
+		target.gss.head = fork.popTo
+		if target.entries != nil {
+			// Invalidate cached entries — they no longer match the GSS.
+			target.entries = target.entries[:0]
+		}
+
+		// Skip further processing if collapsible unary self-reduction applies
+		// (these optimizations depend on the window which we have).
+		if child := p.collapsibleUnarySelfReduction(act, tok, arena, window, 0, reducedEnd, children, fieldIDs); child != nil {
+			p.pushCollapsedUnaryReduceNode(target, act, tok, child, entryScratch, gssScratch, window, reducedEnd, actualEnd, fork.topState)
+			return
+		}
+
+		var parent *Node
+		if deferParentLinks {
+			parent = newParentNodeInArenaNoLinksWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, trackChildErrors)
+		} else {
+			parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
+		}
+		p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
+
+		shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
+		if shouldUseRawSpan && reducedEnd > 0 {
+			span := computeReduceRawSpan(window, 0, reducedEnd)
+			if int(act.Symbol) < len(p.forceRawSpanTable) && p.forceRawSpanTable[act.Symbol] && actualEnd > reducedEnd {
+				extendRawSpanToTrailingEntries(&span, window, reducedEnd, actualEnd)
+			}
+			parent.startByte = span.startByte
+			parent.endByte = span.endByte
+			parent.startPoint = span.startPoint
+			parent.endPoint = span.endPoint
+		}
+		if reduceChildPathMayDropSpan(childPath) {
+			extendParentSpanToWindow(parent, window, 0, reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+		}
+		*nodeCount++
+
+		gotoState := p.lookupGoto(fork.topState, act.Symbol)
+		targetState := fork.topState
+		if gotoState != 0 {
+			targetState = gotoState
+		}
+		if tok.NoLookahead && targetState == fork.topState {
+			parent.setExtra(true)
+		}
+		parent.preGotoState = fork.topState
+		parent.parseState = targetState
+		p.pushStackNode(target, targetState, parent, entryScratch, gssScratch)
+		for i := reducedEnd; i < actualEnd; i++ {
+			extra := stackEntryNode(window[i])
+			if extra == nil {
+				continue
+			}
+			extra.parseState = targetState
+			nodeBumpEquivVersion(extra)
+			p.pushStackNode(target, targetState, extra, entryScratch, gssScratch)
+		}
+		// Update byteOffset to reflect the new stack top.
+		target.byteOffset = target.gss.byteOffset()
+	}
+
+	// Snapshot the base stack state before mutating s.
+	// We must clone BEFORE applying fork[0] to s.
+	base := s.cloneWithScratch(gssScratch)
+
+	// Apply fork[0] in place to s.
+	applyForkToStack(s, forks[0])
+	markReduceApplied(s, act, anyReduced)
+
+	// Apply forks[1..] to clones and buffer them.
+	for i := 1; i < len(forks); i++ {
+		clone := base.cloneWithScratch(gssScratch)
+		applyForkToStack(&clone, forks[i])
+		clone.score = base.score + int(act.DynamicPrecedence)
+		p.pendingForkStacks = append(p.pendingForkStacks, clone)
+	}
 }
 
 func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors bool) bool {
