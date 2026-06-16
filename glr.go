@@ -1822,6 +1822,18 @@ func stackCompareMergeSmallCapOne(a, b *glrStack) int {
 		}
 		return -1
 	}
+	if glrFaithfulCapOneMerge {
+		// C's per-token condense never tiebreaks on depth: ts_parser__compare_versions
+		// stops at (in-error, error_cost, dynamic_precedence) and on a tie does a
+		// LOSSLESS ts_stack_merge keyed on (state, byte, error_cost) — depth is
+		// never compared. Returning 0 here makes the caller fall through to the
+		// structural equivalence check: truly-equivalent same-key versions still
+		// collapse (perf preserved), but DISTINCT same-key versions are kept (both
+		// survive; error_cost decides at reduce/accept), matching C. Without this,
+		// the depth heuristic drops the still-correct shallower branch and collapses
+		// valid input to an ERROR root (the elixir/dart goFail class).
+		return 0
+	}
 	aDepth := a.depth()
 	bDepth := b.depth()
 	if aDepth != bDepth {

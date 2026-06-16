@@ -106,6 +106,16 @@ func parseMaxMergePerKeyEnvConfigured() bool {
 	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_MERGE_PER_KEY")) != ""
 }
 
+// glrFaithfulCapOneMerge (GOT_FAITHFUL_CONDENSE=1) makes the per-key cap-one
+// condense path faithful to tree-sitter-C: on a same-key tie it no longer drops
+// a DISTINCT version by depth. C never tiebreaks on depth (ts_parser__compare_versions
+// stops at in-error/error_cost/dynamic_precedence then merges losslessly on
+// (state, byte, error_cost), letting error_cost decide at reduce/accept). The depth
+// heuristic in stackCompareMergeSmallCapOne otherwise kills the still-correct
+// shallower branch and collapses valid input to an ERROR root (the elixir/dart
+// goFail class). Dark default while validated.
+var glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
+
 func parseTransientReduceChildrenEnabled() bool {
 	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_CHILDREN")
 }
