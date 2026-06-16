@@ -169,6 +169,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
 	case "perl":
 		normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang)
+	case "purescript":
+		normalizePurescriptCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "php":
 		normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "powershell":
