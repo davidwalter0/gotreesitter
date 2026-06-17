@@ -3,6 +3,7 @@
 package grammars
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -101,6 +102,42 @@ func assertJavaSourceParsesWithoutErrors(t *testing.T, src []byte, tokenSource b
 	}
 	if root := tree.RootNode(); root.HasError() {
 		t.Fatalf("expected Java source to parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+}
+
+func TestJavaFaithfulCondenseRegistryTokenSourceEightArgumentCallRegression(t *testing.T) {
+	if os.Getenv("GOT_FAITHFUL_CONDENSE") != "1" {
+		t.Skip("requires GOT_FAITHFUL_CONDENSE=1")
+	}
+	lang := JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := []byte(`class Calls {
+  void run() {
+    target(one(), two, three + 3, four, five, six(), seven, eight);
+  }
+}
+`)
+
+	tree, err := parser.ParseWithTokenSource(src, NewJavaTokenSourceOrEOF(src, lang))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected Java registry token-source parse without syntax errors, got: %s", root.SExpr(lang))
+	}
+	call := findFirstNamedDescendant(tree.RootNode(), lang, "method_invocation")
+	if call == nil {
+		t.Fatalf("missing method_invocation: %s", tree.RootNode().SExpr(lang))
+	}
+	args := findFirstNamedDescendant(call, lang, "argument_list")
+	if args == nil {
+		t.Fatalf("missing argument_list: %s", call.SExpr(lang))
+	}
+	if got := strings.Count(args.Text(src), ",") + 1; got != 8 {
+		t.Fatalf("argument count by text = %d, want 8; args=%q", got, args.Text(src))
 	}
 }
 

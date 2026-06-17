@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Parser reads parse tables from a Language and produces a syntax tree.
@@ -23,6 +24,7 @@ type Parser struct {
 	reuseScratch        reuseScratch
 	reuseMu             sync.Mutex
 	reparseFactory      TokenSourceFactory
+	parseSource         []byte
 	recoveryParser      *Parser
 	skipRecoveryReparse bool
 	// forceCleanRetryPass forces a single parseInternal call to behave as a
@@ -2254,6 +2256,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	parseStart := time.Now()
 	parseFlags := p.applyParseModeFlags(source, reuse, oldTree, arenaClass)
 	defer p.restoreParseModeFlags(parseFlags)
+	prevParseSource := p.parseSource
+	p.parseSource = source
+	defer func() {
+		p.parseSource = prevParseSource
+	}()
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
 	if p.logger != nil {
@@ -3896,7 +3903,91 @@ func clearGLRStateTokenSource(stateful parserStateTokenSource, scratch *parserSc
 	stateful.SetGLRStates(nil)
 }
 
+func (p *Parser) allowFaithfulShiftAcrossGap(s *glrStack, currentState StateID, tok Token, arena *nodeArena) bool {
+	if !glrFaithfulCapOneMerge || p == nil || s == nil || s.dead || tok.Missing || tok.NoLookahead {
+		return true
+	}
+	if s.byteOffset >= tok.StartByte {
+		return true
+	}
+	if p.parseSource != nil && byteRangeIsParserWhitespace(p.parseSource, s.byteOffset, tok.StartByte) {
+		return true
+	}
+	if p.reparseFactory == nil || p.language == nil || p.parseSource == nil {
+		return true
+	}
+	fresh, err := p.reparseFactory(p.parseSource)
+	if err != nil || fresh == nil {
+		return true
+	}
+	defer manageTokenSourceLifetime(fresh)()
+	fresh = p.wrapIncludedRanges(fresh)
+	if stateful, ok := fresh.(parserStateTokenSource); ok {
+		stateful.SetParserState(currentState)
+		stateful.SetGLRStates(nil)
+	}
+	if dts := underlyingDFATokenSource(fresh); dts != nil && languageUsesExternalScannerCheckpoints(dts.language) {
+		if !restoreFaithfulShiftGuardExternalScannerCheckpoint(dts, arena, s) {
+			return true
+		}
+	}
+	peek := Token{}
+	if skipper, ok := fresh.(PointSkippableTokenSource); ok {
+		peek = skipper.SkipToByteWithPoint(s.byteOffset, pointForByteOffset(p.parseSource, s.byteOffset))
+	} else if skipper, ok := fresh.(ByteSkippableTokenSource); ok {
+		peek = skipper.SkipToByte(s.byteOffset)
+	} else {
+		return true
+	}
+	return tokensMatchForFaithfulShift(peek, tok)
+}
+
+func tokensMatchForFaithfulShift(a, b Token) bool {
+	return a.Symbol == b.Symbol &&
+		a.StartByte == b.StartByte &&
+		a.EndByte == b.EndByte &&
+		a.NoLookahead == b.NoLookahead &&
+		a.Missing == b.Missing
+}
+
+func byteRangeIsParserWhitespace(source []byte, start, end uint32) bool {
+	if start > end || int(end) > len(source) {
+		return false
+	}
+	for _, b := range source[start:end] {
+		switch b {
+		case ' ', '\t', '\n', '\r', '\f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func pointForByteOffset(source []byte, offset uint32) Point {
+	if int(offset) > len(source) {
+		offset = uint32(len(source))
+	}
+	var pt Point
+	prefix := source[:offset]
+	for len(prefix) > 0 {
+		r, size := utf8.DecodeRune(prefix)
+		if r == '\n' {
+			pt.Row++
+			pt.Column = 0
+		} else {
+			pt.Column += uint32(size)
+		}
+		prefix = prefix[size:]
+	}
+	return pt
+}
+
 func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act ParseAction, tok Token, arena *nodeArena, scratch *parserScratch) {
+	if !p.allowFaithfulShiftAcrossGap(s, currentState, tok, arena) {
+		s.dead = true
+		return
+	}
 	named := p.isNamedSymbol(tok.Symbol)
 	targetState := extraShiftTargetState(currentState, act)
 	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {

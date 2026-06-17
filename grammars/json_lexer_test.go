@@ -4,6 +4,7 @@ package grammars
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -114,6 +115,25 @@ func TestJSONTokenSourceSkipToByteInsideStringContent(t *testing.T) {
 	}
 }
 
+func TestJSONTokenSourceRebuildTokenSource(t *testing.T) {
+	lang := JsonLanguage()
+	ts, err := NewJSONTokenSource([]byte(`{"a":1}`), lang)
+	if err != nil {
+		t.Fatalf("NewJSONTokenSource failed: %v", err)
+	}
+	rebuilder, ok := any(ts).(gotreesitter.TokenSourceRebuilder)
+	if !ok {
+		t.Fatal("JSONTokenSource should implement TokenSourceRebuilder")
+	}
+	fresh, err := rebuilder.RebuildTokenSource([]byte(`{"b":2}`), lang)
+	if err != nil {
+		t.Fatalf("RebuildTokenSource failed: %v", err)
+	}
+	if _, ok := fresh.(*JSONTokenSource); !ok {
+		t.Fatalf("rebuilt source type = %T, want *JSONTokenSource", fresh)
+	}
+}
+
 func TestParseJSONWithTokenSource(t *testing.T) {
 	lang := JsonLanguage()
 	parser := gotreesitter.NewParser(lang)
@@ -132,6 +152,31 @@ func TestParseJSONWithTokenSource(t *testing.T) {
 	}
 	if tree.RootNode().HasError() {
 		t.Fatal("expected json parse without syntax errors")
+	}
+}
+
+func TestParseJSONFaithfulCondenseRegistryTokenSourceRegression(t *testing.T) {
+	if os.Getenv("GOT_FAITHFUL_CONDENSE") != "1" {
+		t.Skip("requires GOT_FAITHFUL_CONDENSE=1")
+	}
+	lang := JsonLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := []byte(`{
+  "calls": [
+    {"args": ["one", "two", "three", "four", "five", "six", "seven", "eight"]},
+    {"ok": true, "nested": {"n": 1}}
+  ]
+}`)
+
+	tree, err := parser.ParseWithTokenSource(src, NewJSONTokenSourceOrEOF(src, lang))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("expected JSON registry token-source parse without syntax errors, got: %s", root.SExpr(lang))
 	}
 }
 

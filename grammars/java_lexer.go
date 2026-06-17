@@ -121,6 +121,15 @@ func (ts *JavaTokenSource) Reset(src []byte) {
 	ts.glrStates = ts.glrStates[:0]
 }
 
+// RebuildTokenSource constructs a fresh Java token source for another source
+// buffer while preserving the language-specific lexer setup.
+func (ts *JavaTokenSource) RebuildTokenSource(src []byte, lang *gotreesitter.Language) (gotreesitter.TokenSource, error) {
+	if lang == nil {
+		lang = ts.lang
+	}
+	return NewJavaTokenSource(src, lang)
+}
+
 // SupportsIncrementalReuse reports that JavaTokenSource preserves stable token
 // boundaries across edits and supports deterministic SkipToByte behavior.
 func (ts *JavaTokenSource) SupportsIncrementalReuse() bool {

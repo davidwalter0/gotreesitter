@@ -56,6 +56,25 @@ func TestJavaTokenSourceSkipToByte(t *testing.T) {
 	}
 }
 
+func TestJavaTokenSourceRebuildTokenSource(t *testing.T) {
+	lang := JavaLanguage()
+	ts, err := NewJavaTokenSource([]byte("class A {}\n"), lang)
+	if err != nil {
+		t.Fatalf("NewJavaTokenSource failed: %v", err)
+	}
+	rebuilder, ok := any(ts).(gotreesitter.TokenSourceRebuilder)
+	if !ok {
+		t.Fatal("JavaTokenSource should implement TokenSourceRebuilder")
+	}
+	fresh, err := rebuilder.RebuildTokenSource([]byte("class B {}\n"), lang)
+	if err != nil {
+		t.Fatalf("RebuildTokenSource failed: %v", err)
+	}
+	if _, ok := fresh.(*JavaTokenSource); !ok {
+		t.Fatalf("rebuilt source type = %T, want *JavaTokenSource", fresh)
+	}
+}
+
 func TestJavaTokenSourceZeroLongLiteralIsDecimal(t *testing.T) {
 	lang := JavaLanguage()
 	src := []byte("0L")

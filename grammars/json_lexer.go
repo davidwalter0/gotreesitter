@@ -121,6 +121,15 @@ func (ts *JSONTokenSource) Reset(src []byte) {
 	ts.cacheActive = false
 }
 
+// RebuildTokenSource constructs a fresh JSON token source for another source
+// buffer while preserving the language-specific lexer setup.
+func (ts *JSONTokenSource) RebuildTokenSource(src []byte, lang *gotreesitter.Language) (gotreesitter.TokenSource, error) {
+	if lang == nil {
+		lang = ts.lang
+	}
+	return NewJSONTokenSource(src, lang)
+}
+
 // SupportsIncrementalReuse reports that JSONTokenSource preserves stable token
 // boundaries across edits and supports deterministic SkipToByte behavior.
 func (ts *JSONTokenSource) SupportsIncrementalReuse() bool {

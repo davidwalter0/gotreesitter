@@ -316,6 +316,40 @@ func fastForwardWithExternalScannerCheckpoint(ts TokenSource, node *Node, cp ext
 	}, node.EndByte()), true
 }
 
+func restoreFaithfulShiftGuardExternalScannerCheckpoint(dts *dfaTokenSource, arena *nodeArena, s *glrStack) bool {
+	if dts == nil || !languageUsesExternalScannerCheckpoints(dts.language) || s == nil {
+		return true
+	}
+	if s.byteOffset == 0 {
+		return true
+	}
+	top := s.top()
+	if !stackEntryHasNode(top) || stackEntryNodeEndByte(top) != s.byteOffset {
+		return false
+	}
+	endSnapshot, ok := externalScannerCheckpointEndSnapshotForStackEntry(arena, top)
+	if !ok {
+		return false
+	}
+	dts.restoreExternalScannerState(endSnapshot)
+	return true
+}
+
+func externalScannerCheckpointEndSnapshotForStackEntry(arena *nodeArena, entry stackEntry) ([]byte, bool) {
+	if node := stackEntryNode(entry); node != nil {
+		cp, ok := externalScannerCheckpointRefForNode(node)
+		if !ok || node.ownerArena == nil {
+			return nil, false
+		}
+		return node.ownerArena.externalScannerSnapshotBytes(cp.end), true
+	}
+	cp, ok := externalScannerCheckpointRefForStackEntry(arena, entry)
+	if !ok || arena == nil {
+		return nil, false
+	}
+	return arena.externalScannerSnapshotBytes(cp.end), true
+}
+
 func (a *nodeArena) externalScannerCheckpointSetForNode(node *Node, create bool) (*externalScannerCheckpointSet, int, bool) {
 	if a == nil || node == nil {
 		return nil, 0, false

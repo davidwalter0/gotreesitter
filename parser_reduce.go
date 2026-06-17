@@ -1760,8 +1760,12 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 }
 
 func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
-	named := p.isNamedSymbol(tok.Symbol)
 	currentState := s.top().state
+	if !p.allowFaithfulShiftAcrossGap(s, currentState, tok, arena) {
+		s.dead = true
+		return
+	}
+	named := p.isNamedSymbol(tok.Symbol)
 	targetState := extraShiftTargetState(currentState, act)
 	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
 		extra := act.Extra
