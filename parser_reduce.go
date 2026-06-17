@@ -1205,6 +1205,14 @@ func noteRepeatedReduceChainAction(prev *reduceChainSignature, prevCount int, st
 	return prevCount, prevCount > maxRepeatedReduceChainSignature
 }
 
+func (p *Parser) recoverReduceChainCycle(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+	if tok.Symbol == 0 || tok.NoLookahead || s == nil || s.dead || s.accepted {
+		return false
+	}
+	p.pushOrExtendErrorNode(s, state, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	return true
+}
+
 func (p *Parser) useCompactNoTreeShiftLeaf() bool {
 	return p != nil && p.noTreeBenchmarkOnly && p.compactNoTreeShiftLeaves
 }
@@ -1274,7 +1282,7 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				return true
+				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1448,7 +1456,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(s *glrStack, tok Toke
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				return true
+				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1520,7 +1528,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyRed
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				return true
+				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1694,7 +1702,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(s *glrStack, 
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				return true
+				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -3746,7 +3754,9 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 		}
 	}
 	// Invisible non-extra children: extend parent span for entries that
-	// buildReduceChildren drops or inlines away.
+	// buildReduceChildren drops or inlines away. Symbols explicitly marked as
+	// span-extending may bridge a scanner-owned gap before their token; Scala
+	// interpolated string tails are represented this way.
 	//
 	// Scan from the end toward the beginning so backward extension can chain
 	// across adjacent hidden leaves. A forward-only pass misses prefixes like
@@ -3776,12 +3786,13 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 			parent.startByte = n.startByte
 			parent.startPoint = n.startPoint
 		}
-		if n.startByte <= parent.endByte && n.endByte > parent.endByte {
+		spanExtending := symbolMarked(spanExtendingInvisibleSymbols, n.symbol)
+		if (n.startByte <= parent.endByte || spanExtending) && n.endByte > parent.endByte {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
 		if n.startByte == n.endByte && n.startByte > parent.endByte &&
-			symbolMarked(spanExtendingInvisibleSymbols, n.symbol) {
+			spanExtending {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
@@ -3803,12 +3814,13 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 		if symbolMarked(nonSpanExtendingInvisibleSymbols, n.symbol) {
 			continue
 		}
-		if n.startByte <= parent.endByte && n.endByte > parent.endByte {
+		spanExtending := symbolMarked(spanExtendingInvisibleSymbols, n.symbol)
+		if (n.startByte <= parent.endByte || spanExtending) && n.endByte > parent.endByte {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
 		if n.startByte == n.endByte && n.startByte > parent.endByte &&
-			symbolMarked(spanExtendingInvisibleSymbols, n.symbol) {
+			spanExtending {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
