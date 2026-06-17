@@ -466,13 +466,14 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	auxRules := make(map[string]*Rule)
 	auxOrigins := make(map[string]map[string]bool) // aux rule name → originating grammar rule names
 	sharedStrings := computeSharedStrings(g)
+	anonymousStringSources := computeAnonymousStringSources(g)
 
 	for _, name := range nonterminals {
 		rule := g.Rules[name]
 		if rule == nil {
 			continue
 		}
-		if value, ok := sharedHiddenStringTokenValue(name, rule, sharedStrings); ok {
+		if value, ok := sharedHiddenStringTokenValue(name, rule, sharedStrings, anonymousStringSources); ok {
 			rule = Str(value)
 		}
 		// When a hidden rule's entire body is repeat1, tree-sitter converts
@@ -1210,9 +1211,10 @@ func collectAliasedPatterns(g *Grammar) map[string]aliasInfo {
 // wrapper over the anonymous string tokens, while token(choice(...)) remains a
 // named token.
 func classifyRules(g *Grammar) (tokens, nonterms []string) {
-	// Count how many distinct sources each STRING value has.
-	// Sources: named bare-STRING rules + inline STRING usage in nonterminal rules.
+	// Count how many distinct sources each STRING value has. Hidden token
+	// promotion is further gated on an anonymous source below.
 	sharedStrings := computeSharedStrings(g)
+	anonymousStringSources := computeAnonymousStringSources(g)
 
 	for _, name := range g.RuleOrder {
 		rule := g.Rules[name]
@@ -1226,7 +1228,7 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 			isVisible := !strings.HasPrefix(name, "_")
 			isBareString := terminalStringValue(rule) != ""
 			isBareStringOnlyChoice := isBareStringOnlyChoiceRule(rule)
-			_, isSharedHiddenStringToken := sharedHiddenStringTokenValue(name, rule, sharedStrings)
+			_, isSharedHiddenStringToken := sharedHiddenStringTokenValue(name, rule, sharedStrings, anonymousStringSources)
 			if isBareStringOnlyChoice || isSharedHiddenStringToken || (isVisible && isBareString) || (isBareString && sharedStrings[terminalStringValue(rule)]) {
 				nonterms = append(nonterms, name)
 			} else {
@@ -1239,7 +1241,7 @@ func classifyRules(g *Grammar) (tokens, nonterms []string) {
 	return
 }
 
-func sharedHiddenStringTokenValue(name string, r *Rule, sharedStrings map[string]bool) (string, bool) {
+func sharedHiddenStringTokenValue(name string, r *Rule, sharedStrings, anonymousStringSources map[string]bool) (string, bool) {
 	if name == "" || !strings.HasPrefix(name, "_") || r == nil || !isStringOnlyToken(r) {
 		return "", false
 	}
@@ -1249,6 +1251,9 @@ func sharedHiddenStringTokenValue(name string, r *Rule, sharedStrings map[string
 	}
 	value := extractTokenStringValue(r)
 	if value == "" || !sharedStrings[value] {
+		return "", false
+	}
+	if !anonymousStringSources[value] {
 		return "", false
 	}
 	return value, true
@@ -1307,9 +1312,9 @@ func isBareStringOnlyRule(r *Rule) bool {
 }
 
 // computeSharedStrings identifies STRING values that are used by multiple
-// sources. A STRING value is "shared" when it appears in more than one named
-// bare-STRING rule, or when it appears both in a named bare-STRING rule AND
-// as an inline string in a nonterminal rule.
+// sources. Token-only sources can make a value shared for named-token
+// classification, but hidden string-token promotion also requires an anonymous
+// source from computeAnonymousStringSources.
 func computeSharedStrings(g *Grammar) map[string]bool {
 	// Count named bare-STRING rules per string value.
 	namedUses := make(map[string]int)
@@ -1365,6 +1370,14 @@ func computeSharedStrings(g *Grammar) map[string]bool {
 		}
 	}
 	return shared
+}
+
+func computeAnonymousStringSources(g *Grammar) map[string]bool {
+	sources := make(map[string]bool)
+	for _, s := range collectStringLiterals(g) {
+		sources[s] = true
+	}
+	return sources
 }
 
 // terminalStringValue returns the string value of a bare STRING terminal rule
