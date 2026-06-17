@@ -38,6 +38,13 @@ func (p *Parser) restoreParseStopBudget(prev parserStopBudgetState) {
 	p.parseStopDeadline = prev.deadline
 }
 
+func (p *Parser) beginParseOperationBudget() func() {
+	prev := p.beginParseStopBudget(time.Now())
+	return func() {
+		p.restoreParseStopBudget(prev)
+	}
+}
+
 func (p *Parser) parseStopReasonNow() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
