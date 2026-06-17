@@ -3682,6 +3682,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	// 1. Identify hidden nonterminals with mixed pass-through and compound alts.
 	flattenMap := make(map[string]*flattenInfo)
 	preservePassthrough := stringSetFromSlice(g.PreserveHiddenChoicePassthrough)
+	aliasReferenced := hiddenSymbolsReferencedUnderAlias(g)
 
 	for _, name := range g.RuleOrder {
 		isGeneratedHidden := generatedHiddenRules[name] && g.FlattenGeneratedRepeatAux
@@ -3844,11 +3845,15 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 			}
 		}
 
+		replaceRule := true
+		if aliasReferenced[name] {
+			replaceRule = false
+		}
 		flattenMap[name] = &flattenInfo{
 			passThrough:    pt,
 			compound:       compound,
-			replaceRule:    true,
-			inlineCompound: generatedRepeatHelper && allCompoundsAreSelfRecursive,
+			replaceRule:    replaceRule,
+			inlineCompound: replaceRule && generatedRepeatHelper && allCompoundsAreSelfRecursive,
 		}
 	}
 
@@ -3912,6 +3917,33 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
 	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
 	out.PreserveHiddenChoicePassthrough = append(out.PreserveHiddenChoicePassthrough, g.PreserveHiddenChoicePassthrough...)
+	return out
+}
+
+func hiddenSymbolsReferencedUnderAlias(g *Grammar) map[string]bool {
+	out := make(map[string]bool)
+	if g == nil {
+		return out
+	}
+	var walk func(r *Rule, insideAlias bool)
+	walk = func(r *Rule, insideAlias bool) {
+		if r == nil {
+			return
+		}
+		if r.Kind == RuleSymbol && insideAlias && strings.HasPrefix(r.Value, "_") {
+			out[r.Value] = true
+		}
+		nextInsideAlias := insideAlias || r.Kind == RuleAlias
+		for _, c := range r.Children {
+			walk(c, nextInsideAlias)
+		}
+	}
+	for _, name := range g.RuleOrder {
+		walk(g.Rules[name], false)
+	}
+	for _, extra := range g.Extras {
+		walk(extra, false)
+	}
 	return out
 }
 
