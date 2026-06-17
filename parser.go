@@ -129,6 +129,10 @@ type Parser struct {
 	// slice the GSS-forest path reuses when a scoped conflict rule collapses a
 	// multi-action set to one C-preferred action, avoiding a per-node allocation.
 	forestConflictChoice [1]ParseAction
+	// pendingForkStacks buffers extra stacks produced by gated multi-link GSS
+	// reductions. The dispatch loop drains them into stacks for same-token
+	// re-dispatch.
+	pendingForkStacks []glrStack
 }
 
 var snippetParserPools sync.Map
@@ -935,6 +939,9 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 
 	for _, reduceAct := range reducePrefix {
 		p.applyAction(s, reduceAct, tok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+		if p.rejectUndrainedPendingForkStacks(s) {
+			return false
+		}
 		if s.dead {
 			return false
 		}
@@ -955,7 +962,21 @@ func (p *Parser) tryInsertMissingSingleShift(s *glrStack, tok Token, nodeCount *
 		missingTok.EndPoint = stackEntryNodeEndPoint(top)
 	}
 	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	if p.rejectUndrainedPendingForkStacks(s) {
+		return false
+	}
 	s.shifted = false
+	return true
+}
+
+func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
+	if p == nil || !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+		return false
+	}
+	p.pendingForkStacks = p.pendingForkStacks[:0]
+	if s != nil {
+		s.dead = true
+	}
 	return true
 }
 
@@ -1343,6 +1364,9 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, nodeCount *i
 		switch act.Type {
 		case ParseActionReduce:
 			p.applyAction(s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
+			if p.rejectUndrainedPendingForkStacks(s) {
+				return false
+			}
 			if s.dead {
 				return false
 			}
@@ -1410,6 +1434,9 @@ func (p *Parser) tryInsertMissingSingleShiftAtEOF(s *glrStack, tok Token, nodeCo
 		Missing:    true,
 	}
 	p.applyAction(s, candidateAct, missingTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, nil)
+	if p.rejectUndrainedPendingForkStacks(s) {
+		return false
+	}
 	s.shifted = false
 	return true
 }
@@ -2302,6 +2329,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
+	p.pendingForkStacks = p.pendingForkStacks[:0]
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -2418,6 +2446,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		expectedEOFByte = p.included[len(p.included)-1].EndByte
 	}
 	var stacks []glrStack
+	drainPendingForkStacks := func() {
+		if !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+			return
+		}
+		stacks = append(stacks, p.pendingForkStacks...)
+		p.pendingForkStacks = p.pendingForkStacks[:0]
+	}
 	parseRuntime := ParseRuntime{
 		StopReason:        ParseStopNone,
 		SourceLen:         uint32(len(source)),
@@ -2980,6 +3015,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					drainPendingForkStacks()
 					needToken = true
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
@@ -3148,6 +3184,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					drainPendingForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
 						actionTiming.actionConflictChoiceNanos += ns
@@ -3178,6 +3215,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					drainPendingForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(conflictStart).Nanoseconds()
 						actionTiming.actionConflictForkNanos += ns
@@ -3201,6 +3239,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							len(stacks), ai, fork.top().state, fork.dead, fork.shifted, fork.depth(), fork.byteOffset)
 					}
 					stacks = append(stacks, fork)
+					drainPendingForkStacks()
 				}
 				s = &stacks[si]
 				if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
@@ -3211,6 +3250,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					fmt.Printf("[GLR] orig[%d] after action[0]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
 						si, s.top().state, s.dead, s.shifted, s.depth(), s.byteOffset)
 				}
+				drainPendingForkStacks()
 				if actionTiming != nil {
 					ns := time.Since(conflictStart).Nanoseconds()
 					actionTiming.actionConflictForkNanos += ns
@@ -3228,6 +3268,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if p.applyActionWithReduceChain(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors) {
 					forceAdvanceAfterReduce = true
 				}
+				drainPendingForkStacks()
 				if actionTiming != nil {
 					ns := time.Since(actionKindStart).Nanoseconds()
 					actionTiming.actionSingleReduceNanos += ns
@@ -3261,6 +3302,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 				default:
 					p.applyAction(s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					drainPendingForkStacks()
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
 						actionTiming.actionSingleOtherNanos += ns
@@ -3291,6 +3333,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
 				if stacks[0].truncate(depth + 1) {
 					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+					drainPendingForkStacks()
 					needToken = true
 				} else {
 					stacks[0].dead = true
