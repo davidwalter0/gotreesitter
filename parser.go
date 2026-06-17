@@ -3099,10 +3099,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							chosen, choice = next, true
 						}
 					case "go":
-						if maxStacksSeen > 1 && currentState == 3 && tok.Symbol == 15 {
-							if next, ok := repetitionShiftConflictChoice(actions); ok {
-								chosen, choice = next, true
-							}
+						if next, ok := goRepetitionShiftConflictChoice(maxStacksSeen, currentState, tok, actions); ok {
+							chosen, choice = next, true
 						}
 					case "c":
 						if next, ok := cRepetitionShiftConflictChoice(p.language, actions); ok {
@@ -4124,6 +4122,13 @@ func repetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
 		return ParseAction{}, false
 	}
 	return shift, true
+}
+
+func goRepetitionShiftConflictChoice(maxStacksSeen int, currentState StateID, tok Token, actions []ParseAction) (ParseAction, bool) {
+	if glrFaithfulCapOneMerge || maxStacksSeen <= 1 || currentState != 3 || tok.Symbol != 15 {
+		return ParseAction{}, false
+	}
+	return repetitionShiftConflictChoice(actions)
 }
 
 func (p *Parser) javaSwitchArrowConflictChoice(s *glrStack, tok Token, actions []ParseAction) (ParseAction, bool) {
