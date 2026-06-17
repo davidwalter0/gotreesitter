@@ -123,6 +123,9 @@ func (b *resultRootBuild) syntheticRootSymbol(originalNodes, rootChildren []*Nod
 	if b.isLanguage("dart") && dartProgramChildrenLookComplete(originalNodes, b.lang) {
 		return b.expectedRootSymbol
 	}
+	if b.isLanguage("go") {
+		return b.expectedRootSymbol
+	}
 	if b.isLanguage("proto") && protoSourceFileChildrenLookComplete(rootChildren, b.lang) {
 		return b.expectedRootSymbol
 	}
