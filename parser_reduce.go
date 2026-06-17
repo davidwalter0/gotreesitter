@@ -688,7 +688,7 @@ func forEachStateAction(lang *Language, denseLimit, smallBase int, fn func(state
 	}
 }
 
-func (p *Parser) applyActionWithReduceChain(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) applyActionWithReduceChain(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if act.Type != ParseActionReduce {
 		p.applyAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		return false
@@ -697,7 +697,7 @@ func (p *Parser) applyActionWithReduceChain(s *glrStack, act ParseAction, tok To
 	if tok.NoLookahead || s == nil || s.dead || s.accepted || s.shifted {
 		return false
 	}
-	return p.chainSingleReduceActions(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	return p.chainSingleReduceActions(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 }
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
@@ -986,7 +986,7 @@ func (p *Parser) resyncTopLevelLanguage() bool {
 //   - resyncRetry: resynced; caller retries the action at the same token.
 //   - resyncAdvance: resynced and folded the current token into the ERROR;
 //     caller advances to the next token.
-func (p *Parser) tryResyncErrorRecovery(s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) int {
+func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) int {
 	if p == nil || s == nil || arena == nil || tok.Symbol == 0 {
 		return resyncNone
 	}
@@ -1111,6 +1111,9 @@ func (p *Parser) tryResyncErrorRecovery(s *glrStack, tok Token, nodeCount *int, 
 	errChildren := make([]*Node, 0, len(poppedNodes)-preservedEnd+1)
 	errChildren = append(errChildren, poppedNodes[preservedEnd:]...)
 	if status == resyncAdvance {
+		if !p.guardRealTokenAttachmentGap(source, s, tok, "resync") {
+			return resyncNone
+		}
 		// Fold the unparseable current token into the ERROR span.
 		tokLeaf := newLeafNodeInArena(arena, tok.Symbol, p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
@@ -1205,8 +1208,11 @@ func noteRepeatedReduceChainAction(prev *reduceChainSignature, prevCount int, st
 	return prevCount, prevCount > maxRepeatedReduceChainSignature
 }
 
-func (p *Parser) recoverReduceChainCycle(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+func (p *Parser) recoverReduceChainCycle(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
 	if tok.Symbol == 0 || tok.NoLookahead || s == nil || s.dead || s.accepted {
+		return false
+	}
+	if !p.guardRealTokenAttachmentGap(source, s, tok, "reduce-chain-cycle") {
 		return false
 	}
 	p.pushOrExtendErrorNode(s, state, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
@@ -1241,15 +1247,15 @@ func (p *Parser) shiftTokenIsMissingError(tok Token) bool {
 		tok.Symbol != 0 && tok.StartByte == tok.EndByte && tok.Text == ""
 }
 
-func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActions(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if s == nil || s.dead || s.accepted || s.shifted {
 		return false
 	}
 	if p.ambiguityProfile != nil {
-		return p.chainSingleReduceActionsProfiled(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		return p.chainSingleReduceActionsProfiled(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 	}
 	if len(p.classifiedActions) == len(p.language.ParseActions) {
-		return p.chainSingleReduceActionsClassified(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		return p.chainSingleReduceActionsClassified(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 	}
 	const maxInlineReduceChain = 256
 	parseActions := p.language.ParseActions
@@ -1282,7 +1288,7 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1312,13 +1318,13 @@ func (p *Parser) chainSingleReduceActions(s *glrStack, tok Token, anyReduced *bo
 	return false
 }
 
-func (p *Parser) chainSingleReduceActionsClassified(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassified(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if len(p.reduceChainHints) != 0 {
 		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
-			return p.chainSingleReduceActionsClassifiedHinted(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			return p.chainSingleReduceActionsClassifiedHinted(source, s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		}
 	}
-	return p.chainSingleReduceActionsClassifiedDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	return p.chainSingleReduceActionsClassifiedDefault(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 }
 
 func (p *Parser) reduceChainHintFor(state StateID, lookahead Symbol) (reduceChainHint, bool) {
@@ -1360,7 +1366,7 @@ func reduceChainHintTerminalStateAllowed(hint reduceChainHint, state StateID) bo
 	return false
 }
 
-func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if perfCountersEnabled {
 		perfRecordReduceChainHintCandidate()
 		perfRecordReduceChainHintTaken()
@@ -1428,10 +1434,10 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(s *glrStack, tok Token
 	if perfCountersEnabled {
 		perfRecordReduceChainHintLimit()
 	}
-	return p.chainSingleReduceActionsClassifiedDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	return p.chainSingleReduceActionsClassifiedDefault(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 }
 
-func (p *Parser) chainSingleReduceActionsClassifiedDefault(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	chainLen := 0
@@ -1456,7 +1462,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(s *glrStack, tok Toke
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1486,9 +1492,9 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(s *glrStack, tok Toke
 	return false
 }
 
-func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if len(p.classifiedActions) == len(p.language.ParseActions) {
-		return p.chainSingleReduceActionsClassifiedProfiled(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		return p.chainSingleReduceActionsClassifiedProfiled(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 	}
 	const maxInlineReduceChain = 256
 	parseActions := p.language.ParseActions
@@ -1528,7 +1534,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyRed
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
@@ -1572,16 +1578,16 @@ func (p *Parser) chainSingleReduceActionsProfiled(s *glrStack, tok Token, anyRed
 	return false
 }
 
-func (p *Parser) chainSingleReduceActionsClassifiedProfiled(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassifiedProfiled(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if len(p.reduceChainHints) != 0 {
 		if hint, ok := p.reduceChainHintFor(s.top().state, tok.Symbol); ok {
-			return p.chainSingleReduceActionsClassifiedHintedProfiled(s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			return p.chainSingleReduceActionsClassifiedHintedProfiled(source, s, tok, hint, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		}
 	}
-	return p.chainSingleReduceActionsClassifiedProfiledDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	return p.chainSingleReduceActionsClassifiedProfiledDefault(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 }
 
-func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(source []byte, s *glrStack, tok Token, hint reduceChainHint, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if perfCountersEnabled {
 		perfRecordReduceChainHintCandidate()
 		perfRecordReduceChainHintTaken()
@@ -1668,10 +1674,10 @@ func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(s *glrStack, t
 	if perfCountersEnabled {
 		perfRecordReduceChainHintLimit()
 	}
-	return p.chainSingleReduceActionsClassifiedProfiledDefault(s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	return p.chainSingleReduceActionsClassifiedProfiledDefault(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 }
 
-func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
+func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte, s *glrStack, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	chainLen := 0
@@ -1702,7 +1708,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(s *glrStack, 
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				return p.recoverReduceChainCycle(s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
