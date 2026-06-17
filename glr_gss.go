@@ -54,6 +54,7 @@ type gssScratch struct {
 	usedTotal         int
 	allocatedBytes    int64
 	singleStackMode   bool
+	reduceForkCap     int
 	singleStackAllocs uint64
 	multiStackAllocs  uint64
 	audit             *runtimeAudit
@@ -432,6 +433,7 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 func (s *gssScratch) reset() {
 	if len(s.slabs) == 0 {
 		s.singleStackMode = false
+		s.reduceForkCap = 0
 		s.singleStackAllocs = 0
 		s.multiStackAllocs = 0
 		s.skipClear = false
@@ -476,6 +478,7 @@ func (s *gssScratch) reset() {
 	s.skipClear = false
 	s.usedTotal = 0
 	s.singleStackMode = false
+	s.reduceForkCap = 0
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0
 	s.audit = nil
