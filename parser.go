@@ -2269,7 +2269,7 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
-func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
 		return true
 	}
@@ -2277,6 +2277,10 @@ func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 		return true
 	}
 	return bytesAreParserPadding(source, s.byteOffset, tok.StartByte)
+}
+
+func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+	return realTokenAttachmentGapIsParserPadding(source, s, tok)
 }
 
 func bytesAreParserPadding(source []byte, start, end uint32) bool {
@@ -2298,18 +2302,25 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 	return true
 }
 
-func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
-	if realShiftGapIsParserPadding(source, s, tok) {
+func (p *Parser) guardRealTokenAttachmentGap(source []byte, s *glrStack, tok Token, consumer string) bool {
+	if realTokenAttachmentGapIsParserPadding(source, s, tok) {
 		return true
 	}
+	if consumer == "" {
+		consumer = "attachment"
+	}
 	if p != nil && p.glrTrace && s != nil {
-		fmt.Printf("    KILL stale shift: stack_byte=%d tok=%d..%d gap=%q\n",
-			s.byteOffset, tok.StartByte, tok.EndByte, string(source[s.byteOffset:tok.StartByte]))
+		fmt.Printf("    KILL stale %s: stack_byte=%d tok=%d..%d gap=%q\n",
+			consumer, s.byteOffset, tok.StartByte, tok.EndByte, string(source[s.byteOffset:tok.StartByte]))
 	}
 	if s != nil {
 		s.dead = true
 	}
 	return false
+}
+
+func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
+	return p.guardRealTokenAttachmentGap(source, s, tok, "shift")
 }
 
 // parseInternal is the core GLR parsing loop shared by Parse and
@@ -2784,7 +2795,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			// in the C error state dispatches through ts_parser__recover
 			// instead of the parse table, except for shiftable tokens.
 			if s.cRec != nil && p.errorCostCompetitionEnabled() {
-				outcome, redispatch := p.cRecoverDispatchInError(&stacks, si, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+				outcome, redispatch := p.cRecoverDispatchInError(&stacks, si, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				s = &stacks[si]
 				if redispatch {
 					anyReduced = true
@@ -2877,6 +2888,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					// goto) further down this chain.
 					if DebugDFA.Load() {
 						fmt.Printf("  ABSORB-ERR tok=%d-%d state=%d stacks=%d\n", tok.StartByte, tok.EndByte, currentState, len(stacks))
+					}
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "lex-error") {
+						continue
 					}
 					p.pushLexErrorRunLeaf(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					needToken = true
@@ -3014,6 +3028,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						continue
 					}
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
 					p.applyAction(s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					drainPendingForkStacks()
 					needToken = true
@@ -3069,6 +3086,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionRecoverNanos += ns
 					}
+					continue
+				}
+				if !p.guardRealTokenAttachmentGap(source, s, tok, "error") {
 					continue
 				}
 				p.pushOrExtendErrorNode(s, currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
@@ -3181,6 +3201,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if chosen.Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
 						continue
 					}
+					if chosen.Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
 					p.applyAction(s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					drainPendingForkStacks()
 					if actionTiming != nil {
@@ -3212,6 +3235,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
 						continue
 					}
+					if actions[0].Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
 					p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					drainPendingForkStacks()
 					if actionTiming != nil {
@@ -3230,7 +3256,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					fork.branchOrder = nextBranchOrder
 					nextBranchOrder++
 					if actions[ai].Type != ParseActionShift || p.guardRealShiftGap(source, &fork, tok) {
-						p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						if actions[ai].Type != ParseActionRecover || p.guardRealTokenAttachmentGap(source, &fork, tok, "recover") {
+							p.applyAction(&fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+						}
 					}
 					if p.glrTrace {
 						fmt.Printf("[GLR] fork[%d] after action[%d]: st=%d dead=%v shift=%v dep=%d byte=%d\n",
@@ -3241,6 +3269,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				s = &stacks[si]
 				if actions[0].Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
+					continue
+				}
+				if actions[0].Type == ParseActionRecover && !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
 					continue
 				}
 				p.applyAction(s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
@@ -3292,6 +3323,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						recordActionTiming(currentState, tok.Symbol, actions, ambiguityActionSingleAccept, ns)
 					}
 				case ParseActionRecover:
+					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
+						continue
+					}
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 					if actionTiming != nil {
 						ns := time.Since(actionKindStart).Nanoseconds()
@@ -3330,6 +3364,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				consecutiveReduces = 0
 			} else if depth, recoverAct, ok := p.findRecoverActionOnStack(&stacks[0], tok.Symbol, timing); ok {
 				if stacks[0].truncate(depth + 1) {
+					if !p.guardRealTokenAttachmentGap(source, &stacks[0], tok, "recover") {
+						continue
+					}
 					p.applyAction(&stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 					drainPendingForkStacks()
 					needToken = true
@@ -3337,6 +3374,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					stacks[0].dead = true
 				}
 			} else if stacks[0].depth() > 0 {
+				if !p.guardRealTokenAttachmentGap(source, &stacks[0], tok, "error") {
+					continue
+				}
 				p.pushOrExtendErrorNode(&stacks[0], currentState, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 				needToken = true
 			}
@@ -3349,7 +3389,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// clean parses are unaffected.
 		if p.errorCostCompetitionEnabled() && !anyReduced {
 			var resumed bool
-			stacks, resumed = p.cCondenseAndResume(stacks, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+			stacks, resumed = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
 			if resumed {
 				anyReduced = true
 			}
