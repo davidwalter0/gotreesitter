@@ -228,6 +228,9 @@ func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTraili
 // trivia. The compatibility guard mirrors finalizeResultRoot exactly.
 func (b *resultRootBuild) finalizeWrappedSubtree(root *Node) {
 	p := b.parser
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		normalizeResultCompatibility(root, b.source, p)
 	}
@@ -392,17 +395,29 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	timing := p.currentMaterializationTiming()
 	finalizeStart := materializationTimingStart(timing)
 	defer timing.addResultFinalizeRoot(finalizeStart)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	if p != nil {
 		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
+	}
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
 	}
 	if extendTrailing {
 		start := materializationTimingStart(timing)
 		extendNodeToTrailingWhitespace(root, source)
 		timing.addResultExtendTrailing(start)
 	}
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	start := materializationTimingStart(timing)
 	p.normalizeRootSourceStart(root, source)
 	timing.addResultNormalizeRootStart(start)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		start = materializationTimingStart(timing)
 		normalizeResultCompatibility(root, source, p)
@@ -416,12 +431,17 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 			extendNodeToTrailingWhitespace(root, source)
 		}
 	}
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	if wireParentLinks {
 		start = materializationTimingStart(timing)
 		if p != nil && p.shouldDeferResultParentLinks(root) {
 			root.ownerArena.deferParentLinks(root)
 		} else {
-			wireParentLinksWithScratch(root, linkScratch)
+			if !wireParentLinksWithScratchUntil(root, linkScratch, p) && root.ownerArena != nil {
+				root.ownerArena.deferParentLinks(root)
+			}
 		}
 		timing.addResultParentLink(start)
 	}

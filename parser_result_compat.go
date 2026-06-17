@@ -24,12 +24,18 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 	if root == nil || lang == nil {
 		return resultCompatibilityResult{}
 	}
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return resultCompatibilityResult{}
+	}
 	result := runLanguageResultCompatibility(resultCompatibilityContext{
 		root:   root,
 		source: source,
 		parser: p,
 		lang:   lang,
 	})
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return result
+	}
 	normalizeResultCollapsedNamedLeafChildren(root, lang)
 	return result
 }

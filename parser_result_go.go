@@ -4,7 +4,13 @@ import "bytes"
 
 func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	normalizeGoSourceFileRoot(root, source, p)
-	normalizeGoCompatibility(root, source, lang)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
+	normalizeGoCompatibilityWithParser(root, source, lang, p)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		return
+	}
 	normalizeRootEOFNewlineSpan(root, source, lang)
 }
 

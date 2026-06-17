@@ -27,18 +27,32 @@ func normalizeGoCompatibility(root *Node, source []byte, lang *Language) {
 }
 
 func normalizeGoCompatibilityInRanges(root *Node, source []byte, lang *Language, incrementalRanges []Range) {
+	normalizeGoCompatibilityInRangesWithParser(root, source, lang, incrementalRanges, nil)
+}
+
+func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Language, p *Parser) {
+	normalizeGoCompatibilityInRangesWithParser(root, source, lang, nil, p)
+}
+
+func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang *Language, incrementalRanges []Range, p *Parser) {
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
+		return
+	}
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return
 	}
 	flags := goCompatibilitySourceFlagsFor(source)
 	if flags.dot {
-		normalizeGoDotLeafChildren(root, source, lang)
+		normalizeGoDotLeafChildrenWithParser(root, source, lang, p)
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return
+		}
 	}
 	syms, ok := goCompatibilitySymbolsForLanguage(lang)
 	if !ok {
 		return
 	}
-	normalizeGoCompatibilitySubtree(root, source, syms, flags, incrementalRanges)
+	normalizeGoCompatibilitySubtree(root, source, syms, flags, incrementalRanges, p)
 }
 
 func goCompatibilitySourceFlagsFor(source []byte) goCompatibilitySourceFlags {
@@ -64,6 +78,10 @@ func goSourceMayNeedTrailingBoundaryCompatibility(source []byte) bool {
 }
 
 func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
+	normalizeGoDotLeafChildrenWithParser(root, source, lang, nil)
+}
+
+func normalizeGoDotLeafChildrenWithParser(root *Node, source []byte, lang *Language, p *Parser) {
 	if root == nil || lang == nil || len(source) == 0 {
 		return
 	}
@@ -89,6 +107,9 @@ func normalizeGoDotLeafChildren(root *Node, source []byte, lang *Language) {
 		}
 	}
 	for len(stack) > 0 {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return
+		}
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		childCount := resultChildCount(n)
@@ -192,39 +213,62 @@ func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 	return (s.statementList != 0 && sym == s.statementList) || (s.statementListTail != 0 && sym == s.statementListTail)
 }
 
-func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range) {
-	if n == nil || !goNodeOverlapsAnyRange(n, incrementalRanges) {
+func normalizeGoCompatibilitySubtree(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, p *Parser) {
+	type frame struct {
+		node *Node
+		exit bool
+	}
+	if n == nil {
 		return
 	}
-	childCount := resultChildCount(n)
-	if childCount > 0 {
-		normalizeGoSemicolonContainer(n, source, syms)
-		if flags.siblingBoundary {
-			normalizeGoAdjacentSiblingBoundaries(n, source, syms)
+	stack := []frame{{node: n}}
+	for len(stack) > 0 {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			return
 		}
-	}
-	if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
-		for _, child := range n.children {
-			normalizeGoCompatibilitySubtree(child, source, syms, flags, incrementalRanges)
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := top.node
+		if n == nil {
+			continue
 		}
-	} else {
+		if top.exit {
+			if flags.trailingBoundary {
+				normalizeGoStatementListTrailingExtras(n, source, syms)
+			}
+			continue
+		}
+		if !goNodeOverlapsAnyRange(n, incrementalRanges) {
+			continue
+		}
+		childCount := resultChildCount(n)
+		if childCount > 0 {
+			normalizeGoSemicolonContainer(n, source, syms)
+			if flags.siblingBoundary {
+				normalizeGoAdjacentSiblingBoundaries(n, source, syms)
+			}
+		}
+		stack = append(stack, frame{node: n, exit: true})
+		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+			for i := len(n.children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: n.children[i]})
+			}
+			continue
+		}
 		view := resultMutableChildrenForMutation(n)
 		if view.hasFinalChildRefs() {
-			for i := 0; i < view.Len(); i++ {
+			for i := view.Len() - 1; i >= 0; i-- {
 				entry, ok := view.Entry(i)
 				if !ok || stackEntryNodeChildCount(entry) == 0 {
 					continue
 				}
-				normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		} else {
-			for i := 0; i < childCount; i++ {
-				normalizeGoCompatibilitySubtree(resultChildAt(n, i), source, syms, flags, incrementalRanges)
+			for i := childCount - 1; i >= 0; i-- {
+				stack = append(stack, frame{node: resultChildAt(n, i)})
 			}
 		}
-	}
-	if flags.trailingBoundary {
-		normalizeGoStatementListTrailingExtras(n, source, syms)
 	}
 }
 

@@ -56,6 +56,9 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if tree == nil {
 		return false
 	}
+	if tree.ParseStoppedEarly() {
+		return false
+	}
 	if oldTree == nil {
 		return true
 	}
@@ -67,6 +70,10 @@ func normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []byte, lang *
 		return
 	}
 	normalizeReturnedTree(rawRootOrNil(tree), source, lang)
+}
+
+func shouldNormalizeReturnedTree(tree *Tree) bool {
+	return tree != nil && !tree.ParseStoppedEarly()
 }
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
@@ -137,6 +144,8 @@ func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
 	parser.skipRecoveryReparse = true
 	parser.timeoutMicros = p.timeoutMicros
 	parser.cancellationFlag = p.cancellationFlag
+	parser.parseStopBudgetActive = p.parseStopBudgetActive
+	parser.parseStopDeadline = p.parseStopDeadline
 	if p.reparseFactory != nil {
 		ts, err := p.reparseFactory(source)
 		if err != nil {
@@ -250,7 +259,9 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if shouldRepeatExternalScannerFullParse(p.language, tree) {
 		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 	}
-	p.normalizeReturnedTree(rawRootOrNil(tree), source)
+	if shouldNormalizeReturnedTree(tree) {
+		p.normalizeReturnedTree(rawRootOrNil(tree), source)
+	}
 	return tree, nil
 }
 
@@ -543,7 +554,9 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		if shouldRepeatExternalScannerFullParse(p.language, tree) {
 			tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 		}
-		p.normalizeReturnedTree(rawRootOrNil(tree), source)
+		if shouldNormalizeReturnedTree(tree) {
+			p.normalizeReturnedTree(rawRootOrNil(tree), source)
+		}
 	}
 	return tree, nil
 }
