@@ -1266,7 +1266,7 @@ func isBareStringOnlyRule(r *Rule) bool {
 	switch r.Kind {
 	case RuleString:
 		return true
-	case RuleChoice, RuleSeq:
+	case RuleChoice:
 		if len(r.Children) == 0 {
 			return false
 		}
@@ -1300,7 +1300,10 @@ func computeSharedStrings(g *Grammar) map[string]bool {
 		}
 	}
 
-	// Count inline STRING usage in nonterminal rules.
+	// Count inline STRING usage in nonterminal rules. Bare string-only choices
+	// are terminal-shaped, but classifyRules turns them into nonterminals so
+	// their anonymous string alternatives must participate in shared-string
+	// detection too.
 	inlineUses := make(map[string]bool)
 	var walkInline func(r *Rule, inToken bool)
 	walkInline = func(r *Rule, inToken bool) {
@@ -1322,7 +1325,7 @@ func computeSharedStrings(g *Grammar) map[string]bool {
 	}
 	for _, name := range g.RuleOrder {
 		rule := g.Rules[name]
-		if !isTerminalRule(rule) {
+		if !isTerminalRule(rule) || isBareStringOnlyChoiceRule(rule) {
 			walkInline(rule, false)
 		}
 	}
