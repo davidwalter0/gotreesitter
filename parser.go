@@ -2444,6 +2444,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
+		releaseArenaAfterStats := false
 		if !parseStopReasonIsTerminal(stopReason) {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 				stopReason = reason
@@ -2452,15 +2453,17 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if p.transientReduceChildren && tree != nil {
 			if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 				stopReason = reason
+				tree = parseErrorTree(source, p.language)
+				releaseArenaAfterStats = true
 			} else {
 				materializeStart := time.Time{}
 				if materializationTimingRef != nil {
 					materializeStart = time.Now()
 				}
-				if !scratch.transientChildren.materializeNodeUntil(tree.RootNode(), arena, &scratch.nodeLinks, p) {
-					if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-						stopReason = reason
-					}
+				if reason := scratch.transientChildren.materializeNodeUntil(tree.RootNode(), arena, &scratch.nodeLinks, p); parseStopReasonIsTerminal(reason) {
+					stopReason = reason
+					tree = parseErrorTree(source, p.language)
+					releaseArenaAfterStats = true
 				}
 				if materializationTimingRef != nil {
 					materializationTimingRef.transientChildMaterializationNanos += time.Since(materializeStart).Nanoseconds()
@@ -2470,6 +2473,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
+		if releaseArenaAfterStats && arena != nil {
+			arena.Release()
+		}
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
@@ -2523,6 +2529,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			!trackChildErrors,
 			materializationTimingRef,
 		)
+		if tree != nil && !parseStopReasonIsTerminal(stopReason) {
+			if reason := tree.ParseStopReason(); parseStopReasonIsTerminal(reason) {
+				stopReason = reason
+			}
+		}
 		return finalizeTree(tree, stopReason)
 	}
 	finalizeErrorTree := func(stopReason ParseStopReason) *Tree {
@@ -2542,11 +2553,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			arena.Release()
 			return finalizeTree(parseErrorTree(source, p.language), reason)
 		}
-		if !materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p) {
-			reason := p.parseStopReasonNow()
-			if !parseStopReasonIsTerminal(reason) {
-				reason = ParseStopCancelled
-			}
+		if reason := materializeTransientParentNodes(nodes, arena, scratch.reduce.transientParents, scratch.reduce.transientChildren, p); parseStopReasonIsTerminal(reason) {
 			captureArenaStats()
 			arena.Release()
 			return finalizeTree(parseErrorTree(source, p.language), reason)
