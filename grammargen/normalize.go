@@ -115,6 +115,7 @@ type NormalizedGrammar struct {
 	PreferExpressionOperatorIdentifierReduces  bool
 	PreferParenthesizedCallDoBlockReduces      bool
 	PreferStabClauseLeftArrowReduces           bool
+	PreferPreciseExternalLexStates             bool
 	SuppressEquivalentExternalReduceLookaheads bool
 	ExternalReduceFollowLookaheads             map[string]bool
 
@@ -680,6 +681,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	ng.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
 	ng.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
+	ng.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
 	ng.ExternalReduceFollowLookaheads = stringSetFromSlice(g.ExternalReduceFollowLookaheads)
 
@@ -3903,6 +3905,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
+	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
@@ -4308,6 +4311,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
+	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
