@@ -114,6 +114,7 @@ type NormalizedGrammar struct {
 	PreserveKeywordIdentifierConflicts         bool
 	PreferExpressionOperatorIdentifierReduces  bool
 	PreferParenthesizedCallDoBlockReduces      bool
+	PreferRemoteCallOperatorReduces            bool
 	PreferStabClauseLeftArrowReduces           bool
 	PreferPreciseExternalLexStates             bool
 	SuppressEquivalentExternalReduceLookaheads bool
@@ -680,6 +681,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 	ng.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	ng.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
+	ng.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	ng.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	ng.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
@@ -3909,6 +3911,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
+	out.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	out.ExactPrefixStates = g.ExactPrefixStates
@@ -4345,6 +4348,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.PreserveKeywordIdentifierConflicts = g.PreserveKeywordIdentifierConflicts
 	out.PreferExpressionOperatorIdentifierReduces = g.PreferExpressionOperatorIdentifierReduces
 	out.PreferParenthesizedCallDoBlockReduces = g.PreferParenthesizedCallDoBlockReduces
+	out.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	out.ExactPrefixStates = g.ExactPrefixStates
