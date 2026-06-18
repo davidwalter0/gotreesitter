@@ -990,6 +990,26 @@ func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 	}
 }
 
+func TestNoStacksCleanRootRetryWidenMergeBeforeStackCap(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "go"},
+		root: &Node{
+			endByte: 96,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: 128,
+			RootEndByte:     96,
+			Truncated:       true,
+			MaxStacksSeen:   3,
+		},
+	}
+
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 8); got != fullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(clean EOF no_stacks) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+}
+
 func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
 	tree := &Tree{
 		root: &Node{
