@@ -205,6 +205,8 @@ type glrMergeTelemetryConfig struct {
 	enabled bool
 	topKeys int
 	minSeen int
+	// maxEvents caps emitted GLR-MERGE lines; 0 means unlimited.
+	maxEvents int
 }
 
 func parseGLRMergeTelemetryConfig() glrMergeTelemetryConfig {
@@ -212,9 +214,10 @@ func parseGLRMergeTelemetryConfig() glrMergeTelemetryConfig {
 		raw := strings.TrimSpace(os.Getenv("GOT_GLR_MERGE_TELEMETRY"))
 		enabled := raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
 		glrMergeTelemetryConfigVal = glrMergeTelemetryConfig{
-			enabled: enabled,
-			topKeys: 8,
-			minSeen: 8,
+			enabled:   enabled,
+			topKeys:   8,
+			minSeen:   8,
+			maxEvents: 2000,
 		}
 		if n := parsePositiveEnvInt("GOT_GLR_MERGE_TELEMETRY_TOP_KEYS"); n > 0 {
 			glrMergeTelemetryConfigVal.topKeys = n
@@ -222,8 +225,23 @@ func parseGLRMergeTelemetryConfig() glrMergeTelemetryConfig {
 		if n := parsePositiveEnvInt("GOT_GLR_MERGE_TELEMETRY_MIN_SEEN"); n > 0 {
 			glrMergeTelemetryConfigVal.minSeen = n
 		}
+		if n, ok := parseNonNegativeEnvInt("GOT_GLR_MERGE_TELEMETRY_MAX_EVENTS"); ok {
+			glrMergeTelemetryConfigVal.maxEvents = n
+		}
 	})
 	return glrMergeTelemetryConfigVal
+}
+
+func parseNonNegativeEnvInt(name string) (int, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 func parsePositiveEnvInt(name string) int {

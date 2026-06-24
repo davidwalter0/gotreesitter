@@ -133,10 +133,11 @@ type glrMergeLargeSlot struct {
 }
 
 type glrMergeTelemetry struct {
-	cfg    glrMergeTelemetryConfig
-	lang   string
-	mode   string
-	nextID uint64
+	cfg     glrMergeTelemetryConfig
+	lang    string
+	mode    string
+	nextID  uint64
+	emitted int
 }
 
 type glrMergeTelemetryEvent struct {
@@ -169,11 +170,25 @@ type glrMergeTelemetryKey struct {
 	overflowReplace   int
 	overflowDrop      int
 	costPreserve      int
-	keepBest          string
-	keepWorst         string
-	dropBest          string
-	replaceBest       string
+	keepBest          glrMergeTelemetryRank
+	keepWorst         glrMergeTelemetryRank
+	dropBest          glrMergeTelemetryRank
+	replaceBest       glrMergeTelemetryRank
 	overflowSeen      bool
+}
+
+type glrMergeTelemetryRank struct {
+	valid       bool
+	accepted    bool
+	score       int
+	shifted     bool
+	depth       int
+	byteOffset  uint32
+	branchOrder uint64
+	hash        uint64
+	errorRank   int
+	kind        string
+	shape       uint64
 }
 
 var glrMergeTelemetryWriter io.Writer = os.Stderr
@@ -480,6 +495,9 @@ func (t *glrMergeTelemetry) begin(in, alive, perKeyCap int) *glrMergeTelemetryEv
 	if t == nil {
 		return nil
 	}
+	if t.cfg.maxEvents > 0 && t.emitted >= t.cfg.maxEvents {
+		return nil
+	}
 	t.nextID++
 	return &glrMergeTelemetryEvent{
 		t:     t,
@@ -642,13 +660,18 @@ func (e *glrMergeTelemetryEvent) emit() {
 	if e == nil || e.t == nil || glrMergeTelemetryWriter == nil {
 		return
 	}
-	fmt.Fprintf(glrMergeTelemetryWriter, "GLR-MERGE event=summary id=%d lang=%s mode=%s in=%d alive=%d out=%d slots=%d cap=%d max_seen=%d overflow_keys=%d\n",
-		e.id, e.t.lang, e.t.mode, e.in, e.alive, e.out, e.slots, e.cap, e.maxSeen, e.overflowKeys)
 	stats := make([]*glrMergeTelemetryKey, 0, len(e.keys))
 	for _, stat := range e.keys {
 		if stat.seen >= e.t.cfg.minSeen {
 			stats = append(stats, stat)
 		}
+	}
+	if e.slots == 0 && e.maxSeen < e.t.cfg.minSeen {
+		return
+	}
+	if !e.t.emitLine("GLR-MERGE event=summary id=%d lang=%s mode=%s in=%d alive=%d out=%d slots=%d cap=%d max_seen=%d overflow_keys=%d\n",
+		e.id, e.t.lang, e.t.mode, e.in, e.alive, e.out, e.slots, e.cap, e.maxSeen, e.overflowKeys) {
+		return
 	}
 	sort.Slice(stats, func(i, j int) bool {
 		if stats[i].seen != stats[j].seen {
@@ -666,72 +689,146 @@ func (e *glrMergeTelemetryEvent) emit() {
 		stats = stats[:e.t.cfg.topKeys]
 	}
 	for _, stat := range stats {
-		fmt.Fprintf(glrMergeTelemetryWriter, "GLR-MERGE event=key id=%d lang=%s mode=%s state=%d byte=%d seen=%d kept=%d cap=%d gss_attempt=%d gss_merge=%d gss_reject_shape=%d gss_reject_cost=%d gss_reject_canmerge=%d equiv_test=%d equiv_true=%d dup_replace=%d dup_drop=%d overflow=%d overflow_replace=%d overflow_drop=%d cost_preserve=%d keep_best=%s keep_worst=%s drop_best=%s replace_best=%s\n",
+		if !e.t.emitLine("GLR-MERGE event=key id=%d lang=%s mode=%s state=%d byte=%d seen=%d kept=%d cap=%d gss_attempt=%d gss_merge=%d gss_reject_shape=%d gss_reject_cost=%d gss_reject_canmerge=%d equiv_test=%d equiv_true=%d dup_replace=%d dup_drop=%d overflow=%d overflow_replace=%d overflow_drop=%d cost_preserve=%d keep_best=%s keep_worst=%s drop_best=%s replace_best=%s\n",
 			e.id, e.t.lang, e.t.mode, stat.key.state, stat.key.byteOffset, stat.seen, stat.kept, e.cap,
 			stat.gssAttempt, stat.gssMerge, stat.gssRejectShape, stat.gssRejectCost, stat.gssRejectCanMerge,
 			stat.equivTest, stat.equivTrue, stat.dupReplace, stat.dupDrop, stat.overflow, stat.overflowReplace,
 			stat.overflowDrop, stat.costPreserve, rankOrDash(stat.keepBest), rankOrDash(stat.keepWorst),
-			rankOrDash(stat.dropBest), rankOrDash(stat.replaceBest))
+			rankOrDash(stat.dropBest), rankOrDash(stat.replaceBest)) {
+			return
+		}
 	}
+}
+
+func (t *glrMergeTelemetry) emitLine(format string, args ...any) bool {
+	if t == nil || glrMergeTelemetryWriter == nil {
+		return false
+	}
+	if t.cfg.maxEvents > 0 && t.emitted >= t.cfg.maxEvents {
+		return false
+	}
+	fmt.Fprintf(glrMergeTelemetryWriter, format, args...)
+	t.emitted++
+	return true
 }
 
 func (s *glrMergeTelemetryKey) considerKeep(stack *glrStack, hash uint64) {
 	rank := stackMergeTelemetryRank(stack, hash)
-	if s.keepBest == "" || compareRankStrings(rank, s.keepBest) > 0 {
+	if !s.keepBest.valid || compareTelemetryRanks(rank, s.keepBest) > 0 {
 		s.keepBest = rank
 	}
-	if s.keepWorst == "" || compareRankStrings(rank, s.keepWorst) < 0 {
+	if !s.keepWorst.valid || compareTelemetryRanks(rank, s.keepWorst) < 0 {
 		s.keepWorst = rank
 	}
 }
 
 func (s *glrMergeTelemetryKey) considerDrop(stack *glrStack, hash uint64) {
 	rank := stackMergeTelemetryRank(stack, hash)
-	if s.dropBest == "" || compareRankStrings(rank, s.dropBest) > 0 {
+	if !s.dropBest.valid || compareTelemetryRanks(rank, s.dropBest) > 0 {
 		s.dropBest = rank
 	}
 }
 
 func (s *glrMergeTelemetryKey) considerReplace(stack *glrStack, hash uint64) {
 	rank := stackMergeTelemetryRank(stack, hash)
-	if s.replaceBest == "" || compareRankStrings(rank, s.replaceBest) > 0 {
+	if !s.replaceBest.valid || compareTelemetryRanks(rank, s.replaceBest) > 0 {
 		s.replaceBest = rank
 	}
 }
 
-func compareRankStrings(a, b string) int {
-	if a == b {
+func compareTelemetryRanks(a, b glrMergeTelemetryRank) int {
+	if !a.valid && !b.valid {
 		return 0
 	}
-	if a > b {
+	if !a.valid {
+		return -1
+	}
+	if !b.valid {
 		return 1
 	}
-	return -1
-}
-
-func rankOrDash(rank string) string {
-	if rank == "" {
-		return "-"
+	if a.accepted != b.accepted {
+		if a.accepted {
+			return 1
+		}
+		return -1
 	}
-	return rank
+	if a.errorRank != b.errorRank {
+		if a.errorRank < b.errorRank {
+			return 1
+		}
+		return -1
+	}
+	if a.score != b.score {
+		if a.score > b.score {
+			return 1
+		}
+		return -1
+	}
+	if a.shifted != b.shifted {
+		if !a.shifted {
+			return 1
+		}
+		return -1
+	}
+	if a.depth != b.depth {
+		if a.depth > b.depth {
+			return 1
+		}
+		return -1
+	}
+	if a.byteOffset != b.byteOffset {
+		if a.byteOffset > b.byteOffset {
+			return 1
+		}
+		return -1
+	}
+	if a.branchOrder != b.branchOrder {
+		if a.branchOrder < b.branchOrder {
+			return 1
+		}
+		return -1
+	}
+	if a.hash != b.hash {
+		if a.hash > b.hash {
+			return 1
+		}
+		return -1
+	}
+	if a.shape != b.shape {
+		if a.shape > b.shape {
+			return 1
+		}
+		return -1
+	}
+	return 0
 }
 
-func stackMergeTelemetryRank(stack *glrStack, hash uint64) string {
-	if stack == nil {
+func rankOrDash(rank glrMergeTelemetryRank) string {
+	if !rank.valid {
 		return "-"
 	}
 	accepted := 0
-	if stack.accepted {
+	if rank.accepted {
 		accepted = 1
 	}
 	shifted := 0
-	if stack.shifted {
+	if rank.shifted {
 		shifted = 1
 	}
+	return fmt.Sprintf("acc%d/score%d/shift%d/depth%d/byte%d/branch%d/hash%x/cost%d/k%s/shape%x",
+		accepted, rank.score, shifted, rank.depth, rank.byteOffset, rank.branchOrder, rank.hash,
+		rank.errorRank, rank.kind, rank.shape)
+}
+
+func stackMergeTelemetryRank(stack *glrStack, hash uint64) glrMergeTelemetryRank {
+	if stack == nil {
+		return glrMergeTelemetryRank{}
+	}
 	kind := "ordinary"
+	errorRank := stackErrorRank(stack)
 	if stack.dead {
 		kind = "dead"
-	} else if stackErrorRank(stack) > 0 {
+	} else if errorRank > 0 {
 		kind = "error"
 	}
 	shape := hash
@@ -739,9 +836,19 @@ func stackMergeTelemetryRank(stack *glrStack, hash uint64) string {
 		shape ^= uint64(uintptr(unsafe.Pointer(stack.gss.head)))
 		shape ^= uint64(stack.gss.head.linkCount()) << 48
 	}
-	return fmt.Sprintf("acc%d/score%d/shift%d/depth%d/byte%d/branch%d/hash%x/cost%d/k%s/shape%x",
-		accepted, stack.score, shifted, stack.depth(), stack.byteOffset, stack.branchOrder, hash,
-		stackErrorRank(stack), kind, shape)
+	return glrMergeTelemetryRank{
+		valid:       true,
+		accepted:    stack.accepted,
+		score:       stack.score,
+		shifted:     stack.shifted,
+		depth:       stack.depth(),
+		byteOffset:  stack.byteOffset,
+		branchOrder: stack.branchOrder,
+		hash:        hash,
+		errorRank:   errorRank,
+		kind:        kind,
+		shape:       shape,
+	}
 }
 
 func stackHash(s glrStack) uint64 {
@@ -2292,6 +2399,13 @@ func tryGSSMainMergeResultTelemetry(result []glrStack, idx int, stack *glrStack,
 	return merged, true
 }
 
+func tryGSSMainMergeResultObserved(result []glrStack, idx int, stack *glrStack, event *glrMergeTelemetryEvent, key glrMergeKey) (merged bool, attempted bool) {
+	if event == nil {
+		return tryGSSMainMergeResult(result, idx, stack)
+	}
+	return tryGSSMainMergeResultTelemetry(result, idx, stack, event, key)
+}
+
 func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glrStack, hash uint64) bool {
 	if result == nil || slot == nil {
 		return false
@@ -2484,13 +2598,19 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 	if perKeyCap > maxStacksPerMergeKeyCeiling {
 		perKeyCap = maxStacksPerMergeKeyCeiling
 	}
-	event := scratch.telemetry.begin(len(stacks), len(alive), perKeyCap)
+	telemetry := scratch.telemetry
+	var event *glrMergeTelemetryEvent
+	if telemetry != nil {
+		event = telemetry.begin(len(stacks), len(alive), perKeyCap)
+	}
 	if len(alive) <= 4 {
 		result := mergeStacksSmallForLanguage(alive, scratch, scratch.language)
 		if perfCountersEnabled {
 			perfRecordMergeOut(len(result))
 		}
-		event.finishSummaryOnly(len(result))
+		if event != nil {
+			event.finishSummaryOnly(len(result))
+		}
 		return result
 	}
 
@@ -2511,7 +2631,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		stack := alive[i]
 		hash := stackHash(stack)
 		key := mergeKeyForStack(stack)
-		event.recordSeen(key)
+		if event != nil {
+			event.recordSeen(key)
+		}
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -2541,17 +2663,23 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				if perfCountersEnabled {
 					perfRecordMergeReplacement()
 				}
-				event.recordDuplicateReplace(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateReplace(key, &stack, hash)
+				}
 				continue
 			}
 			if cmp < 0 {
-				event.recordDuplicateDrop(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateDrop(key, &stack, hash)
+				}
 				continue
 			}
-			if merged, attempted := tryGSSMainMergeResultTelemetry(result, idx, &stack, event, key); attempted {
+			if merged, attempted := tryGSSMainMergeResultObserved(result, idx, &stack, event, key); attempted {
 				if !merged {
 					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2568,7 +2696,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				idx := slot.indices[j]
 				existing := &result[idx]
 				eq := stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack)
-				event.recordEquiv(key, eq)
+				if event != nil {
+					event.recordEquiv(key, eq)
+				}
 				if eq {
 					duplicateIndex = idx
 					break
@@ -2582,10 +2712,12 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			// Equal-ranked duplicates should not preserve the first-inserted
 			// branch by accident. Let later survivors replace ties so
 			// post-reduce reprocessing can keep the branch that stayed viable.
-			if merged, attempted := tryGSSMainMergeResultTelemetry(result, duplicateIndex, &stack, event, key); attempted {
+			if merged, attempted := tryGSSMainMergeResultObserved(result, duplicateIndex, &stack, event, key); attempted {
 				if !merged {
 					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2600,9 +2732,13 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				if slot.worstIndex == duplicateIndex {
 					slot.worstIndex = recomputeMergeSlotWorst(slot, result)
 				}
-				event.recordDuplicateReplace(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateReplace(key, &stack, hash)
+				}
 			} else {
-				event.recordDuplicateDrop(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateDrop(key, &stack, hash)
+				}
 			}
 			continue
 		}
@@ -2622,13 +2758,15 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		event.recordOverflow(key)
+		if event != nil {
+			event.recordOverflow(key)
+		}
 		if perKeyCap == 1 && glrFaithfulCapOneMerge {
 			merged := false
 			attempted := false
 			for j := 0; j < slot.count; j++ {
 				idx := slot.indices[j]
-				m, a := tryGSSMainMergeResultTelemetry(result, idx, &stack, event, key)
+				m, a := tryGSSMainMergeResultObserved(result, idx, &stack, event, key)
 				if a {
 					attempted = true
 					if m {
@@ -2639,7 +2777,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			}
 			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
 				if attempted && !merged {
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2660,14 +2800,18 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				incumbentHash = slot.hashes[replacedSlot]
 			}
 			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
-				event.recordOverflowDrop(key, &stack, hash)
+				if event != nil {
+					event.recordOverflowDrop(key, &stack, hash)
+				}
 				continue
 			}
 			if perfCountersEnabled {
 				perfRecordMergeReplacement()
 			}
 			result[slot.worstIndex] = stack
-			event.recordOverflowReplace(key, &stack, hash)
+			if event != nil {
+				event.recordOverflowReplace(key, &stack, hash)
+			}
 			if replacedSlot >= 0 {
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeSlotHashMask(slot)
@@ -2683,7 +2827,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 	}
 	scratch.result = result
 	scratch.slots = slots[:slotCount]
-	event.finishSmall(len(result), result, slots, slotCount)
+	if event != nil {
+		event.finishSmall(len(result), result, slots, slotCount)
+	}
 	return result
 }
 
@@ -2695,7 +2841,9 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		stack := alive[i]
 		hash := stackHash(stack)
 		key := mergeKeyForStack(stack)
-		event.recordSeen(key)
+		if event != nil {
+			event.recordSeen(key)
+		}
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -2725,17 +2873,23 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				if perfCountersEnabled {
 					perfRecordMergeReplacement()
 				}
-				event.recordDuplicateReplace(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateReplace(key, &stack, hash)
+				}
 				continue
 			}
 			if cmp < 0 {
-				event.recordDuplicateDrop(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateDrop(key, &stack, hash)
+				}
 				continue
 			}
-			if merged, attempted := tryGSSMainMergeResultTelemetry(result, idx, &stack, event, key); attempted {
+			if merged, attempted := tryGSSMainMergeResultObserved(result, idx, &stack, event, key); attempted {
 				if !merged {
 					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2752,7 +2906,9 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				idx := slot.indices[j]
 				existing := &result[idx]
 				eq := stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack)
-				event.recordEquiv(key, eq)
+				if event != nil {
+					event.recordEquiv(key, eq)
+				}
 				if eq {
 					duplicateIndex = idx
 					break
@@ -2763,10 +2919,12 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			perfRecordStackEquivalentHashMissSkip()
 		}
 		if duplicateIndex >= 0 {
-			if merged, attempted := tryGSSMainMergeResultTelemetry(result, duplicateIndex, &stack, event, key); attempted {
+			if merged, attempted := tryGSSMainMergeResultObserved(result, duplicateIndex, &stack, event, key); attempted {
 				if !merged {
 					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2781,9 +2939,13 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				if slot.worstIndex == duplicateIndex {
 					slot.worstIndex = recomputeMergeSlotWorst(slot, result)
 				}
-				event.recordDuplicateReplace(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateReplace(key, &stack, hash)
+				}
 			} else {
-				event.recordDuplicateDrop(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateDrop(key, &stack, hash)
+				}
 			}
 			continue
 		}
@@ -2803,13 +2965,15 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		event.recordOverflow(key)
+		if event != nil {
+			event.recordOverflow(key)
+		}
 		if perKeyCap == 1 && glrFaithfulCapOneMerge {
 			merged := false
 			attempted := false
 			for j := 0; j < slot.count; j++ {
 				idx := slot.indices[j]
-				m, a := tryGSSMainMergeResultTelemetry(result, idx, &stack, event, key)
+				m, a := tryGSSMainMergeResultObserved(result, idx, &stack, event, key)
 				if a {
 					attempted = true
 					if m {
@@ -2820,7 +2984,9 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			}
 			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
 				if attempted && !merged {
-					event.recordCostPreserve(key, &stack, hash)
+					if event != nil {
+						event.recordCostPreserve(key, &stack, hash)
+					}
 				}
 				continue
 			}
@@ -2839,14 +3005,18 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				incumbentHash = slot.hashes[replacedSlot]
 			}
 			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
-				event.recordOverflowDrop(key, &stack, hash)
+				if event != nil {
+					event.recordOverflowDrop(key, &stack, hash)
+				}
 				continue
 			}
 			if perfCountersEnabled {
 				perfRecordMergeReplacement()
 			}
 			result[slot.worstIndex] = stack
-			event.recordOverflowReplace(key, &stack, hash)
+			if event != nil {
+				event.recordOverflowReplace(key, &stack, hash)
+			}
 			if replacedSlot >= 0 {
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeSlotHashMask(slot)
@@ -2862,7 +3032,9 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 	}
 	scratch.result = result
 	scratch.slots = slots[:slotCount]
-	event.finishSmall(len(result), result, slots, slotCount)
+	if event != nil {
+		event.finishSmall(len(result), result, slots, slotCount)
+	}
 	return result
 }
 
@@ -2874,7 +3046,9 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		stack := alive[i]
 		hash := stackHash(stack)
 		key := mergeKeyForStack(stack)
-		event.recordSeen(key)
+		if event != nil {
+			event.recordSeen(key)
+		}
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -2904,7 +3078,9 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				idx := slot.indices[j]
 				existing := &result[idx]
 				eq := stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack)
-				event.recordEquiv(key, eq)
+				if event != nil {
+					event.recordEquiv(key, eq)
+				}
 				if eq {
 					duplicateIndex = idx
 					break
@@ -2929,9 +3105,13 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				if slot.worstIndex == duplicateIndex {
 					slot.worstIndex = recomputeMergeLargeSlotWorst(slot, result)
 				}
-				event.recordDuplicateReplace(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateReplace(key, &stack, hash)
+				}
 			} else {
-				event.recordDuplicateDrop(key, &stack, hash)
+				if event != nil {
+					event.recordDuplicateDrop(key, &stack, hash)
+				}
 			}
 			continue
 		}
@@ -2951,7 +3131,9 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		event.recordOverflow(key)
+		if event != nil {
+			event.recordOverflow(key)
+		}
 
 		// Per-key alternative budget reached: replace the weakest
 		// retained candidate only if this stack is better.
@@ -2968,14 +3150,18 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				incumbentHash = slot.hashes[replacedSlot]
 			}
 			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
-				event.recordOverflowDrop(key, &stack, hash)
+				if event != nil {
+					event.recordOverflowDrop(key, &stack, hash)
+				}
 				continue
 			}
 			if perfCountersEnabled {
 				perfRecordMergeReplacement()
 			}
 			result[slot.worstIndex] = stack
-			event.recordOverflowReplace(key, &stack, hash)
+			if event != nil {
+				event.recordOverflowReplace(key, &stack, hash)
+			}
 			if replacedSlot >= 0 {
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeLargeSlotHashMask(slot)
@@ -2991,7 +3177,9 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 	}
 	scratch.result = result
 	scratch.largeSlots = slots[:slotCount]
-	event.finishLarge(len(result), result, slots, slotCount)
+	if event != nil {
+		event.finishLarge(len(result), result, slots, slotCount)
+	}
 	return result
 }
 
