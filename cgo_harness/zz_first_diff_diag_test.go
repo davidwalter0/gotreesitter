@@ -334,15 +334,13 @@ func fddSymbolAuditNode(t *testing.T, label string, n *gts.Node, lang *gts.Langu
 	metaVisible := false
 	metaNamed := false
 	metaSupertype := false
-	metaGeneratedRepeatAux := false
 	if ok {
 		metaName = meta.Name
 		metaVisible = meta.Visible
 		metaNamed = meta.Named
 		metaSupertype = meta.Supertype
-		metaGeneratedRepeatAux = meta.GeneratedRepeatAux
 	}
-	t.Logf("      SYMBOL-AUDIT go.%s sym=%d type=%q metaOK=%v metaName=%q nodeNamed=%v metaNamed=%v visible=%v supertype=%v extra=%v generatedRepeatAux=%v flattenStructuralApprox=%v childCount=%d span=%d:%d hasError=%v text=%s",
+	t.Logf("      SYMBOL-AUDIT go.%s sym=%d type=%q metaOK=%v metaName=%q nodeNamed=%v metaNamed=%v visible=%v supertype=%v extra=%v flattenStructuralApprox=%v childCount=%d span=%d:%d hasError=%v text=%s",
 		label,
 		sym,
 		n.Type(lang),
@@ -353,7 +351,6 @@ func fddSymbolAuditNode(t *testing.T, label string, n *gts.Node, lang *gts.Langu
 		metaVisible,
 		metaSupertype,
 		n.IsExtra(),
-		metaGeneratedRepeatAux,
 		fddHiddenFlattenStructuralApprox(lang, sym),
 		n.ChildCount(),
 		n.StartByte(),

@@ -199,8 +199,21 @@ type GenerateReport struct {
 }
 
 // resolveConflictsWithDiag is like resolveConflicts but collects diagnostics.
-func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mergeProvenance) ([]ConflictDiag, error) {
+func resolveConflictsWithDiag(ctx context.Context, tables *LRTables, ng *NormalizedGrammar, prov *mergeProvenance) ([]ConflictDiag, conflictResolutionStats, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var diags []ConflictDiag
+	var stats conflictResolutionStats
+
+	augmentStats, err := augmentAdjacentRepeatElementReduceLookaheads(ctx, tables, ng)
+	stats.add(augmentStats)
+	if err != nil {
+		return diags, stats, err
+	}
+	if err := checkConflictResolutionContext(ctx, "before diagnostic action resolution"); err != nil {
+		return diags, stats, err
+	}
 
 	// Sort states and syms for deterministic conflict resolution order.
 	states := make([]int, 0, len(tables.ActionTable))
@@ -210,6 +223,10 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 	sort.Ints(states)
 
 	for _, state := range states {
+		if err := checkConflictResolutionContext(ctx, "scanning diagnostic states"); err != nil {
+			return diags, stats, err
+		}
+		stats.StatesScanned++
 		actions := tables.ActionTable[state]
 		syms := make([]int, 0, len(actions))
 		for sym := range actions {
@@ -217,9 +234,19 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 		}
 		sort.Ints(syms)
 		for _, sym := range syms {
+			stats.ActionEntriesScanned++
+			if stats.ActionEntriesScanned&1023 == 0 {
+				if err := checkConflictResolutionContext(ctx, "scanning diagnostic action entries"); err != nil {
+					return diags, stats, err
+				}
+			}
 			acts := actions[sym]
 			if len(acts) <= 1 {
 				continue
+			}
+			stats.ConflictsResolved++
+			if len(acts) > stats.MaxActionsPerConflict {
+				stats.MaxActionsPerConflict = len(acts)
 			}
 
 			diag := ConflictDiag{
@@ -251,7 +278,7 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 
 			resolved, err := resolveActionConflict(sym, acts, ng)
 			if err != nil {
-				return diags, fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
+				return diags, stats, fmt.Errorf("state %d, symbol %d: %w", state, sym, err)
 			}
 			tables.ActionTable[state][sym] = resolved
 
@@ -290,7 +317,10 @@ func resolveConflictsWithDiag(tables *LRTables, ng *NormalizedGrammar, prov *mer
 			diags = append(diags, diag)
 		}
 	}
-	return diags, nil
+	if err := checkConflictResolutionContext(ctx, "after diagnostic action resolution"); err != nil {
+		return diags, stats, err
+	}
+	return diags, stats, nil
 }
 
 // Validate checks the grammar for common issues and returns warnings.
@@ -496,7 +526,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 	prov := lrCtx.provenance
 
 	if needDiagnostics {
-		diags, err := resolveConflictsWithDiag(tables, ng, prov)
+		diags, _, err := resolveConflictsWithDiag(bgCtx, tables, ng, prov)
 		if err != nil {
 			return nil, fmt.Errorf("resolve conflicts: %w", err)
 		}
@@ -535,7 +565,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			sr.NewStatesAdded = tables.StateCount - statesBefore
 			sr.Error = splitErr
 
-			diagsAfter, _ := resolveConflictsWithDiag(tables, ng, prov)
+			diagsAfter, _, _ := resolveConflictsWithDiag(bgCtx, tables, ng, prov)
 			sr.ConflictsAfter = len(diagsAfter)
 
 			glrAfter := 0
@@ -555,7 +585,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 				if err != nil {
 					return nil, fmt.Errorf("rebuild LR tables after split rollback: %w", err)
 				}
-				if err := resolveConflicts(tables, ng); err != nil {
+				if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
 					return nil, fmt.Errorf("resolve conflicts after split rollback: %w", err)
 				}
 				sr.StatesSplit = 0
@@ -572,7 +602,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			}
 		}
 	} else {
-		if err := resolveConflicts(tables, ng); err != nil {
+		if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
 			return nil, fmt.Errorf("resolve conflicts: %w", err)
 		}
 	}
