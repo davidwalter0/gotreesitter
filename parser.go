@@ -3775,6 +3775,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
+	scratch.merge.telemetry = configureGLRMergeTelemetry(scratch.merge.telemetry, p.language, p.mergeTelemetryMode())
 	if p.ambiguityProfile != nil {
 		p.ambiguityProfile.recordMergeBefore(stacks)
 	}
@@ -3805,6 +3806,25 @@ func (r *parseStackPrepResult) stop(reason ParseStopReason, errorTree bool) {
 	r.stopReason = reason
 	r.stopped = true
 	r.errorTree = errorTree
+}
+
+func (p *Parser) mergeTelemetryMode() string {
+	if p == nil {
+		return "parse"
+	}
+	if p.noTreeBenchmarkOnly {
+		if p.noTreeCheckpointBenchmarkOnly {
+			return "no-tree-checkpoint"
+		}
+		return "no-tree"
+	}
+	if p.pendingFullParents {
+		return "full-pending-parents"
+	}
+	if p.finalChildRefs {
+		return "full-final-child-refs"
+	}
+	return "full"
 }
 
 func allParseStacksDead(stacks []glrStack) bool {

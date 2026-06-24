@@ -28,6 +28,8 @@ var (
 	parseReduceChainHints      bool
 	parseTSLazyCompatOnce      sync.Once
 	parseTSLazyCompat          bool
+	glrMergeTelemetryOnce      sync.Once
+	glrMergeTelemetryConfigVal glrMergeTelemetryConfig
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -55,6 +57,8 @@ func ResetParseEnvConfigCacheForTests() {
 	parseReduceChainHints = false
 	parseTSLazyCompatOnce = sync.Once{}
 	parseTSLazyCompat = false
+	glrMergeTelemetryOnce = sync.Once{}
+	glrMergeTelemetryConfigVal = glrMergeTelemetryConfig{}
 	glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
 }
 
@@ -195,6 +199,43 @@ func parseTypeScriptLazyResultCompatibilityEnabled() bool {
 		parseTSLazyCompat = raw == "" || (raw != "0" && !strings.EqualFold(raw, "false"))
 	})
 	return parseTSLazyCompat
+}
+
+type glrMergeTelemetryConfig struct {
+	enabled bool
+	topKeys int
+	minSeen int
+}
+
+func parseGLRMergeTelemetryConfig() glrMergeTelemetryConfig {
+	glrMergeTelemetryOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("GOT_GLR_MERGE_TELEMETRY"))
+		enabled := raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+		glrMergeTelemetryConfigVal = glrMergeTelemetryConfig{
+			enabled: enabled,
+			topKeys: 8,
+			minSeen: 8,
+		}
+		if n := parsePositiveEnvInt("GOT_GLR_MERGE_TELEMETRY_TOP_KEYS"); n > 0 {
+			glrMergeTelemetryConfigVal.topKeys = n
+		}
+		if n := parsePositiveEnvInt("GOT_GLR_MERGE_TELEMETRY_MIN_SEEN"); n > 0 {
+			glrMergeTelemetryConfigVal.minSeen = n
+		}
+	})
+	return glrMergeTelemetryConfigVal
+}
+
+func parsePositiveEnvInt(name string) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 func parseTransientReduceEnabled(envName string) bool {
