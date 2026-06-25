@@ -62,3 +62,25 @@ func TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks(t *testing.T) {
 		t.Fatal("C recovery retained a forked reduction instead of the original version")
 	}
 }
+
+func TestParseCRecoveryTraceWindow(t *testing.T) {
+	disabled := parseCRecoveryTraceWindow("")
+	if disabled.enabled {
+		t.Fatal("empty trace window enabled diagnostics")
+	}
+
+	single := parseCRecoveryTraceWindow("5594")
+	if !single.enabled || single.start != 5594 || single.end != 5594 {
+		t.Fatalf("single trace window = %+v, want enabled 5594..5594", single)
+	}
+
+	span := parseCRecoveryTraceWindow("5600:5588")
+	if !span.enabled || span.start != 5588 || span.end != 5600 {
+		t.Fatalf("reversed trace window = %+v, want enabled 5588..5600", span)
+	}
+
+	invalid := parseCRecoveryTraceWindow("not-a-window")
+	if invalid.enabled {
+		t.Fatalf("invalid trace window enabled diagnostics: %+v", invalid)
+	}
+}

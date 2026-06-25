@@ -60,6 +60,55 @@ const (
 	cErrorState = StateID(0)
 )
 
+type cRecoveryTraceWindowConfig struct {
+	enabled bool
+	start   uint32
+	end     uint32
+}
+
+var cRecoveryTraceWindow = parseCRecoveryTraceWindow(os.Getenv("GOT_C_RECOVERY_TRACE_WINDOW"))
+
+func parseCRecoveryTraceWindow(raw string) cRecoveryTraceWindowConfig {
+	if raw == "" {
+		return cRecoveryTraceWindowConfig{}
+	}
+	var start, end uint32
+	if n, _ := fmt.Sscanf(raw, "%d:%d", &start, &end); n == 2 {
+		if end < start {
+			start, end = end, start
+		}
+		return cRecoveryTraceWindowConfig{enabled: true, start: start, end: end}
+	}
+	if n, _ := fmt.Sscanf(raw, "%d", &start); n == 1 {
+		return cRecoveryTraceWindowConfig{enabled: true, start: start, end: start}
+	}
+	return cRecoveryTraceWindowConfig{}
+}
+
+func cRecoveryTraceByteInWindow(pos uint32) bool {
+	if !cRecoveryTraceWindow.enabled {
+		return false
+	}
+	return pos >= cRecoveryTraceWindow.start && pos <= cRecoveryTraceWindow.end
+}
+
+func cRecoveryTraceRangeInWindow(start, end uint32) bool {
+	if !cRecoveryTraceWindow.enabled {
+		return false
+	}
+	if end < start {
+		start, end = end, start
+	}
+	if end == start {
+		return cRecoveryTraceByteInWindow(start)
+	}
+	return start <= cRecoveryTraceWindow.end && end >= cRecoveryTraceWindow.start
+}
+
+func cRecoveryTraceTokenInWindow(tok Token) bool {
+	return cRecoveryTraceRangeInWindow(tok.StartByte, tok.EndByte)
+}
+
 // errorCostCompetitionLanguage reports whether the faithful C error-recovery
 // port is enabled for the active grammar. Enabled one grammar at a time, each
 // verified to net-improve its full corpus against the C oracle with zero
@@ -1001,6 +1050,10 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 // re-dispatch pass for the same token.
 func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool) {
 	s := &(*stacks)[si]
+	if cRecoveryTraceTokenInWindow(tok) || cRecoveryTraceByteInWindow(s.byteOffset) {
+		fmt.Printf("C-REC-TRACE cHandleError stack=%d state=%d stack_byte=%d tok_sym=%d tok=%d:%d\n",
+			si, s.top().state, s.byteOffset, tok.Symbol, tok.StartByte, tok.EndByte)
+	}
 	s.cPaused = false
 
 	// 1. Close in-progress productions: reductions reachable on any symbol.
@@ -1299,10 +1352,16 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 					uint32(entry.depth)*cErrCostPerSkippedTree +
 					(pos-entry.posBytes)*cErrCostPerSkippedChar +
 					(curRow-entry.posRow)*cErrCostPerSkippedLine
-				if p.cBetterVersionExists(*stacks, m0, false, newCost) {
+				currentHasAction := p.lookupActionIndex(entry.state, tok.Symbol) != 0
+				rejected := p.cBetterVersionExists(*stacks, m0, false, newCost)
+				if cRecoveryTraceTokenInWindow(tok) || cRecoveryTraceByteInWindow(pos) || cRecoveryTraceByteInWindow(entry.posBytes) {
+					fmt.Printf("C-REC-TRACE cRecoverStrategy1Election pos=%d tok_sym=%d tok=%d:%d member=%d entry_state=%d entry_depth=%d entry_pos=%d recover_depth=%d current_has_action=%t better_version_reject=%t\n",
+						pos, tok.Symbol, tok.StartByte, tok.EndByte, mi, entry.state, entry.depth, entry.posBytes, depth, currentHasAction, rejected)
+				}
+				if rejected {
 					return false, false
 				}
-				if p.lookupActionIndex(entry.state, tok.Symbol) == 0 {
+				if !currentHasAction {
 					continue
 				}
 				if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
@@ -1541,6 +1600,10 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 	for _, ex := range trailing {
 		p.pushStackNode(&fork, goal, ex, entryScratch, gssScratch)
 	}
+	if rawFirst != nil && cRecoveryTraceRangeInWindow(rawFirst.startByte, rawLast.endByte) {
+		fmt.Printf("C-REC-TRACE cRecoverToState goal_state=%d depth=%d raw_span=%d:%d child_count=%d trailing_extras=%d\n",
+			goal, depth, rawFirst.startByte, rawLast.endByte, len(children), len(trailing))
+	}
 	return fork, true
 }
 
@@ -1570,6 +1633,19 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if trackChildErrors != nil {
 		*trackChildErrors = true
 	}
+	traceAbsorb := func(hadOld bool, oldStart, oldEnd, newStart, newEnd uint32) {
+		if !cRecoveryTraceTokenInWindow(tok) &&
+			!(hadOld && cRecoveryTraceRangeInWindow(oldStart, oldEnd)) &&
+			!cRecoveryTraceRangeInWindow(newStart, newEnd) {
+			return
+		}
+		oldSpan := "none"
+		if hadOld {
+			oldSpan = fmt.Sprintf("%d:%d", oldStart, oldEnd)
+		}
+		fmt.Printf("C-REC-TRACE cAbsorbTokenIntoError tok_sym=%d tok=%d:%d old_open=%s new_open=%d:%d visible_leaf=%t\n",
+			tok.Symbol, tok.StartByte, tok.EndByte, oldSpan, newStart, newEnd, leaf != nil)
+	}
 
 	appendLeaf := func(dst []*Node) []*Node {
 		if leaf != nil {
@@ -1582,6 +1658,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if rec != nil && rec.openErr != nil {
 		top := stackEntryNode(v.top())
 		if top == rec.openErr {
+			oldStart, oldEnd := rec.openErr.startByte, rec.openErr.endByte
 			rec.openErr.children = appendLeaf(rec.openErr.children)
 			rec.openErr.endByte = tok.EndByte
 			rec.openErr.endPoint = tok.EndPoint
@@ -1592,6 +1669,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 			if nodeCount != nil {
 				*nodeCount = *nodeCount + 1
 			}
+			traceAbsorb(true, oldStart, oldEnd, rec.openErr.startByte, rec.openErr.endByte)
 			return
 		}
 		// Extras were pushed above the open error region (C pops the previous
@@ -1617,6 +1695,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 				extras = p.cAppendVisibleSplice(extras, n)
 			}
 			if found && v.truncate(len(entries)-above) {
+				oldStart, oldEnd := rec.openErr.startByte, rec.openErr.endByte
 				rec.openErr.children = append(rec.openErr.children, extras...)
 				rec.openErr.children = appendLeaf(rec.openErr.children)
 				rec.openErr.endByte = tok.EndByte
@@ -1628,6 +1707,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 				if nodeCount != nil {
 					*nodeCount = *nodeCount + 1
 				}
+				traceAbsorb(true, oldStart, oldEnd, rec.openErr.startByte, rec.openErr.endByte)
 				return
 			}
 		}
@@ -1652,6 +1732,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	if nodeCount != nil {
 		*nodeCount = *nodeCount + 2
 	}
+	traceAbsorb(false, 0, 0, errNode.startByte, errNode.endByte)
 }
 
 // ---------------------------------------------------------------------------
@@ -1777,6 +1858,10 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		if !hasUnpaused {
 			if p.glrTrace {
 				fmt.Printf("      -> C-RESUME stack=%d state=%d byte=%d\n", i, stacks[i].top().state, stacks[i].byteOffset)
+			}
+			if cRecoveryTraceTokenInWindow(tok) || cRecoveryTraceByteInWindow(stacks[i].byteOffset) {
+				fmt.Printf("C-REC-TRACE cCondenseAndResume resume_stack=%d state=%d byte=%d tok_sym=%d tok=%d:%d\n",
+					i, stacks[i].top().state, stacks[i].byteOffset, tok.Symbol, tok.StartByte, tok.EndByte)
 			}
 			outcome, redispatch := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			if redispatch {
