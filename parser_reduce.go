@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -637,6 +638,50 @@ func buildKeepSameNamedAnonChildSymbols(lang *Language) []bool {
 	return out
 }
 
+func buildSharedAnonymousTokenSymbols(lang *Language) []bool {
+	if lang == nil || len(lang.SymbolMetadata) == 0 || (len(lang.ParseTable) == 0 && len(lang.SmallParseTableMap) == 0) {
+		return nil
+	}
+	tokenCount := int(lang.TokenCount)
+	shiftTargets := map[int]map[int]struct{}{}
+	for sym, meta := range lang.SymbolMetadata {
+		if sym >= tokenCount || !meta.Visible || meta.Named {
+			continue
+		}
+		shiftTargets[sym] = map[int]struct{}{}
+	}
+	if len(shiftTargets) == 0 {
+		return nil
+	}
+
+	denseLimit := int(lang.LargeStateCount)
+	if denseLimit == 0 {
+		denseLimit = len(lang.ParseTable)
+	}
+	smallBase := int(lang.LargeStateCount)
+	forEachStateAction(lang, denseLimit, smallBase, func(state, sym int, act ParseAction) {
+		if act.Type != ParseActionShift || sym >= tokenCount {
+			return
+		}
+		if set, ok := shiftTargets[sym]; ok {
+			set[int(act.State)] = struct{}{}
+		}
+	})
+
+	out := make([]bool, len(lang.SymbolMetadata))
+	any := false
+	for sym, targets := range shiftTargets {
+		if len(targets) >= 2 {
+			out[sym] = true
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return out
+}
+
 // forEachStateAction iterates every (state, symbol) -> ParseAction across both
 // the dense and small (sparse) parse tables, invoking fn for each action of the
 // resolved action entry. Action index 0 is the no-action/error entry.
@@ -690,14 +735,208 @@ func forEachStateAction(lang *Language, denseLimit, smallBase int, fn func(state
 
 func (p *Parser) applyActionWithReduceChain(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) bool {
 	if act.Type != ParseActionReduce {
-		p.applyAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.applyAction(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		return false
 	}
-	p.applyReduceActionDispatch(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+	p.applyReduceActionDispatch(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 	if tok.NoLookahead || s == nil || s.dead || s.accepted || s.shifted {
 		return false
 	}
 	return p.chainSingleReduceActions(source, s, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+}
+
+type conflictReduceFrontierSeed struct {
+	action      ParseAction
+	beforeState StateID
+	beforeByte  uint32
+	beforeDepth int
+	afterState  StateID
+	afterByte   uint32
+	afterDepth  int
+}
+
+func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok Token, seed conflictReduceFrontierSeed, allocBranchOrder func() uint64, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+	if p == nil || p.language == nil || tok.NoLookahead || s == nil || s.dead || s.accepted || s.shifted || s.cPaused {
+		return
+	}
+	if seed.action.Type != ParseActionReduce || seed.beforeDepth == 0 || seed.afterDepth == 0 {
+		return
+	}
+	if seed.afterState != s.top().state || seed.afterByte != s.byteOffset || seed.afterDepth != s.depth() {
+		return
+	}
+	const maxConflictFrontierActions = 256
+	type frontierReduceKey struct {
+		state             StateID
+		byteOffset        uint32
+		depth             int
+		symbol            Symbol
+		childCount        uint8
+		productionID      uint16
+		dynamicPrecedence int16
+		actionState       StateID
+	}
+	seenReduces := make(map[frontierReduceKey]struct{}, 4)
+	terminalForkedReduces := make(map[frontierReduceKey]struct{}, 4)
+	seedKey := frontierReduceKey{
+		state:             seed.beforeState,
+		byteOffset:        seed.beforeByte,
+		depth:             seed.beforeDepth,
+		symbol:            seed.action.Symbol,
+		childCount:        seed.action.ChildCount,
+		productionID:      seed.action.ProductionID,
+		dynamicPrecedence: seed.action.DynamicPrecedence,
+		actionState:       seed.action.State,
+	}
+	makeReduceKey := func(act ParseAction) frontierReduceKey {
+		return frontierReduceKey{
+			state:             s.top().state,
+			byteOffset:        s.byteOffset,
+			depth:             s.depth(),
+			symbol:            act.Symbol,
+			childCount:        act.ChildCount,
+			productionID:      act.ProductionID,
+			dynamicPrecedence: act.DynamicPrecedence,
+			actionState:       act.State,
+		}
+	}
+	seenReduces[seedKey] = struct{}{}
+	completeMultiActionFrontier := func(actions []ParseAction, step int) bool {
+		if len(actions) != 2 {
+			return false
+		}
+		var terminal ParseAction
+		terminalSet := false
+		var reduce ParseAction
+		reduceSet := false
+		for _, act := range actions {
+			switch act.Type {
+			case ParseActionReduce:
+				if reduceSet {
+					return false
+				}
+				reduce = act
+				reduceSet = true
+			case ParseActionShift, ParseActionRecover, ParseActionAccept:
+				if terminalSet {
+					return false
+				}
+				terminal = act
+				terminalSet = true
+			default:
+				return false
+			}
+		}
+		if !reduceSet || !terminalSet {
+			return false
+		}
+		currentReduceKey := makeReduceKey(reduce)
+		appendTerminalFork := func(fork glrStack) {
+			if allocBranchOrder != nil {
+				fork.branchOrder = allocBranchOrder()
+			}
+			p.pendingFrontierForkStacks = append(p.pendingFrontierForkStacks, fork)
+			terminalForkedReduces[currentReduceKey] = struct{}{}
+		}
+		terminalAppended := false
+		_, terminalAlreadyForked := terminalForkedReduces[currentReduceKey]
+		if !terminalAlreadyForked {
+			switch terminal.Type {
+			case ParseActionShift:
+				fork := s.cloneWithScratch(gssScratch)
+				if p.guardRealShiftGap(source, &fork, tok) {
+					p.noteStopActionDiagnostic("conflict-frontier-fork-shift", &fork, tok, terminal, len(actions), true, step, 0, false)
+					p.applyShiftAction(&fork, terminal, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+					p.noteStopActionResult(&fork)
+					appendTerminalFork(fork)
+					terminalAppended = true
+				}
+			case ParseActionAccept:
+				fork := s.cloneWithScratch(gssScratch)
+				p.noteStopActionDiagnostic("conflict-frontier-fork-accept", &fork, tok, terminal, len(actions), true, step, 0, false)
+				p.applyAcceptAction(&fork)
+				p.noteStopActionResult(&fork)
+				appendTerminalFork(fork)
+				terminalAppended = true
+			case ParseActionRecover:
+				fork := s.cloneWithScratch(gssScratch)
+				if p.guardRealTokenAttachmentGap(source, &fork, tok, "conflict-frontier-fork-recover") {
+					p.noteStopActionDiagnostic("conflict-frontier-fork-recover", &fork, tok, terminal, len(actions), true, step, 0, false)
+					p.applyRecoverAction(&fork, terminal, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+					fork.shifted = true
+					p.noteStopActionResult(&fork)
+					appendTerminalFork(fork)
+					terminalAppended = true
+				}
+			default:
+				return false
+			}
+		}
+		if _, ok := seenReduces[currentReduceKey]; ok {
+			if terminalAppended || terminalAlreadyForked {
+				s.dead = true
+				return true
+			}
+			return false
+		}
+		seenReduces[currentReduceKey] = struct{}{}
+		p.noteStopActionDiagnostic("conflict-frontier-fork-reduce", s, tok, reduce, len(actions), true, step, 0, false)
+		p.applyReduceActionDispatch(source, s, reduce, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.noteStopActionResult(s)
+		return true
+	}
+	for step := 1; step <= maxConflictFrontierActions; step++ {
+		if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
+			return
+		}
+		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) {
+			return
+		}
+		actions := p.language.ParseActions[actionIdx].Actions
+		if len(actions) != 1 {
+			if completeMultiActionFrontier(actions, step) {
+				continue
+			}
+			return
+		}
+		act := actions[0]
+		switch act.Type {
+		case ParseActionReduce:
+			key := makeReduceKey(act)
+			if _, ok := seenReduces[key]; ok {
+				return
+			}
+			seenReduces[key] = struct{}{}
+			p.noteStopActionDiagnostic("conflict-frontier-reduce", s, tok, act, 1, true, step, 0, false)
+			p.applyReduceActionDispatch(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionResult(s)
+		case ParseActionShift:
+			if !p.guardRealShiftGap(source, s, tok) {
+				return
+			}
+			p.noteStopActionDiagnostic("conflict-frontier-shift", s, tok, act, 1, true, step, 0, false)
+			p.applyShiftAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			p.noteStopActionResult(s)
+			return
+		case ParseActionAccept:
+			p.noteStopActionDiagnostic("conflict-frontier-accept", s, tok, act, 1, true, step, 0, false)
+			p.applyAcceptAction(s)
+			p.noteStopActionResult(s)
+			return
+		case ParseActionRecover:
+			if !p.guardRealTokenAttachmentGap(source, s, tok, "conflict-frontier-recover") {
+				return
+			}
+			p.noteStopActionDiagnostic("conflict-frontier-recover", s, tok, act, 1, true, step, 0, false)
+			p.applyRecoverAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			s.shifted = true
+			p.noteStopActionResult(s)
+			return
+		default:
+			return
+		}
+	}
 }
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
@@ -966,6 +1205,13 @@ func (p *Parser) resyncTopLevelLanguage() bool {
 	return false
 }
 
+func (p *Parser) opportunisticTopLevelResyncAllowed(tok Token) bool {
+	if p == nil || p.language == nil || tok.NoLookahead || tok.Symbol == 0 || tok.Symbol == errorSymbol {
+		return false
+	}
+	return p.lookupActionIndex(p.language.InitialState, tok.Symbol) != 0
+}
+
 // tryResyncErrorRecovery implements the panic-mode resync that mirrors C
 // tree-sitter's ts_parser__recover for the no-action fall-through. When the
 // current top state has no action for the lookahead, the parser is stuck: the
@@ -987,6 +1233,14 @@ func (p *Parser) resyncTopLevelLanguage() bool {
 //   - resyncAdvance: resynced and folded the current token into the ERROR;
 //     caller advances to the next token.
 func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) int {
+	return p.tryResyncErrorRecoveryMode(source, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, false)
+}
+
+func (p *Parser) tryOpportunisticTopLevelResyncRecovery(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) int {
+	return p.tryResyncErrorRecoveryMode(source, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, true)
+}
+
+func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool, opportunisticRetryOnly bool) int {
 	if p == nil || s == nil || arena == nil || tok.Symbol == 0 {
 		return resyncNone
 	}
@@ -1002,7 +1256,8 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 	// recovery post-processing tuned against the existing leaf path; enabling
 	// the resync for them changes those well-localized outputs, so we leave them
 	// on the proven path. See resyncTopLevelLanguage.
-	if !p.resyncTopLevelLanguage() {
+	languageScoped := p.resyncTopLevelLanguage()
+	if !languageScoped && (!opportunisticRetryOnly || !p.opportunisticTopLevelResyncAllowed(tok)) {
 		return resyncNone
 	}
 
@@ -1061,11 +1316,17 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 		}
 		poppedNodes = append(poppedNodes, node)
 	}
-
+	if !languageScoped && opportunisticRetryOnly && p.tryReplayTopLevelRecovery(s, tok, recoverState, poppedNodes, entryScratch, gssScratch) {
+		if p.glrTrace {
+			fmt.Printf("      -> LEGAL-REPLAY-RESYNC tok=%d recover_state=%d popped=%d depth=%d\n",
+				tok.Symbol, recoverState, len(poppedNodes), s.depth())
+		}
+		return resyncRetry
+	}
 	// Split the popped span: keep the leading run of COMPLETED valid top-level
 	// items as preserved siblings, and wrap the trailing failed construct into
-	// ONE localized ERROR. A completed top-level item is an error-free node that
-	// (a) the running top-level state has a GOTO for, and (b) lands in a state
+	// ONE localized ERROR. A completed top-level item is a node that (a) the
+	// running top-level state has a GOTO for, and (b) lands in a state
 	// from which the parse could legally end (i.e. that state can act on the
 	// EOF/end symbol). Condition (b) is what distinguishes a fully reduced
 	// top-level item (after which translation_unit may accept) from a partial
@@ -1077,9 +1338,6 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 	gotoState := recoverState
 	for preservedEnd < len(poppedNodes) {
 		n := poppedNodes[preservedEnd]
-		if n.hasError() {
-			break
-		}
 		next := p.lookupGoto(gotoState, n.symbol)
 		if next == 0 {
 			break
@@ -1107,6 +1365,42 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 	if p.lookupActionIndex(gotoState, tok.Symbol) == 0 {
 		status = resyncAdvance
 	}
+	if !languageScoped && opportunisticRetryOnly && status != resyncRetry {
+		return resyncNone
+	}
+	if status == resyncRetry {
+		if recovered, target, ok := p.rebuildAliasPrefixedRecoveredSuffix(source, gotoState, poppedNodes[preservedEnd:], tok.Symbol, arena); ok {
+			keepDepth := len(entries) - recoverIdx
+			if !s.truncate(keepDepth) {
+				return resyncNone
+			}
+			pushState := recoverState
+			for i := 0; i < preservedEnd; i++ {
+				n := poppedNodes[i]
+				next := p.lookupGoto(pushState, n.symbol)
+				if next == 0 {
+					return resyncNone
+				}
+				n.preGotoState = pushState
+				n.parseState = next
+				nodeBumpEquivVersion(n)
+				pushState = next
+				p.pushStackNode(s, next, n, entryScratch, gssScratch)
+			}
+			recovered.preGotoState = pushState
+			recovered.parseState = target
+			nodeBumpEquivVersion(recovered)
+			p.pushStackNode(s, target, recovered, entryScratch, gssScratch)
+			if nodeCount != nil {
+				*nodeCount = *nodeCount + 1
+			}
+			if p.glrTrace {
+				fmt.Printf("      -> RESYNC-RECOVERED-SUFFIX tok=%d state=%d target=%d depth=%d\n",
+					tok.Symbol, pushState, target, s.depth())
+			}
+			return resyncRetry
+		}
+	}
 
 	errChildren := make([]*Node, 0, len(poppedNodes)-preservedEnd+1)
 	errChildren = append(errChildren, poppedNodes[preservedEnd:]...)
@@ -1118,6 +1412,7 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 		tokLeaf := newLeafNodeInArena(arena, tok.Symbol, p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 		tokLeaf.setHasError(true)
+		tokLeaf.setExternalScannerToken(tok.ExternalScannerToken)
 		errChildren = append(errChildren, tokLeaf)
 	}
 	errNode := newParentNodeInArena(arena, errorSymbol, true, errChildren, nil, 0)
@@ -1168,6 +1463,304 @@ func (p *Parser) tryResyncErrorRecovery(source []byte, s *glrStack, tok Token, n
 			tok.Symbol, status, recoverState, preservedEnd, len(errChildren), s.depth())
 	}
 	return status
+}
+
+func (p *Parser) rebuildAliasPrefixedRecoveredSuffix(source []byte, state StateID, suffix []*Node, lookahead Symbol, arena *nodeArena) (*Node, StateID, bool) {
+	if p == nil || p.language == nil || len(source) == 0 || len(suffix) != 2 {
+		return nil, 0, false
+	}
+	prefix := suffix[0]
+	recovered := suffix[1]
+	if prefix == nil || recovered == nil || !recovered.hasError() || recovered.symbol == errorSymbol {
+		return nil, 0, false
+	}
+	if nodeChildCountNoMaterialize(prefix) != 0 || nodeChildCountNoMaterialize(recovered) == 0 {
+		return nil, 0, false
+	}
+	target := p.lookupGoto(state, recovered.symbol)
+	if target == 0 || p.lookupActionIndex(target, lookahead) == 0 {
+		return nil, 0, false
+	}
+	alt, ok := p.sameLexemeActiveAliasSymbol(source, state, prefix)
+	if !ok {
+		return nil, 0, false
+	}
+
+	childCount := nodeChildCountNoMaterialize(recovered)
+	children := make([]*Node, 0, childCount+1)
+	aliasLeaf := cloneNodeInArena(arena, prefix)
+	aliasLeaf.symbol = alt
+	aliasLeaf.setNamed(p.isNamedSymbol(alt))
+	aliasLeaf.preGotoState = state
+	if shiftTarget, ok := p.shiftTargetForStateSymbol(state, alt); ok {
+		aliasLeaf.parseState = shiftTarget
+	}
+	nodeBumpEquivVersion(aliasLeaf)
+	children = append(children, aliasLeaf)
+	for i := 0; i < childCount; i++ {
+		child := nodeChildAtForReason(recovered, i, materializeForRecovery)
+		if child == nil {
+			return nil, 0, false
+		}
+		cloned := cloneNodeInArena(arena, child)
+		if i == 0 {
+			p.restoreAnonymousTokenForRecoveredTail(source, cloned)
+		}
+		p.materializeAnonymousChildrenForRecoveredError(source, cloned, arena)
+		children = append(children, cloned)
+	}
+
+	rebuilt := newParentNodeInArena(arena, recovered.symbol, p.isNamedSymbol(recovered.symbol), children, nil, recovered.productionID)
+	rebuilt.startByte = prefix.startByte
+	rebuilt.startPoint = prefix.startPoint
+	rebuilt.endByte = recovered.endByte
+	rebuilt.endPoint = recovered.endPoint
+	rebuilt.setHasError(true)
+	rebuilt.dynamicPrecedence = recovered.dynamicPrecedence
+	rebuilt.rawShape = recovered.rawShape
+	return rebuilt, target, true
+}
+
+func (p *Parser) materializeAnonymousChildrenForRecoveredError(source []byte, n *Node, arena *nodeArena) {
+	if p == nil || p.language == nil || n == nil || n.symbol != errorSymbol || nodeChildCountNoMaterialize(n) != 0 {
+		return
+	}
+	if n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return
+	}
+	children := make([]*Node, 0, 4)
+	for pos := int(n.startByte); pos < int(n.endByte); pos++ {
+		text := bytesToStringNoCopy(source[pos : pos+1])
+		var tokSym Symbol
+		for _, sym := range p.language.TokenSymbolsByName(text) {
+			idx := int(sym)
+			if idx < 0 || idx >= len(p.language.SymbolMetadata) {
+				continue
+			}
+			meta := p.language.SymbolMetadata[idx]
+			if meta.Visible && !meta.Named {
+				tokSym = sym
+				break
+			}
+		}
+		if tokSym == 0 {
+			continue
+		}
+		startPoint := advancePointByBytes(n.startPoint, source[int(n.startByte):pos])
+		endPoint := advancePointByBytes(startPoint, source[pos:pos+1])
+		children = append(children, newLeafNodeInArena(arena, tokSym, false, uint32(pos), uint32(pos+1), startPoint, endPoint))
+	}
+	if len(children) == 0 {
+		return
+	}
+	n.children = children
+	n.setNamed(true)
+	n.setHasError(true)
+	nodeBumpEquivVersion(n)
+}
+
+func (p *Parser) restoreAnonymousTokenForRecoveredTail(source []byte, n *Node) {
+	if p == nil || p.language == nil || n == nil || nodeChildCountNoMaterialize(n) != 0 {
+		return
+	}
+	idx := int(n.symbol)
+	if idx < 0 || idx >= len(p.language.SymbolMetadata) || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return
+	}
+	meta := p.language.SymbolMetadata[idx]
+	if !meta.Visible || !meta.Named {
+		return
+	}
+	text := bytesToStringNoCopy(source[n.startByte:n.endByte])
+	for _, sym := range p.language.TokenSymbolsByName(text) {
+		symIdx := int(sym)
+		if symIdx < 0 || symIdx >= len(p.language.SymbolMetadata) {
+			continue
+		}
+		symMeta := p.language.SymbolMetadata[symIdx]
+		if symMeta.Visible && !symMeta.Named {
+			n.symbol = sym
+			n.setNamed(false)
+			nodeBumpEquivVersion(n)
+			return
+		}
+	}
+}
+
+func (p *Parser) sameLexemeActiveAliasSymbol(source []byte, state StateID, n *Node) (Symbol, bool) {
+	if p == nil || p.language == nil || n == nil || n.startByte >= n.endByte || int(n.endByte) > len(source) {
+		return 0, false
+	}
+	prefixName := p.symbolDisplayName(n.symbol)
+	preferredBase := recoveredAliasBaseName(prefixName)
+	var best Symbol
+	bestScore := -1
+	p.forEachActionIndexInState(state, func(sym Symbol, idx uint16) bool {
+		if sym == 0 || sym == n.symbol || uint32(sym) >= p.language.TokenCount {
+			return true
+		}
+		if !p.sameAliasTokenShape(n.symbol, sym) || p.sameSymbolName(n.symbol, sym) || !parseActionIndexHasShift(p.language, idx) {
+			return true
+		}
+		score := 0
+		name := p.symbolDisplayName(sym)
+		if preferredBase != "" && name == preferredBase {
+			score += 4
+		}
+		if name != "" && prefixName != "" && strings.HasPrefix(prefixName, name+"_") {
+			score += 2
+		}
+		if best == 0 || score > bestScore {
+			best = sym
+			bestScore = score
+		}
+		return true
+	})
+	if best != 0 && bestScore > 0 {
+		return best, true
+	}
+	return 0, false
+}
+
+func recoveredAliasBaseName(name string) string {
+	for _, suffix := range []string{"_start", "_end", "_begin", "_open", "_close"} {
+		if strings.HasSuffix(name, suffix) && len(name) > len(suffix) {
+			return strings.TrimSuffix(name, suffix)
+		}
+	}
+	return ""
+}
+
+func (p *Parser) symbolDisplayName(sym Symbol) string {
+	if p == nil || p.language == nil {
+		return ""
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(p.language.SymbolMetadata) {
+		return ""
+	}
+	if name := p.language.SymbolMetadata[idx].Name; name != "" {
+		return name
+	}
+	if idx < len(p.language.SymbolNames) {
+		return p.language.SymbolNames[idx]
+	}
+	return ""
+}
+
+func parseActionIndexHasShift(lang *Language, idx uint16) bool {
+	if lang == nil || idx == 0 || int(idx) >= len(lang.ParseActions) {
+		return false
+	}
+	for _, act := range lang.ParseActions[idx].Actions {
+		if act.Type == ParseActionShift {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Parser) sameAliasTokenShape(a, b Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	ai := int(a)
+	bi := int(b)
+	if ai < 0 || bi < 0 || ai >= len(p.language.SymbolMetadata) || bi >= len(p.language.SymbolMetadata) {
+		return false
+	}
+	am := p.language.SymbolMetadata[ai]
+	bm := p.language.SymbolMetadata[bi]
+	return am.Visible && bm.Visible && am.Named == bm.Named && uint32(ai) < p.language.TokenCount && uint32(bi) < p.language.TokenCount
+}
+
+func (p *Parser) tryReplayTopLevelRecovery(s *glrStack, tok Token, recoverState StateID, poppedNodes []*Node, entryScratch *glrEntryScratch, gssScratch *gssScratch) bool {
+	if p == nil || s == nil || p.language == nil || len(poppedNodes) == 0 {
+		return false
+	}
+	for _, n := range poppedNodes {
+		if n == nil || n.hasError() || n.isMissing() {
+			return false
+		}
+	}
+	split, targets, ok := p.findTopLevelReplaySplit(recoverState, poppedNodes, tok.Symbol)
+	if !ok {
+		return false
+	}
+	state := recoverState
+	depth := s.depth()
+	if !s.truncate(depth - len(poppedNodes)) {
+		return false
+	}
+	for i := 0; i < split; i++ {
+		n := poppedNodes[i]
+		n.setExtra(true)
+		n.preGotoState = state
+		n.parseState = state
+		nodeBumpEquivVersion(n)
+		p.pushStackNode(s, state, n, entryScratch, gssScratch)
+	}
+	for i, n := range poppedNodes[split:] {
+		next := targets[i]
+		n.preGotoState = state
+		n.parseState = next
+		nodeBumpEquivVersion(n)
+		state = next
+		p.pushStackNode(s, state, n, entryScratch, gssScratch)
+	}
+	return true
+}
+
+func (p *Parser) findTopLevelReplaySplit(recoverState StateID, poppedNodes []*Node, lookahead Symbol) (int, []StateID, bool) {
+	for split := 0; split <= len(poppedNodes); split++ {
+		state := recoverState
+		targets := make([]StateID, 0, len(poppedNodes)-split)
+		ok := true
+		for i := split; i < len(poppedNodes); i++ {
+			next, replayOK := p.replayTopLevelNodeTarget(state, poppedNodes[i])
+			if !replayOK {
+				ok = false
+				break
+			}
+			targets = append(targets, next)
+			state = next
+		}
+		if ok && p.lookupActionIndex(state, lookahead) != 0 {
+			return split, targets, true
+		}
+	}
+	return 0, nil, false
+}
+
+func (p *Parser) replayTopLevelNodeTarget(state StateID, n *Node) (StateID, bool) {
+	if p == nil || n == nil {
+		return 0, false
+	}
+	if len(n.children) == 0 {
+		if target, ok := p.shiftTargetForStateSymbol(state, n.symbol); ok {
+			return target, true
+		}
+	}
+	if target := p.lookupGoto(state, n.symbol); target != 0 {
+		return target, true
+	}
+	return 0, false
+}
+
+func (p *Parser) shiftTargetForStateSymbol(state StateID, sym Symbol) (StateID, bool) {
+	if p == nil || p.language == nil {
+		return 0, false
+	}
+	idx := p.lookupActionIndex(state, sym)
+	if idx == 0 || int(idx) >= len(p.language.ParseActions) {
+		return 0, false
+	}
+	for _, act := range p.language.ParseActions[idx].Actions {
+		if act.Type == ParseActionShift {
+			return extraShiftTargetState(state, act), true
+		}
+	}
+	return 0, false
 }
 
 func reduceChainSignatureFor(state StateID, depth int, act ParseAction) reduceChainSignature {
@@ -1288,13 +1881,16 @@ func (p *Parser) chainSingleReduceActions(source []byte, s *glrStack, tok Token,
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
-			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionResult(s)
 			if s.dead || s.accepted || s.shifted {
 				return false
 			}
@@ -1423,7 +2019,9 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrS
 			perfRecordReduceChainStep(steps)
 			perfRecordReduceChainHintSteps(1)
 		}
-		p.applyReduceActionDispatch(s, classified.action, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.noteStopActionDiagnostic("reduce-chain-hint", s, tok, classified.action, 1, true, steps, 0, false)
+		p.applyReduceActionDispatch(source, s, classified.action, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.noteStopActionResult(s)
 		if s.dead || s.accepted || s.shifted {
 			if perfCountersEnabled {
 				perfRecordReduceChainHintDead()
@@ -1462,13 +2060,16 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glr
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
-			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionResult(s)
 			if s.dead || s.accepted || s.shifted {
 				return false
 			}
@@ -1534,6 +2135,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
@@ -1541,7 +2143,9 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 				perfRecordReduceChainStep(chainLen)
 			}
 			reduceStart := time.Now()
-			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionResult(s)
 			p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
 			if s.dead || s.accepted || s.shifted {
 				switch {
@@ -1654,7 +2258,9 @@ func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(source []byte,
 			perfRecordReduceChainHintSteps(1)
 		}
 		reduceStart := time.Now()
-		p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.noteStopActionDiagnostic("reduce-chain-hint-profiled", s, tok, next, 1, true, chainLen, 0, false)
+		p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.noteStopActionResult(s)
 		p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
 		if s.dead || s.accepted || s.shifted {
 			if perfCountersEnabled {
@@ -1708,6 +2314,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
@@ -1715,7 +2322,9 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 				perfRecordReduceChainStep(chainLen)
 			}
 			reduceStart := time.Now()
-			p.applyReduceActionDispatch(s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+			p.noteStopActionResult(s)
 			p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
 			if s.dead || s.accepted || s.shifted {
 				switch {
@@ -1753,7 +2362,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 }
 
 // applyAction applies a single parse action to a GLR stack.
-func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+func (p *Parser) applyAction(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
 	if p != nil && p.glrTrace && s != nil {
 		fmt.Printf("    APPLY type=%d cur_state=%d tok=%d act_state=%d act_sym=%d act_cnt=%d extra=%v rep=%v depth=%d\n",
 			act.Type, s.top().state, tok.Symbol, act.State, act.Symbol, act.ChildCount, act.Extra, act.Repetition, s.depth())
@@ -1763,7 +2372,7 @@ func (p *Parser) applyAction(s *glrStack, act ParseAction, tok Token, anyReduced
 		p.applyShiftAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 
 	case ParseActionReduce:
-		p.applyReduceActionDispatch(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.applyReduceActionDispatch(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 
 	case ParseActionAccept:
 		p.applyAcceptAction(s)
@@ -1782,6 +2391,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 			leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
 			leaf.setExtra(extra)
+			leaf.setExternalScannerToken(tok.ExternalScannerToken)
 			leaf.preGotoState = currentState
 			leaf.parseState = targetState
 			p.pushStackCompactCheckpointLeaf(s, targetState, leaf, entryScratch, gssScratch)
@@ -1789,6 +2399,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			leaf := newNoTreeLeafNodeInArena(arena, tok.Symbol, named,
 				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 			leaf.setExtra(extra)
+			leaf.setExternalScannerToken(tok.ExternalScannerToken)
 			leaf.preGotoState = currentState
 			leaf.parseState = targetState
 			p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
@@ -1803,6 +2414,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			leaf.checkpoint = cp
 			leaf.hasCheckpoint = true
 		}
+		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
@@ -1822,6 +2434,9 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		}
 		if isMissing {
 			flags |= nodeFlagMissing | nodeFlagHasError
+		}
+		if tok.ExternalScannerToken {
+			flags |= nodeFlagExternalScannerToken
 		}
 		substituteActive := internLeavesSubstituteEnabled || (p != nil && p.leafInternByLang)
 		if substituteActive {
@@ -1868,6 +2483,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			}
 		}
 		leaf.setExtra(act.Extra)
+		leaf.setExternalScannerToken(tok.ExternalScannerToken)
 		if leaf.isExtra() && perfCountersEnabled {
 			perfRecordExtraNode()
 		}
@@ -1892,7 +2508,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 	}
 }
 
-func (p *Parser) applyReduceActionDispatch(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+func (p *Parser) applyReduceActionDispatch(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
 	entries := s.entries
 	borrowed := false
 	if entries == nil {
@@ -1902,9 +2518,9 @@ func (p *Parser) applyReduceActionDispatch(s *glrStack, act ParseAction, tok Tok
 				tmp = *tmpEntries
 			}
 			if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
-				p.applyReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+				p.applyReduceActionFromGSSTransientParents(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
 			} else {
-				p.applyReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+				p.applyReduceActionFromGSS(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
 			}
 			return
 		}
@@ -1919,9 +2535,9 @@ func (p *Parser) applyReduceActionDispatch(s *glrStack, act ParseAction, tok Tok
 		}
 	}
 	if p != nil && p.reduceScratch != nil && p.reduceScratch.transientParents != nil {
-		p.applyReduceActionTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+		p.applyReduceActionTransientParents(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
 	} else {
-		p.applyReduceAction(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
+		p.applyReduceAction(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, deferParentLinks, trackChildErrors != nil && *trackChildErrors)
 	}
 	if borrowed && tmpEntries != nil {
 		*tmpEntries = entries[:0]
@@ -2056,6 +2672,438 @@ type reduceFork struct {
 	popTo    *gssNode
 }
 
+func reduceForksSameChildSelectionGroup(a, b reduceFork) bool {
+	return a.popTo == b.popTo && a.topState == b.topState
+}
+
+func stackEntryRawShallowEqual(a, b stackEntry) bool {
+	if a.state != b.state || a.kind != b.kind {
+		return false
+	}
+	if stackEntryHasNode(a) != stackEntryHasNode(b) {
+		return false
+	}
+	if !stackEntryHasNode(a) {
+		return true
+	}
+	return stackEntryNodeSymbol(a) == stackEntryNodeSymbol(b) &&
+		stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) &&
+		stackEntryNodeEndByte(a) == stackEntryNodeEndByte(b) &&
+		stackEntryNodeChildCount(a) == stackEntryNodeChildCount(b) &&
+		stackEntryNodeIsExtra(a) == stackEntryNodeIsExtra(b) &&
+		stackEntryNodeIsNamed(a) == stackEntryNodeIsNamed(b) &&
+		stackEntryNodeIsMissing(a) == stackEntryNodeIsMissing(b) &&
+		stackEntryNodeHasError(a) == stackEntryNodeHasError(b)
+}
+
+func (p *Parser) selectReduceForkChildren(arena *nodeArena, act ParseAction, forks []reduceFork) []reduceFork {
+	if len(forks) < 2 {
+		return forks
+	}
+	out := forks[:0]
+	for _, fork := range forks {
+		keep := true
+		insertAt := -1
+		for i := 0; i < len(out); {
+			if !reduceForksSameChildSelectionGroup(out[i], fork) {
+				i++
+				continue
+			}
+			switch p.reduceForkWindowPreference(arena, act, fork, out[i]) {
+			case -1:
+				if insertAt < 0 {
+					insertAt = i
+				}
+				out = append(out[:i], out[i+1:]...)
+			case 1:
+				keep = false
+				i = len(out)
+			default:
+				i++
+			}
+		}
+		if keep {
+			out = insertReduceFork(out, insertAt, fork)
+		}
+	}
+	return out
+}
+
+func insertReduceFork(forks []reduceFork, index int, fork reduceFork) []reduceFork {
+	if index < 0 || index >= len(forks) {
+		return append(forks, fork)
+	}
+	forks = append(forks, reduceFork{})
+	copy(forks[index+1:], forks[index:])
+	forks[index] = fork
+	return forks
+}
+
+func (p *Parser) reduceForkWindowPreference(arena *nodeArena, act ParseAction, a, b reduceFork) int {
+	aEnd := reducedEndBeforeTrailingExtras(a.window)
+	bEnd := reducedEndBeforeTrailingExtras(b.window)
+	aParent := p.reduceForkTemporaryParent(arena, act, a.window[:aEnd])
+	bParent := p.reduceForkTemporaryParent(arena, act, b.window[:bEnd])
+	if aParent != nil && bParent != nil {
+		aEntry := newStackEntryNode(aParent.parseState, aParent)
+		bEntry := newStackEntryNode(bParent.parseState, bParent)
+		if ac, bc := p.rawStackEntryErrorCost(arena, aEntry), p.rawStackEntryErrorCost(arena, bEntry); ac != bc {
+			if ac < bc {
+				return -1
+			}
+			return 1
+		}
+		if ad, bd := aParent.dynamicPrecedence, bParent.dynamicPrecedence; ad != bd {
+			if ad > bd {
+				return -1
+			}
+			return 1
+		}
+		if ac := p.rawStackEntryErrorCost(arena, aEntry); ac > 0 {
+			return -1
+		}
+		if cmp := p.compareRawStackEntries(arena, aEntry, bEntry); cmp != 0 {
+			if cmp < 0 {
+				return -1
+			}
+			return 1
+		}
+		return 1
+	}
+	ac := p.reduceForkTemporaryParentErrorCost(arena, act.Symbol, a.window[:aEnd])
+	bc := p.reduceForkTemporaryParentErrorCost(arena, act.Symbol, b.window[:bEnd])
+	if ac != bc {
+		if ac < bc {
+			return -1
+		}
+		return 1
+	}
+	if ad, bd := reduceWindowDynamicPrecedence(a.window, 0, aEnd, act), reduceWindowDynamicPrecedence(b.window, 0, bEnd, act); ad != bd {
+		if ad > bd {
+			return -1
+		}
+		return 1
+	}
+	if ac > 0 {
+		return -1
+	}
+	if cmp := p.compareRawReduceWindows(arena, a.window[:aEnd], b.window[:bEnd]); cmp != 0 {
+		if cmp < 0 {
+			return -1
+		}
+		return 1
+	}
+	return 1
+}
+
+func (p *Parser) reduceForkTemporaryParent(arena *nodeArena, act ParseAction, entries []stackEntry) *Node {
+	if p == nil || p.language == nil {
+		return nil
+	}
+	childCount := int(act.ChildCount)
+	children, fieldIDs, fieldSources, _ := p.buildReduceChildrenWithPath(entries, 0, len(entries), childCount, act.Symbol, act.ProductionID, arena)
+	parent := newParentNodeInArenaNoLinksWithFieldSources(arena, act.Symbol, p.isNamedSymbol(act.Symbol), children, fieldIDs, fieldSources, act.ProductionID, false)
+	if parent == nil {
+		return nil
+	}
+	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, 0, len(entries))
+	setReduceNodeDynamicPrecedence(parent, entries, 0, len(entries), act)
+	return parent
+}
+
+func (p *Parser) reduceForkTemporaryParentErrorCost(arena *nodeArena, parentSymbol Symbol, entries []stackEntry) uint32 {
+	var cost uint32
+	for i := range entries {
+		cost += p.rawStackEntryErrorCost(arena, entries[i])
+	}
+	if parentSymbol == errorSymbol {
+		var startByte, endByte uint32
+		var startPoint, endPoint Point
+		for i, found := 0, false; i < len(entries); i++ {
+			if !stackEntryHasNode(entries[i]) {
+				continue
+			}
+			if !found {
+				startByte = stackEntryNodeStartByte(entries[i])
+				startPoint = stackEntryNodeStartPoint(entries[i])
+				found = true
+			}
+			endByte = stackEntryNodeEndByte(entries[i])
+			endPoint = stackEntryNodeEndPoint(entries[i])
+			if stackEntryNodeIsExtra(entries[i]) {
+				continue
+			}
+			if stackEntryNodeSymbol(entries[i]) == errorSymbol && stackEntryNodeChildCount(entries[i]) == 0 {
+				continue
+			}
+			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(entries[i])) {
+				cost += cErrCostPerSkippedTree
+			} else if count := p.rawStackEntryVisibleChildCount(arena, entries[i]); count > 0 {
+				cost += cErrCostPerSkippedTree * uint32(count)
+			}
+		}
+		bytes := uint32(0)
+		rows := uint32(0)
+		if endByte > startByte {
+			bytes = endByte - startByte
+		}
+		if endPoint.Row > startPoint.Row {
+			rows = endPoint.Row - startPoint.Row
+		}
+		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
+	}
+	return cost
+}
+
+func (p *Parser) rawStackEntryErrorCost(arena *nodeArena, entry stackEntry) uint32 {
+	if !stackEntryHasNode(entry) {
+		return 0
+	}
+	if stackEntryNodeIsMissing(entry) && stackEntryNodeChildCount(entry) == 0 {
+		return cErrCostPerMissingTree + cErrCostPerRecovery
+	}
+	var cost uint32
+	childCount := stackEntryNodeChildCount(entry)
+	for i := 0; i < childCount; i++ {
+		child, ok := rawStackEntryChildAt(arena, entry, i)
+		if !ok {
+			continue
+		}
+		cost += p.rawStackEntryErrorCost(arena, child)
+	}
+	if stackEntryNodeSymbol(entry) == errorSymbol {
+		for i := 0; i < childCount; i++ {
+			child, ok := rawStackEntryChildAt(arena, entry, i)
+			if !ok || stackEntryNodeIsExtra(child) {
+				continue
+			}
+			if stackEntryNodeSymbol(child) == errorSymbol && stackEntryNodeChildCount(child) == 0 {
+				continue
+			}
+			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(child)) {
+				cost += cErrCostPerSkippedTree
+			} else if count := p.rawStackEntryVisibleChildCount(arena, child); count > 0 {
+				cost += cErrCostPerSkippedTree * uint32(count)
+			}
+		}
+		bytes := uint32(0)
+		rows := uint32(0)
+		if endByte, startByte := stackEntryNodeEndByte(entry), stackEntryNodeStartByte(entry); endByte > startByte {
+			bytes = endByte - startByte
+		}
+		if endPoint, startPoint := stackEntryNodeEndPoint(entry), stackEntryNodeStartPoint(entry); endPoint.Row > startPoint.Row {
+			rows = endPoint.Row - startPoint.Row
+		}
+		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
+	}
+	return cost
+}
+
+func (p *Parser) rawStackEntryVisibleChildCount(arena *nodeArena, entry stackEntry) int {
+	if !stackEntryHasNode(entry) {
+		return 0
+	}
+	if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(entry)) {
+		return 1
+	}
+	count := 0
+	for i, n := 0, stackEntryNodeChildCount(entry); i < n; i++ {
+		child, ok := rawStackEntryChildAt(arena, entry, i)
+		if !ok {
+			continue
+		}
+		count += p.rawStackEntryVisibleChildCount(arena, child)
+	}
+	return count
+}
+
+func (p *Parser) compareRawReduceWindows(arena *nodeArena, a, b []stackEntry) int {
+	if len(a) != len(b) {
+		if len(a) < len(b) {
+			return -1
+		}
+		return 1
+	}
+	for i := range a {
+		if cmp := p.compareRawStackEntries(arena, a[i], b[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func stackEntryDynamicPrecedence(entry stackEntry) int32 {
+	if n := stackEntryNode(entry); n != nil {
+		return n.dynamicPrecedence
+	}
+	if n := stackEntryNoTreeNode(entry); n != nil {
+		return n.dynamicPrecedence
+	}
+	if n := stackEntryCompactFullLeaf(entry); n != nil {
+		return n.dynamicPrecedence
+	}
+	if n := stackEntryPendingParent(entry); n != nil {
+		return n.dynamicPrecedence
+	}
+	return 0
+}
+
+func addStackEntryDynamicPrecedence(entry *stackEntry, delta int16) {
+	if entry == nil || delta == 0 {
+		return
+	}
+	if n := stackEntryNode(*entry); n != nil {
+		n.dynamicPrecedence += int32(delta)
+		nodeBumpEquivVersion(n)
+		return
+	}
+	if n := stackEntryNoTreeNode(*entry); n != nil {
+		n.dynamicPrecedence += int32(delta)
+		return
+	}
+	if n := stackEntryCompactFullLeaf(*entry); n != nil {
+		n.dynamicPrecedence += int32(delta)
+		return
+	}
+	if n := stackEntryPendingParent(*entry); n != nil {
+		n.dynamicPrecedence += int32(delta)
+	}
+}
+
+func reduceWindowDynamicPrecedence(entries []stackEntry, start, end int, act ParseAction) int32 {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(entries) {
+		end = len(entries)
+	}
+	var dyn int32
+	for i := start; i < end; i++ {
+		dyn += stackEntryDynamicPrecedence(entries[i])
+	}
+	return dyn + int32(act.DynamicPrecedence)
+}
+
+func setReduceNodeDynamicPrecedence(n *Node, entries []stackEntry, start, end int, act ParseAction) {
+	if n != nil {
+		n.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, end, act)
+	}
+}
+
+func (p *Parser) compareRawStackEntries(arena *nodeArena, a, b stackEntry) int {
+	return p.compareRawStackEntriesRec(arena, a, b, 0)
+}
+
+func (p *Parser) compareRawStackEntriesRec(arena *nodeArena, a, b stackEntry, depth int) int {
+	if depth > maxTreeWalkDepth {
+		return 0
+	}
+	if stackEntryHasNode(a) != stackEntryHasNode(b) {
+		if !stackEntryHasNode(a) {
+			return -1
+		}
+		return 1
+	}
+	if !stackEntryHasNode(a) {
+		return 0
+	}
+	aShape, aHasShape := rawShapeForStackEntry(arena, a)
+	bShape, bHasShape := rawShapeForStackEntry(arena, b)
+	if aHasShape != bHasShape {
+		// A one-sided sidecar means the exact raw comparison lacks data. Fall
+		// back to materialized/pending views below instead of inventing order.
+		aHasShape = false
+		bHasShape = false
+	}
+	as, bs := stackEntryNodeSymbol(a), stackEntryNodeSymbol(b)
+	ac, bc := stackEntryNodeChildCount(a), stackEntryNodeChildCount(b)
+	if aHasShape && bHasShape {
+		as, bs = aShape.symbol, bShape.symbol
+		ac, bc = int(aShape.childCount), int(bShape.childCount)
+	}
+	if as != bs {
+		if as < bs {
+			return -1
+		}
+		return 1
+	}
+	if p.symbolIsGeneratedRepeatAux(as) &&
+		stackEntryNodeStartByte(a) == stackEntryNodeStartByte(b) &&
+		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) {
+		if stackEntryNodeEndByte(a) < stackEntryNodeEndByte(b) {
+			return -1
+		}
+		return 1
+	}
+	if ac != bc {
+		if ac < bc {
+			return -1
+		}
+		return 1
+	}
+	for i := 0; i < ac; i++ {
+		achild, aok := rawStackEntryChildAt(arena, a, i)
+		bchild, bok := rawStackEntryChildAt(arena, b, i)
+		if aok != bok {
+			if !aok {
+				return -1
+			}
+			return 1
+		}
+		if !aok {
+			continue
+		}
+		cmp := p.compareRawStackEntriesRec(arena, achild, bchild, depth+1)
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func (p *Parser) symbolIsGeneratedRepeatAux(sym Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(p.language.SymbolMetadata) {
+		return false
+	}
+	return p.language.SymbolMetadata[idx].GeneratedRepeatAux
+}
+
+func rawStackEntryChildAt(arena *nodeArena, entry stackEntry, i int) (stackEntry, bool) {
+	if shape, ok := rawShapeForStackEntry(arena, entry); ok {
+		children := arena.rawShapeChildren(shape)
+		if i < 0 || i >= len(children) {
+			return stackEntry{}, false
+		}
+		child := children[i]
+		if child.shapeRef != 0 {
+			if n := stackEntryNode(child.entry); n != nil {
+				n.rawShape = child.shapeRef
+			}
+		}
+		return child.entry, stackEntryHasNode(child.entry)
+	}
+	if node := stackEntryNode(entry); node != nil {
+		return nodeChildEntryAtNoMaterialize(node, i)
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		child := parent.childEntry(arena, i)
+		return child, stackEntryHasNode(child)
+	}
+	return stackEntry{}, false
+}
+
+func rawShapeForStackEntry(arena *nodeArena, entry stackEntry) (*rawShape, bool) {
+	ref := stackEntryRawShapeRef(entry)
+	if ref == 0 {
+		return nil, false
+	}
+	return arena.rawShapeForRef(ref)
+}
+
 func reduceWindowsFromGSS(s *glrStack, childCount int, maxForks int) []reduceFork {
 	if s == nil || s.gss.head == nil || childCount <= 0 || maxForks <= 0 {
 		return nil
@@ -2108,12 +3156,122 @@ func reduceWindowsFromGSS(s *glrStack, childCount int, maxForks int) []reduceFor
 	return forks
 }
 
+const selectedReduceGSSWorkBudgetMultiplier = 10
+
+func selectedReduceGSSWorkBudget(childCount int, maxGroups int) int {
+	if childCount <= 0 || maxGroups <= 0 {
+		return 0
+	}
+	budget := maxGroups * maxGroups * childCount * selectedReduceGSSWorkBudgetMultiplier
+	if budget < maxGroups {
+		return maxGroups
+	}
+	return budget
+}
+
+func (p *Parser) selectedReduceWindowsFromGSS(arena *nodeArena, act ParseAction, s *glrStack, childCount int, maxGroups int) []reduceFork {
+	forks, _, _ := p.selectedReduceWindowsFromGSSWithBudget(arena, act, s, childCount, maxGroups, selectedReduceGSSWorkBudget(childCount, maxGroups))
+	return forks
+}
+
+func (p *Parser) selectedReduceWindowsFromGSSWithBudget(arena *nodeArena, act ParseAction, s *glrStack, childCount int, maxGroups int, workBudget int) ([]reduceFork, int, bool) {
+	if s == nil || s.gss.head == nil || childCount <= 0 || maxGroups <= 0 {
+		return nil, 0, false
+	}
+	if workBudget <= 0 {
+		return nil, 0, true
+	}
+
+	var forks []reduceFork
+	var revBuf [64]stackEntry
+	revPath := revBuf[:0]
+	work := 0
+	capped := false
+
+	addFork := func(fork reduceFork) {
+		keep := true
+		insertAt := -1
+		for i := 0; i < len(forks); {
+			if !reduceForksSameChildSelectionGroup(forks[i], fork) {
+				i++
+				continue
+			}
+			switch p.reduceForkWindowPreference(arena, act, fork, forks[i]) {
+			case -1:
+				if insertAt < 0 {
+					insertAt = i
+				}
+				forks = append(forks[:i], forks[i+1:]...)
+			case 1:
+				keep = false
+				i = len(forks)
+			default:
+				i++
+			}
+		}
+		if !keep {
+			return
+		}
+		if insertAt >= 0 || len(forks) < maxGroups {
+			forks = insertReduceFork(forks, insertAt, fork)
+		}
+	}
+
+	var dfs func(n *gssNode, remaining int)
+	dfs = func(n *gssNode, remaining int) {
+		if n == nil || capped {
+			return
+		}
+		for i, count := 0, n.linkCount(); i < count; i++ {
+			if work >= workBudget {
+				capped = true
+				return
+			}
+			work++
+			prev, entry := n.link(i)
+			mark := len(revPath)
+			revPath = append(revPath, entry)
+
+			nextRemaining := remaining
+			if stackEntryHasNode(entry) && !stackEntryNodeIsExtra(entry) {
+				nextRemaining--
+			}
+			if nextRemaining == 0 {
+				if prev != nil {
+					pathLen := len(revPath)
+					window := make([]stackEntry, pathLen)
+					for j := 0; j < pathLen; j++ {
+						window[j] = revPath[pathLen-1-j]
+					}
+					addFork(reduceFork{
+						window:   window,
+						topState: prev.entry.state,
+						popTo:    prev,
+					})
+				}
+				revPath = revPath[:mark]
+				continue
+			}
+
+			dfs(prev, nextRemaining)
+			if capped {
+				revPath = revPath[:mark]
+				return
+			}
+			revPath = revPath[:mark]
+		}
+	}
+
+	dfs(s.gss.head, childCount)
+	return forks, work, capped
+}
+
 func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
 	s.score += int(act.DynamicPrecedence)
 	*anyReduced = true
 }
 
-func tryMergePostReduceFork(target, fork *glrStack) bool {
+func tryMergePostReduceFork(p *Parser, target, fork *glrStack) bool {
 	if target == nil || fork == nil || target.accepted || fork.accepted {
 		return false
 	}
@@ -2123,10 +3281,7 @@ func tryMergePostReduceFork(target, fork *glrStack) bool {
 	if target.top().state != fork.top().state || target.byteOffset != fork.byteOffset {
 		return false
 	}
-	if !gssMainCanMerge(target, fork) {
-		return false
-	}
-	return gssMainMerge(target, fork)
+	return tryGSSMainMergeForParser(p, target, fork)
 }
 
 func (p *Parser) postReduceForkMergeHasFinalizationRisk(s *glrStack, tok Token) bool {
@@ -2162,7 +3317,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 		return false
 	}
 	childCount := int(act.ChildCount)
-	if glrFaithfulCapOneMerge && !gssSpanIsLinear(s.gss.head, childCount) {
+	if !gssSpanIsLinear(s.gss.head, childCount) {
 		return false
 	}
 	if childCount <= 1 || childCount > 8 {
@@ -2226,6 +3381,15 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
 	}
+	var rawEntries [16]stackEntry
+	rawWindow := rawEntries[:0]
+	if childCount > cap(rawEntries) {
+		rawWindow = make([]stackEntry, 0, childCount)
+	}
+	for i := 0; i < childCount; i++ {
+		rawWindow = append(rawWindow, newStackEntryNode(0, children[i]))
+	}
+	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, rawWindow, 0, len(rawWindow))
 	named := p.isNamedSymbol(act.Symbol)
 	var parent *Node
 	parentStart := time.Time{}
@@ -2237,6 +3401,8 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, nil, nil, act.ProductionID)
 	}
+	parent.rawShape = rawShape
+	setReduceNodeDynamicPrecedence(parent, rawWindow, 0, len(rawWindow), act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), nil, nil, reduceChildPathFastGSS)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
@@ -2317,13 +3483,13 @@ func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, to
 	releaseReduceWindowEntries(tmpEntries, windowEntries)
 }
 
-func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	if p != nil && p.noTreeBenchmarkOnly {
 		p.applyNoTreeReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, trackChildErrors)
 		return
 	}
-	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
-		p.applyReduceActionForked(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors)
+	if s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+		p.applyReduceActionForked(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors)
 		return
 	}
 	if p.tryFastVisibleReduceActionFromGSS(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
@@ -2359,7 +3525,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 				releaseReduceWindowEntries(tmpEntries, windowEntries)
 				return
 			}
-			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
 			markReduceApplied(s, act, anyReduced)
 			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
@@ -2382,7 +3548,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 			releaseReduceWindowEntries(tmpEntries, windowEntries)
 			return
 		}
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
 		markReduceApplied(s, act, anyReduced)
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
@@ -2392,6 +3558,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	if timing != nil {
 		childStart = time.Now()
 	}
+	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, windowEntries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -2403,7 +3570,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	}
 
 	if child := p.collapsibleUnarySelfReduction(act, tok, arena, windowEntries, window.start, window.reducedEnd, children, fieldIDs); child != nil {
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, window.reducedEnd, window.actualEnd, window.topState)
 		markReduceApplied(s, act, anyReduced)
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
@@ -2420,6 +3587,8 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
 	}
+	parent.rawShape = rawShape
+	setReduceNodeDynamicPrecedence(parent, windowEntries, window.start, window.reducedEnd, act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
@@ -2441,7 +3610,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
 	if reduceChildPathMayDropSpan(childPath) {
-		extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+		extendParentSpanToWindow(parent, windowEntries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 	}
 	if timing != nil {
 		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
@@ -2480,8 +3649,8 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 	releaseReduceWindowEntries(tmpEntries, windowEntries)
 }
 
-func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
-	forks := reduceWindowsFromGSS(s, int(act.ChildCount), maxStacksPerMergeKey)
+func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, _ []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	forks := p.selectedReduceWindowsFromGSS(arena, act, s, int(act.ChildCount), maxStacksPerMergeKey)
 	if perfCountersEnabled {
 		perfRecordReduceForkCall(len(forks))
 	}
@@ -2498,6 +3667,7 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		actualEnd := len(window)
 		childCount := int(act.ChildCount)
 
+		rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, window, 0, reducedEnd)
 		children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(window, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 
 		target.gss.head = fork.popTo
@@ -2506,7 +3676,7 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		}
 
 		if child := p.collapsibleUnarySelfReduction(act, tok, arena, window, 0, reducedEnd, children, fieldIDs); child != nil {
-			p.pushCollapsedUnaryReduceNode(target, act, tok, child, entryScratch, gssScratch, window, reducedEnd, actualEnd, fork.topState)
+			p.pushCollapsedUnaryReduceNode(target, act, tok, child, arena, entryScratch, gssScratch, window, reducedEnd, actualEnd, fork.topState)
 			target.byteOffset = target.gss.byteOffset()
 			return
 		}
@@ -2517,6 +3687,8 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 		} else {
 			parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
 		}
+		parent.rawShape = rawShape
+		setReduceNodeDynamicPrecedence(parent, window, 0, reducedEnd, act)
 		p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 
 		shouldUseRawSpan := shouldUseRawSpanForReduction(act.Symbol, children, p.language.SymbolMetadata, p.forceRawSpanAll, p.forceRawSpanTable)
@@ -2531,7 +3703,7 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 			parent.endPoint = span.endPoint
 		}
 		if reduceChildPathMayDropSpan(childPath) {
-			extendParentSpanToWindow(parent, window, 0, reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+			extendParentSpanToWindow(parent, window, 0, reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 		}
 		*nodeCount++
 
@@ -2571,7 +3743,7 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 				if perfCountersEnabled {
 					perfRecordPostReduceMergeAttempt()
 				}
-				if tryMergePostReduceFork(s, &clone) {
+				if tryMergePostReduceFork(p, s, &clone) {
 					if perfCountersEnabled {
 						perfRecordPostReduceMergePrimarySuccess()
 					}
@@ -2582,7 +3754,7 @@ func (p *Parser) applyReduceActionForked(s *glrStack, act ParseAction, tok Token
 					if perfCountersEnabled {
 						perfRecordPostReduceMergeAttempt()
 					}
-					if tryMergePostReduceFork(&p.pendingForkStacks[j], &clone) {
+					if tryMergePostReduceFork(p, &p.pendingForkStacks[j], &clone) {
 						if perfCountersEnabled {
 							perfRecordPostReduceMergePendingSuccess()
 						}
@@ -2612,7 +3784,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 		return false
 	}
 	childCount := int(act.ChildCount)
-	if glrFaithfulCapOneMerge && !gssSpanIsLinear(s.gss.head, childCount) {
+	if !gssSpanIsLinear(s.gss.head, childCount) {
 		return false
 	}
 	if childCount <= 1 || childCount > 8 {
@@ -2721,9 +3893,9 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 	return true
 }
 
-func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
-	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
-		p.applyReduceActionForked(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors)
+func (p *Parser) applyReduceActionFromGSSTransientParents(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+	if s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+		p.applyReduceActionForked(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, tmp, deferParentLinks, trackChildErrors)
 		return
 	}
 	if p.tryFastVisibleReduceActionFromGSSTransientParents(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors) {
@@ -2772,7 +3944,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 				}
 				return
 			}
-			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
 			s.score += int(act.DynamicPrecedence)
 			*anyReduced = true
 			if tmpEntries != nil {
@@ -2810,7 +3982,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 			}
 			return
 		}
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		if tmpEntries != nil {
@@ -2823,6 +3995,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	if timing != nil {
 		childStart = time.Now()
 	}
+	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, windowEntries, 0, reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -2838,7 +4011,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 	}
 
 	if child := p.collapsibleUnarySelfReduction(act, tok, arena, windowEntries, 0, reducedEnd, children, fieldIDs); child != nil {
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, windowEntries, reducedEnd, actualEnd, topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		if tmpEntries != nil {
@@ -2853,6 +4026,8 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		parentStart = time.Now()
 	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
+	parent.rawShape = rawShape
+	setReduceNodeDynamicPrecedence(parent, windowEntries, 0, reducedEnd, act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
@@ -2873,7 +4048,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		parent.endPoint = span.endPoint
 	}
 	if reduceChildPathMayDropSpan(childPath) {
-		extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+		extendParentSpanToWindow(parent, windowEntries, 0, reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 	}
 	if timing != nil {
 		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
@@ -3040,7 +4215,7 @@ func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry, arena *n
 		return pendingParentFieldRejectPayloadUnknown
 	}
 	symbolMeta := p.language.SymbolMetadata
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, nil) {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			shape := classifyPendingParentVisiblePayloadShape(parent, arena)
 			switch {
@@ -3059,7 +4234,7 @@ func (p *Parser) pendingParentFieldRejectPayloadShape(entry stackEntry, arena *n
 	if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
 		return pendingParentFieldRejectPayloadHiddenWithFields
 	}
-	switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) {
+	switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta, nil) {
 	case 0:
 		return pendingParentFieldRejectPayloadHiddenEmpty
 	case 1:
@@ -3157,7 +4332,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	hasPayload := false
 	hasError := false
 	for i := start; i < reducedEnd; i++ {
-		count, childHasPayload, childHasError, ok := pendingNoFieldChildCount(entries[i], arena, parentVisible, symbolMeta)
+		count, childHasPayload, childHasError, ok := pendingNoFieldChildCount(entries[i], arena, parentVisible, symbolMeta, nil)
 		if !ok {
 			arena.recordPendingParentRejected(pendingParentRejectChild)
 			return false
@@ -3171,7 +4346,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 			arena.recordPendingParentRejected(pendingParentRejectEmpty)
 			return false
 		}
-		if _, ok := pendingReduceWindowSpan(entries, start, reducedEnd); !ok {
+		if _, ok := pendingReduceWindowSpanWithExtras(entries, start, reducedEnd); !ok {
 			arena.recordPendingParentRejected(pendingParentRejectSpan)
 			return false
 		}
@@ -3180,7 +4355,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	var startPoint, endPoint Point
 	if childCount > 0 {
 		var first, last stackEntry
-		if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, arena, parentVisible, symbolMeta); ok {
+		if firstEntry, lastEntry, ok := pendingNoFieldChildEndpoints(entries, start, reducedEnd, arena, parentVisible, symbolMeta, nil); ok {
 			first = firstEntry
 			last = lastEntry
 		} else {
@@ -3193,6 +4368,11 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		endPoint = stackEntryNodeEndPoint(last)
 	}
 	if span, ok := pendingReduceWindowSpan(entries, start, reducedEnd); ok {
+		startByte = span.startByte
+		endByte = span.endByte
+		startPoint = span.startPoint
+		endPoint = span.endPoint
+	} else if span, ok := pendingReduceWindowSpanWithExtras(entries, start, reducedEnd); ok {
 		startByte = span.startByte
 		endByte = span.endByte
 		startPoint = span.startPoint
@@ -3210,12 +4390,14 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		endPoint,
 		hasError,
 	)
+	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
+	parent.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	out := 0
 	flattenedParents := 0
 	flattenedChildRefs := 0
 	parentChildren := parent.childRefs(arena)
 	for i := start; i < reducedEnd; i++ {
-		next, parents, refs := fillPendingNoFieldChildren(parentChildren, out, entries[i], arena, parentVisible, symbolMeta)
+		next, parents, refs := fillPendingNoFieldChildren(parentChildren, out, entries[i], arena, parentVisible, symbolMeta, nil)
 		out = next
 		flattenedParents += parents
 		flattenedChildRefs += refs
@@ -3269,7 +4451,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		return false
 	}
 
-	window, ok := scanPendingDirectFieldParentWindow(entries, start, reducedEnd, arena, symbolMeta)
+	window, ok := scanPendingDirectFieldParentWindow(entries, start, reducedEnd, arena, symbolMeta, nil)
 	if !ok {
 		return false
 	}
@@ -3279,6 +4461,11 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 	startPoint := stackEntryNodeStartPoint(window.first)
 	endPoint := stackEntryNodeEndPoint(window.last)
 	if span, ok := pendingReduceWindowSpan(entries, start, reducedEnd); ok {
+		startByte = span.startByte
+		endByte = span.endByte
+		startPoint = span.startPoint
+		endPoint = span.endPoint
+	} else if span, ok := pendingReduceWindowSpanWithExtras(entries, start, reducedEnd); ok {
 		startByte = span.startByte
 		endByte = span.endByte
 		startPoint = span.startPoint
@@ -3297,6 +4484,8 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		endPoint,
 		window.hasError,
 	)
+	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
+	parent.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	if useDenseFieldEntries {
 		parent.setHasFieldEntries(true)
 	} else {
@@ -3386,7 +4575,7 @@ type pendingDirectFieldParentWindow struct {
 	last               stackEntry
 }
 
-func scanPendingDirectFieldParentWindow(entries []stackEntry, start, reducedEnd int, arena *nodeArena, symbolMeta []SymbolMetadata) (pendingDirectFieldParentWindow, bool) {
+func scanPendingDirectFieldParentWindow(entries []stackEntry, start, reducedEnd int, arena *nodeArena, symbolMeta []SymbolMetadata, preservedHidden []bool) (pendingDirectFieldParentWindow, bool) {
 	var window pendingDirectFieldParentWindow
 	for i := start; i < reducedEnd; i++ {
 		entry := entries[i]
@@ -3396,8 +4585,8 @@ func scanPendingDirectFieldParentWindow(entries []stackEntry, start, reducedEnd 
 		if stackEntryNodeIsMissing(entry) {
 			return pendingDirectFieldParentWindow{}, false
 		}
-		if !stackEntryVisibleForPending(entry, symbolMeta) {
-			if stackEntryNodeHasError(entry) || stackEntryTreeHasFieldIDs(entry, arena) || pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) != 0 {
+		if !stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
+			if stackEntryNodeHasError(entry) || stackEntryTreeHasFieldIDs(entry, arena) || pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta, preservedHidden) != 0 {
 				return pendingDirectFieldParentWindow{}, false
 			}
 			window.skippedHiddenChild = true
@@ -3440,7 +4629,7 @@ func (p *Parser) pendingDirectFieldParentFieldsRecomputable(productionID uint16,
 			}
 			structuralChildIndex++
 		}
-		if !stackEntryVisibleForPending(entry, symbolMeta) {
+		if !stackEntryStructuralForPending(entry, symbolMeta, nil) {
 			continue
 		}
 		if stackEntryNodeIsExtra(entry) {
@@ -3598,7 +4787,7 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 			if n := stackEntryNode(entry); hiddenTreeHasFieldIDs(n) {
 				shape = pendingParentFieldRejectHiddenChildWithFields
 			} else {
-				switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta) {
+				switch pendingPlainHiddenVisibleDescendantCount(entry, arena, symbolMeta, nil) {
 				case 0:
 					shape = pendingParentFieldRejectHiddenChildPlainEmpty
 				case 1:
@@ -3615,42 +4804,43 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 }
 
 func symbolVisibleForPending(sym Symbol, symbolMeta []SymbolMetadata) bool {
-	if idx := int(sym); idx >= 0 && idx < len(symbolMeta) {
-		return symbolMeta[sym].Visible
-	}
-	return true
+	return symbolStructuralForHiddenFlattening(sym, symbolMeta, nil)
 }
 
 func stackEntryVisibleForPending(entry stackEntry, symbolMeta []SymbolMetadata) bool {
 	return symbolVisibleForPending(stackEntryNodeSymbol(entry), symbolMeta)
 }
 
-func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, arena *nodeArena, symbolMeta []SymbolMetadata) int {
+func stackEntryStructuralForPending(entry stackEntry, symbolMeta []SymbolMetadata, preservedHidden []bool) bool {
+	return symbolStructuralForHiddenFlattening(stackEntryNodeSymbol(entry), symbolMeta, preservedHidden)
+}
+
+func pendingPlainHiddenVisibleDescendantCount(entry stackEntry, arena *nodeArena, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return 0
 	}
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
 		return 1
 	}
 	if parent := stackEntryPendingParent(entry); parent != nil {
 		count := 0
 		for i := 0; i < parent.childEntryCount(); i++ {
 			child := parent.childEntry(arena, i)
-			count += pendingPlainHiddenVisibleDescendantCount(child, arena, symbolMeta)
+			count += pendingPlainHiddenVisibleDescendantCount(child, arena, symbolMeta, preservedHidden)
 		}
 		return count
 	}
 	if node := stackEntryNode(entry); node != nil && !hiddenTreeHasFieldIDs(node) {
 		count := 0
 		for _, child := range node.children {
-			count += pendingPlainHiddenVisibleDescendantCount(newStackEntryNode(child.parseState, child), arena, symbolMeta)
+			count += pendingPlainHiddenVisibleDescendantCount(newStackEntryNode(child.parseState, child), arena, symbolMeta, preservedHidden)
 		}
 		return count
 	}
 	return 0
 }
 
-func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (count int, hasPayload bool, hasError bool, ok bool) {
+func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata, preservedHidden []bool) (count int, hasPayload bool, hasError bool, ok bool) {
 	if !stackEntryHasNode(entry) {
 		return 0, false, false, true
 	}
@@ -3659,7 +4849,7 @@ func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible 
 	}
 	hasPayload = stackEntryCompactFullLeaf(entry) != nil || stackEntryPendingParent(entry) != nil
 	hasError = stackEntryNodeHasError(entry)
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
 		return 1, hasPayload, hasError, true
 	}
 	if parentVisible {
@@ -3669,7 +4859,7 @@ func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible 
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := 0; i < parent.childEntryCount(); i++ {
 				child := parent.childEntry(arena, i)
-				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(child, arena, true, symbolMeta)
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(child, arena, true, symbolMeta, preservedHidden)
 				if !childOK {
 					return 0, false, false, false
 				}
@@ -3682,7 +4872,7 @@ func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible 
 		if node := stackEntryNode(entry); node != nil {
 			for _, child := range node.children {
 				childEntry := newStackEntryNode(child.parseState, child)
-				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(childEntry, arena, true, symbolMeta)
+				childCount, childPayload, childHasError, childOK := pendingNoFieldChildCount(childEntry, arena, true, symbolMeta, preservedHidden)
 				if !childOK {
 					return 0, false, false, false
 				}
@@ -3699,9 +4889,9 @@ func pendingNoFieldChildCount(entry stackEntry, arena *nodeArena, parentVisible 
 	return 1, hasPayload, hasError, true
 }
 
-func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (first, last stackEntry, ok bool) {
+func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata, preservedHidden []bool) (first, last stackEntry, ok bool) {
 	for i := start; i < end; i++ {
-		next, found := pendingNoFieldFirstChild(entries[i], arena, parentVisible, symbolMeta)
+		next, found := pendingNoFieldFirstChild(entries[i], arena, parentVisible, symbolMeta, preservedHidden)
 		if !found {
 			continue
 		}
@@ -3713,7 +4903,7 @@ func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, arena *n
 		return stackEntry{}, stackEntry{}, false
 	}
 	for i := end - 1; i >= start; i-- {
-		next, found := pendingNoFieldLastChild(entries[i], arena, parentVisible, symbolMeta)
+		next, found := pendingNoFieldLastChild(entries[i], arena, parentVisible, symbolMeta, preservedHidden)
 		if !found {
 			continue
 		}
@@ -3723,18 +4913,18 @@ func pendingNoFieldChildEndpoints(entries []stackEntry, start, end int, arena *n
 	return stackEntry{}, stackEntry{}, false
 }
 
-func pendingNoFieldFirstChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+func pendingNoFieldFirstChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata, preservedHidden []bool) (stackEntry, bool) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return stackEntry{}, false
 	}
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
 		return entry, true
 	}
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := 0; i < parent.childEntryCount(); i++ {
 				child := parent.childEntry(arena, i)
-				if next, ok := pendingNoFieldFirstChild(child, arena, true, symbolMeta); ok {
+				if next, ok := pendingNoFieldFirstChild(child, arena, true, symbolMeta, preservedHidden); ok {
 					return next, true
 				}
 			}
@@ -3742,7 +4932,7 @@ func pendingNoFieldFirstChild(entry stackEntry, arena *nodeArena, parentVisible 
 		}
 		if node := stackEntryNode(entry); node != nil {
 			for _, child := range node.children {
-				if next, ok := pendingNoFieldFirstChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta); ok {
+				if next, ok := pendingNoFieldFirstChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta, preservedHidden); ok {
 					return next, true
 				}
 			}
@@ -3755,18 +4945,18 @@ func pendingNoFieldFirstChild(entry stackEntry, arena *nodeArena, parentVisible 
 	return entry, true
 }
 
-func pendingNoFieldLastChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (stackEntry, bool) {
+func pendingNoFieldLastChild(entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata, preservedHidden []bool) (stackEntry, bool) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return stackEntry{}, false
 	}
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
 		return entry, true
 	}
 	if parentVisible {
 		if parent := stackEntryPendingParent(entry); parent != nil {
 			for i := parent.childEntryCount() - 1; i >= 0; i-- {
 				child := parent.childEntry(arena, i)
-				if next, ok := pendingNoFieldLastChild(child, arena, true, symbolMeta); ok {
+				if next, ok := pendingNoFieldLastChild(child, arena, true, symbolMeta, preservedHidden); ok {
 					return next, true
 				}
 			}
@@ -3775,7 +4965,7 @@ func pendingNoFieldLastChild(entry stackEntry, arena *nodeArena, parentVisible b
 		if node := stackEntryNode(entry); node != nil {
 			for i := len(node.children) - 1; i >= 0; i-- {
 				child := node.children[i]
-				if next, ok := pendingNoFieldLastChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta); ok {
+				if next, ok := pendingNoFieldLastChild(newStackEntryNode(child.parseState, child), arena, true, symbolMeta, preservedHidden); ok {
 					return next, true
 				}
 			}
@@ -3788,11 +4978,11 @@ func pendingNoFieldLastChild(entry stackEntry, arena *nodeArena, parentVisible b
 	return entry, true
 }
 
-func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata) (next int, flattenedParents int, flattenedChildRefs int) {
+func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEntry, arena *nodeArena, parentVisible bool, symbolMeta []SymbolMetadata, preservedHidden []bool) (next int, flattenedParents int, flattenedChildRefs int) {
 	if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 		return out, 0, 0
 	}
-	if stackEntryVisibleForPending(entry, symbolMeta) {
+	if stackEntryStructuralForPending(entry, symbolMeta, preservedHidden) {
 		if out < len(dst) {
 			dst[out] = newPendingChildEntry(entry)
 			out++
@@ -3806,7 +4996,7 @@ func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEnt
 			for _, childRef := range children {
 				child := childRef.stackEntry()
 				var parents, refs int
-				out, parents, refs = fillPendingNoFieldChildren(dst, out, child, arena, true, symbolMeta)
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, child, arena, true, symbolMeta, preservedHidden)
 				flattenedParents += parents
 				flattenedChildRefs += refs
 			}
@@ -3821,7 +5011,7 @@ func fillPendingNoFieldChildren(dst []pendingChildEntry, out int, entry stackEnt
 			children := node.children
 			for _, child := range children {
 				var parents, refs int
-				out, parents, refs = fillPendingNoFieldChildren(dst, out, newStackEntryNode(child.parseState, child), arena, true, symbolMeta)
+				out, parents, refs = fillPendingNoFieldChildren(dst, out, newStackEntryNode(child.parseState, child), arena, true, symbolMeta, preservedHidden)
 				flattenedParents += parents
 				flattenedChildRefs += refs
 			}
@@ -3863,6 +5053,37 @@ func pendingReduceWindowSpan(entries []stackEntry, start, end int) (reduceRawSpa
 	for i := end - 1; i >= start; i-- {
 		entry := entries[i]
 		if !stackEntryHasNode(entry) || stackEntryNodeIsExtra(entry) {
+			continue
+		}
+		span.endByte = stackEntryNodeEndByte(entry)
+		span.endPoint = stackEntryNodeEndPoint(entry)
+		return span, true
+	}
+	return span, true
+}
+
+func pendingReduceWindowSpanWithExtras(entries []stackEntry, start, end int) (reduceRawSpan, bool) {
+	span := reduceRawSpan{}
+	if end <= start {
+		return span, false
+	}
+	foundStart := false
+	for i := start; i < end; i++ {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
+			continue
+		}
+		span.startByte = stackEntryNodeStartByte(entry)
+		span.startPoint = stackEntryNodeStartPoint(entry)
+		foundStart = true
+		break
+	}
+	if !foundStart {
+		return span, false
+	}
+	for i := end - 1; i >= start; i-- {
+		entry := entries[i]
+		if !stackEntryHasNode(entry) || stackEntryNodeIsMissing(entry) {
 			continue
 		}
 		span.endByte = stackEntryNodeEndByte(entry)
@@ -3947,9 +5168,12 @@ func shouldUseRawSpanForReduction(sym Symbol, children []*Node, symbolMeta []Sym
 }
 
 // extendParentSpanToWindow widens the parent node's [startByte, endByte] to
-// recover span from entries that buildReduceChildren drops. Two categories:
+// recover span from entries that buildReduceChildren drops. Leading extras are
+// intentionally ignored: they are trivia before the first visible child and
+// must not pull a visible parent's start earlier. Two categories are recovered:
 //
-//  1. Leading extras: extend startByte backward (extras before first structural child).
+//  1. Leading invisible structural children: hidden children before the first
+//     visible child can seed the parent extent.
 //  2. Invisible non-extra leaf children: these are structural children whose symbol
 //     is not visible AND that have no children to inline. buildReduceChildren skips
 //     them entirely (the "if len(kids) == 0 { continue }" path), losing their span.
@@ -3958,21 +5182,7 @@ func shouldUseRawSpanForReduction(sym Symbol, children []*Node, symbolMeta []Sym
 //
 // Trailing extras (separated into [reducedEnd, actualEnd)) are NOT scanned because
 // they become siblings of the parent, not children.
-func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reducedEnd int, symbolMeta []SymbolMetadata, spanExtendingInvisibleSymbols, nonSpanExtendingInvisibleSymbols []bool) {
-	// Leading extras: extend startByte backward until the first structural child.
-	for i := start; i < reducedEnd; i++ {
-		n := stackEntryNode(entries[i])
-		if n == nil {
-			continue
-		}
-		if !n.isExtra() {
-			break
-		}
-		if n.startByte < parent.startByte {
-			parent.startByte = n.startByte
-			parent.startPoint = n.startPoint
-		}
-	}
+func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reducedEnd int, symbolMeta []SymbolMetadata, spanExtendingInvisibleSymbols, nonSpanExtendingInvisibleSymbols []bool, source []byte) {
 	// Leading invisible structural children: extend startByte back to the
 	// earliest one. C's ts_subtree_set_children seeds the parent extent from its
 	// FIRST child unconditionally, including hidden openers that buildReduceChildren
@@ -3997,6 +5207,9 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 		}
 		if visible {
 			break // first visible child seeds the extent; nothing earlier to add
+		}
+		if symbolMarked(nonSpanExtendingInvisibleSymbols, n.symbol) {
+			continue
 		}
 		if n.startByte < parent.startByte {
 			parent.startByte = n.startByte
@@ -4037,7 +5250,7 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 			parent.startPoint = n.startPoint
 		}
 		spanExtending := symbolMarked(spanExtendingInvisibleSymbols, n.symbol)
-		if (n.startByte <= parent.endByte || spanExtending) && n.endByte > parent.endByte {
+		if (n.startByte <= parent.endByte || spanExtending || spanBridgeIsParserPadding(source, parent.endByte, n.startByte)) && n.endByte > parent.endByte {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
@@ -4065,7 +5278,7 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 			continue
 		}
 		spanExtending := symbolMarked(spanExtendingInvisibleSymbols, n.symbol)
-		if (n.startByte <= parent.endByte || spanExtending) && n.endByte > parent.endByte {
+		if (n.startByte <= parent.endByte || spanExtending || spanBridgeIsParserPadding(source, parent.endByte, n.startByte)) && n.endByte > parent.endByte {
 			parent.endByte = n.endByte
 			parent.endPoint = n.endPoint
 		}
@@ -4075,6 +5288,13 @@ func extendParentSpanToWindow(parent *Node, entries []stackEntry, start, reduced
 			parent.endPoint = n.endPoint
 		}
 	}
+}
+
+func spanBridgeIsParserPadding(source []byte, from, to uint32) bool {
+	if len(source) == 0 || from >= to {
+		return false
+	}
+	return bytesAreParserPadding(source, from, to)
 }
 
 func buildInvisibleSpanSymbolTables(symbolNames []string) ([]bool, []bool) {
@@ -4105,6 +5325,16 @@ func buildInvisibleSpanSymbolTables(symbolNames []string) ([]bool, []bool) {
 func symbolMarked(table []bool, sym Symbol) bool {
 	idx := int(sym)
 	return idx < len(table) && table[idx]
+}
+
+func symbolStructuralForHiddenFlattening(sym Symbol, symbolMeta []SymbolMetadata, preservedHidden []bool) bool {
+	if symbolMarked(preservedHidden, sym) {
+		return true
+	}
+	if idx := int(sym); idx >= 0 && idx < len(symbolMeta) {
+		return symbolMeta[sym].Visible
+	}
+	return true
 }
 
 const (
@@ -4313,32 +5543,30 @@ func (s *reduceBuildScratch) recordRepeatedField(epoch uint32, fid FieldID, sour
 	s.repeatSource[idx] = source
 }
 
-func appendFlattenedHiddenChildrenToScratch(scratch *reduceBuildScratch, n *Node, symbolMeta []SymbolMetadata) {
+func appendFlattenedHiddenChildrenToScratch(scratch *reduceBuildScratch, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) {
 	if scratch == nil || n == nil {
 		return
 	}
-	visible := true
-	if idx := int(n.symbol); idx < len(symbolMeta) {
-		visible = symbolMeta[n.symbol].Visible
-	}
-	if visible {
+	if symbolStructuralForHiddenFlattening(n.symbol, symbolMeta, preservedHidden) {
 		scratch.appendNode(n)
 		return
 	}
+	paddingStartByte := n.startByte
+	paddingStartPoint := n.startPoint
+	paddingSource := n
 	for _, child := range n.children {
-		appendFlattenedHiddenChildrenToScratch(scratch, child, symbolMeta)
+		before := len(scratch.nodes)
+		appendFlattenedHiddenChildrenToScratch(scratch, child, symbolMeta, preservedHidden)
+		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingScratch(scratch, before, paddingStartByte, paddingStartPoint, paddingSource, nil, symbolMeta)
+		paddingSource = child
 	}
 }
 
-func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, n *Node, symbolMeta []SymbolMetadata) {
+func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) {
 	if scratch == nil || n == nil {
 		return
 	}
-	visible := true
-	if idx := int(n.symbol); idx < len(symbolMeta) {
-		visible = symbolMeta[n.symbol].Visible
-	}
-	if visible {
+	if symbolStructuralForHiddenFlattening(n.symbol, symbolMeta, preservedHidden) {
 		scratch.appendNode(n)
 		return
 	}
@@ -4346,10 +5574,15 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 	nodeStart := len(scratch.nodes)
 	repeatEpoch := scratch.nextRepeatEpoch()
 	touchedStart := len(scratch.repeatTouched)
+	paddingStartByte := n.startByte
+	paddingStartPoint := n.startPoint
+	paddingSource := n
 	for i, child := range n.children {
 		spanStart := len(scratch.nodes)
-		appendFlattenedHiddenChildrenWithFieldScratch(scratch, child, symbolMeta)
+		appendFlattenedHiddenChildrenWithFieldScratch(scratch, child, symbolMeta, preservedHidden)
 		spanEnd := len(scratch.nodes)
+		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingScratch(scratch, spanStart, paddingStartByte, paddingStartPoint, paddingSource, nil, symbolMeta)
+		paddingSource = child
 		if i >= len(n.fieldIDs) || n.fieldIDs[i] == 0 || spanStart >= spanEnd {
 			continue
 		}
@@ -4628,6 +5861,10 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 	}
 	scratch.reset()
 
+	var pendingPaddingStart uint32
+	var pendingPaddingPoint Point
+	var pendingPaddingSource *Node
+	havePendingPadding := false
 	for i := start; i < end; i++ {
 		n := stackEntryNode(entries[i])
 		if n == nil {
@@ -4638,11 +5875,21 @@ func (p *Parser) buildReduceChildrenNoAliasNoFieldsPlanned(entries []stackEntry,
 			visible = symbolMeta[n.symbol].Visible
 		}
 		if visible {
+			if havePendingPadding && flattenedHiddenSiblingPaddingTarget(n, pendingPaddingSource, symbolMeta) && pendingPaddingStart < n.startByte {
+				n = cloneNodeInArena(arena, n)
+				n.startByte = pendingPaddingStart
+				n.startPoint = pendingPaddingPoint
+			}
 			scratch.appendNode(n)
+			havePendingPadding = false
 			continue
 		}
 		if parentVisible {
-			appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta)
+			before := len(scratch.nodes)
+			appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta, nil)
+			after := len(scratch.nodes)
+			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(n, scratch.nodes, before, after)
+			pendingPaddingSource = n
 			continue
 		}
 		if len(n.children) == 0 {
@@ -4709,40 +5956,57 @@ func reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, al
 
 func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
 	structuralChildIndex := 0
+	var pendingPaddingStart uint32
+	var pendingPaddingPoint Point
+	var pendingPaddingSource *Node
+	havePendingPadding := false
 	for i := start; i < end; i++ {
 		item, ok := reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena, lang)
 		if !ok {
 			continue
 		}
 		structuralChildIndex = item.nextStructuralIndex
-		p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, symbolMeta)
+		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
+		if !symbolVisibleForPending(item.node.symbol, symbolMeta) {
+			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(item.node, scratch.nodes, spanStart, spanEnd)
+			pendingPaddingSource = item.node
+			continue
+		}
+		havePendingPadding = false
 	}
 }
 
-func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, symbolMeta []SymbolMetadata) {
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
 	if symbolVisibleForPending(n.symbol, symbolMeta) {
+		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
+			n = cloneNodeInArena(arena, n)
+			n.startByte = paddingStartByte
+			n.startPoint = paddingStartPoint
+		}
+		start := len(scratch.nodes)
 		p.appendVisibleReduceChildToScratch(scratch, n, item.fieldID, item.inherited)
-		return
+		return start, len(scratch.nodes)
 	}
 	if len(n.children) == 0 {
-		return
+		return len(scratch.nodes), len(scratch.nodes)
 	}
 
 	spanStart := len(scratch.nodes)
 	if hiddenTreeHasFieldIDs(n) {
-		appendFlattenedHiddenChildrenWithFieldScratch(scratch, n, symbolMeta)
+		appendFlattenedHiddenChildrenWithFieldScratch(scratch, n, symbolMeta, nil)
 	} else {
-		appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta)
+		appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta, nil)
 	}
 	if item.fieldID == 0 {
-		return
+		return spanStart, len(scratch.nodes)
 	}
 	if !scratch.trackFields {
 		scratch.ensureFieldStorage()
 	}
 	fieldEnd := len(scratch.fieldIDs)
 	applyParentFieldToFlattenedHiddenSpan(scratch, n, spanStart, fieldEnd, item.fieldID, item.inherited, rawFieldIDs, nextStructuralChildIndex)
+	return spanStart, len(scratch.nodes)
 }
 
 func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, n *Node, fid FieldID, inherited bool) {
@@ -4853,41 +6117,35 @@ func (p *Parser) suppressReducedChildFields(children []*Node, fieldIDs []FieldID
 	}
 }
 
-func countFlattenedHiddenChildren(n *Node, symbolMeta []SymbolMetadata) int {
+func countFlattenedHiddenChildren(n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
 	if n == nil {
 		return 0
 	}
-	visible := true
-	if idx := int(n.symbol); idx < len(symbolMeta) {
-		visible = symbolMeta[n.symbol].Visible
-	}
-	if visible {
+	if symbolStructuralForHiddenFlattening(n.symbol, symbolMeta, preservedHidden) {
 		return 1
 	}
 	count := 0
 	for _, child := range n.children {
-		count += countFlattenedHiddenChildren(child, symbolMeta)
+		count += countFlattenedHiddenChildren(child, symbolMeta, preservedHidden)
 	}
 	return count
 }
 
-func appendFlattenedHiddenChildren(dst []*Node, out int, n *Node, symbolMeta []SymbolMetadata) int {
-	return appendFlattenedHiddenChildrenWithFields(dst, nil, nil, out, n, symbolMeta)
+func appendFlattenedHiddenChildren(dst []*Node, out int, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
+	return appendFlattenedHiddenChildrenWithFields(dst, nil, nil, out, n, symbolMeta, preservedHidden)
 }
 
-func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fieldSrcDst []uint8, out int, n *Node, symbolMeta []SymbolMetadata) int {
+func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fieldSrcDst []uint8, out int, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
 	if n == nil {
 		return out
 	}
-	visible := true
-	if idx := int(n.symbol); idx < len(symbolMeta) {
-		visible = symbolMeta[n.symbol].Visible
-	}
-	if visible {
+	if symbolStructuralForHiddenFlattening(n.symbol, symbolMeta, preservedHidden) {
 		dst[out] = n
 		return out + 1
 	}
 	nodeStart := out
+	paddingStartByte := n.startByte
+	paddingStartPoint := n.startPoint
 	type hiddenFieldSpan struct {
 		count  int
 		source uint8
@@ -4895,7 +6153,8 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 	var repeated map[FieldID]hiddenFieldSpan
 	for i, child := range n.children {
 		spanStart := out
-		out = appendFlattenedHiddenChildrenWithFields(dst, fieldDst, fieldSrcDst, out, child, symbolMeta)
+		out = appendFlattenedHiddenChildrenWithFields(dst, fieldDst, fieldSrcDst, out, child, symbolMeta, preservedHidden)
+		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingNodes(dst, spanStart, out, paddingStartByte, paddingStartPoint, child, nil, symbolMeta)
 		if fieldDst != nil && i < len(n.fieldIDs) && n.fieldIDs[i] != 0 {
 			source := fieldSourceAt(n.fieldSources, i)
 			if source == fieldSourceNone {
@@ -4921,6 +6180,83 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 	}
 	normalizeMixedSourceFieldSpan(fieldDst, fieldSrcDst, nodeStart, out)
 	return out
+}
+
+func absorbFlattenedHiddenPaddingScratch(scratch *reduceBuildScratch, start int, paddingStartByte uint32, paddingStartPoint Point, source *Node, arena *nodeArena, symbolMeta []SymbolMetadata) (uint32, Point) {
+	if scratch == nil {
+		return paddingStartByte, paddingStartPoint
+	}
+	return absorbFlattenedHiddenPaddingNodes(scratch.nodes, start, len(scratch.nodes), paddingStartByte, paddingStartPoint, source, arena, symbolMeta)
+}
+
+func absorbFlattenedHiddenPaddingNodes(nodes []*Node, start, end int, paddingStartByte uint32, paddingStartPoint Point, source *Node, arena *nodeArena, symbolMeta []SymbolMetadata) (uint32, Point) {
+	if start >= end {
+		if source != nil && source.startByte <= paddingStartByte && source.endByte > paddingStartByte {
+			return source.endByte, source.endPoint
+		}
+		return paddingStartByte, paddingStartPoint
+	}
+	first := nodes[start]
+	if first == nil {
+		return paddingStartByte, paddingStartPoint
+	}
+	if paddingStartByte < first.startByte && flattenedHiddenPaddingTarget(first, source, symbolMeta) {
+		if arena == nil {
+			arena = first.ownerArena
+		}
+		cloned := cloneNodeInArena(arena, first)
+		if cloned != nil {
+			cloned.startByte = paddingStartByte
+			cloned.startPoint = paddingStartPoint
+			nodes[start] = cloned
+		}
+	}
+	last := nodes[end-1]
+	if last == nil {
+		return paddingStartByte, paddingStartPoint
+	}
+	return last.endByte, last.endPoint
+}
+
+func flattenedHiddenEntryPadding(source *Node, nodes []*Node, start, end int) (uint32, Point, bool) {
+	if source == nil {
+		return 0, Point{}, false
+	}
+	if start < end {
+		last := nodes[end-1]
+		if last != nil && source.endByte > last.endByte {
+			return last.endByte, last.endPoint, true
+		}
+		return source.endByte, source.endPoint, false
+	}
+	if source.endByte > source.startByte {
+		return source.startByte, source.startPoint, true
+	}
+	return 0, Point{}, false
+}
+
+func flattenedHiddenPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) bool {
+	if n == nil || n.isExtra() || n.isMissing() || n.hasError() {
+		return false
+	}
+	if n.isExternalScannerToken() {
+		return false
+	}
+	if idx := int(n.symbol); idx >= 0 && idx < len(symbolMeta) {
+		meta := symbolMeta[n.symbol]
+		if !meta.Visible || meta.Named {
+			return false
+		}
+		if len(n.children) > 0 {
+			return true
+		}
+		return false
+	}
+	return !n.isNamed() && len(n.children) > 0
+}
+
+func flattenedHiddenSiblingPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) bool {
+	return flattenedHiddenPaddingTarget(n, source, symbolMeta)
 }
 
 func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, start, end int) {
@@ -5218,7 +6554,7 @@ func recordCollapseRule(arena *nodeArena, rule collapseUnaryRule) {
 	}
 }
 
-func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
 	var (
@@ -5269,7 +6605,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 				s.dead = true
 				return
 			}
-			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, arena, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
 			s.score += int(act.DynamicPrecedence)
 			*anyReduced = true
 			return
@@ -5297,7 +6633,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 			s.dead = true
 			return
 		}
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -5307,6 +6643,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	if timing != nil {
 		childStart = time.Now()
 	}
+	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -5322,7 +6659,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	}
 
 	if child := p.collapsibleUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd, children, fieldIDs); child != nil {
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, trailingStart, trailingEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, entries, trailingStart, trailingEnd, window.topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -5339,6 +6676,8 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	} else {
 		parent = newParentNodeInArenaWithFieldSources(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID)
 	}
+	parent.rawShape = rawShape
+	setReduceNodeDynamicPrecedence(parent, entries, window.start, window.reducedEnd, act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
@@ -5360,7 +6699,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	}
 	// Extend parent span to cover invisible children dropped by buildReduceChildren.
 	if reduceChildPathMayDropSpan(childPath) {
-		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 	}
 	if timing != nil {
 		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
@@ -5399,7 +6738,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 	*anyReduced = true
 }
 
-func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
+func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, deferParentLinks bool, trackChildErrors bool) {
 	timing := p.reduceTiming
 	childCount := int(act.ChildCount)
 	var (
@@ -5449,7 +6788,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 				s.dead = true
 				return
 			}
-			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+			p.pushCollapsedUnaryReduceEntry(s, act, tok, child, arena, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
 			s.score += int(act.DynamicPrecedence)
 			*anyReduced = true
 			return
@@ -5477,7 +6816,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 			s.dead = true
 			return
 		}
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, entries, window.reducedEnd, window.actualEnd, window.topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -5487,6 +6826,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	if timing != nil {
 		childStart = time.Now()
 	}
+	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -5501,7 +6841,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 	}
 
 	if child := p.collapsibleUnarySelfReduction(act, tok, arena, entries, window.start, window.reducedEnd, children, fieldIDs); child != nil {
-		p.pushCollapsedUnaryReduceNode(s, act, tok, child, entryScratch, gssScratch, entries, trailingStart, trailingEnd, window.topState)
+		p.pushCollapsedUnaryReduceNode(s, act, tok, child, arena, entryScratch, gssScratch, entries, trailingStart, trailingEnd, window.topState)
 		s.score += int(act.DynamicPrecedence)
 		*anyReduced = true
 		return
@@ -5513,6 +6853,8 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		parentStart = time.Now()
 	}
 	parent := p.newReduceParentNode(arena, act.Symbol, named, children, fieldIDs, fieldSources, act.ProductionID, deferParentLinks, trackChildErrors)
+	parent.rawShape = rawShape
+	setReduceNodeDynamicPrecedence(parent, entries, window.start, window.reducedEnd, act)
 	p.recordReductionParentConstructed(arena, parent, act.Symbol, len(children), fieldIDs, fieldSources, childPath)
 	if timing != nil {
 		timing.reduceParentBuildNanos += time.Since(parentStart).Nanoseconds()
@@ -5533,7 +6875,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		parent.endPoint = span.endPoint
 	}
 	if reduceChildPathMayDropSpan(childPath) {
-		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols)
+		extendParentSpanToWindow(parent, entries, window.start, window.reducedEnd, p.language.SymbolMetadata, p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols, source)
 	}
 	if timing != nil {
 		timing.reduceSpanNanos += time.Since(spanStart).Nanoseconds()
@@ -5579,7 +6921,7 @@ func (p *Parser) pushNoTreeReduceNode(s *glrStack, act ParseAction, tok Token, a
 		targetState = gotoState
 	}
 
-	parent := newNoTreeReduceNodeInArena(arena, act.Symbol, p.isNamedSymbol(act.Symbol), act.ProductionID, entries, start, reducedEnd, tok, trackChildErrors)
+	parent := newNoTreeReduceNodeInArena(arena, act, p.isNamedSymbol(act.Symbol), entries, start, reducedEnd, tok, trackChildErrors)
 	if tok.NoLookahead && targetState == topState {
 		parent.setExtra(true)
 	}
@@ -5624,7 +6966,7 @@ func (p *Parser) pushStackPendingParent(s *glrStack, state StateID, parent *pend
 	p.pushStackEntry(s, entry, entryScratch, gssScratch)
 }
 
-func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {
+func newNoTreeReduceNodeInArena(arena *nodeArena, act ParseAction, named bool, entries []stackEntry, start, reducedEnd int, tok Token, trackChildErrors bool) *noTreeNode {
 	var n *noTreeNode
 	if arena == nil {
 		n = &noTreeNode{}
@@ -5632,12 +6974,14 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 		n = arena.allocNoTreeNode()
 		arena.noTreeReduceNodesConstructed++
 	}
-	n.symbol = sym
+	n.symbol = act.Symbol
 	n.startByte = tok.StartByte
 	n.endByte = tok.StartByte
 	n.parseState = 0
 	n.preGotoState = 0
-	n.productionID = productionID
+	n.productionID = act.ProductionID
+	n.rawShape = captureRawShapeInArena(arena, act, entries, start, reducedEnd)
+	n.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	n.flags = noTreeNodeInitialFlags(named)
 	if reducedEnd > start {
 		firstRaw := entries[start]
@@ -5673,7 +7017,20 @@ func newNoTreeReduceNodeInArena(arena *nodeArena, sym Symbol, named bool, produc
 	return n
 }
 
-func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok Token, child *Node, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
+func captureRawShapeInArena(arena *nodeArena, act ParseAction, entries []stackEntry, start, end int) rawShapeRef {
+	if arena == nil {
+		return 0
+	}
+	var p Parser
+	return p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, end)
+}
+
+func captureCollapsedUnaryRawShape(arena *nodeArena, act ParseAction, entries []stackEntry, reducedEnd int) rawShapeRef {
+	return captureRawShapeInArena(arena, act, entries, reducedEnd-1, reducedEnd)
+}
+
+func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok Token, child *Node, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
+	rawShape := captureCollapsedUnaryRawShape(arena, act, entries, trailingStart)
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
@@ -5685,6 +7042,8 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 	child.productionID = act.ProductionID
 	child.preGotoState = topState
 	child.parseState = targetState
+	child.rawShape = rawShape
+	child.dynamicPrecedence += int32(act.DynamicPrecedence)
 	nodeBumpEquivVersion(child)
 	p.pushStackNode(s, targetState, child, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
@@ -5698,13 +7057,16 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 	}
 }
 
-func (p *Parser) pushCollapsedUnaryReduceEntry(s *glrStack, act ParseAction, tok Token, child stackEntry, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
+func (p *Parser) pushCollapsedUnaryReduceEntry(s *glrStack, act ParseAction, tok Token, child stackEntry, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
+	rawShape := captureCollapsedUnaryRawShape(arena, act, entries, trailingStart)
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
 		targetState = gotoState
 	}
 	setCollapsedUnaryEntryMetadata(&child, act, tok.NoLookahead && targetState == topState, topState, targetState)
+	setStackEntryRawShapeRef(&child, rawShape)
+	addStackEntryDynamicPrecedence(&child, act.DynamicPrecedence)
 	p.pushStackEntry(s, child, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra, ok := retargetStackEntryPayload(entries[i], targetState)
@@ -5786,7 +7148,7 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 			}
 			return stackEntry{}, false
 		}
-		if !p.isVisibleSymbol(child.symbol) {
+		if !p.isVisibleSymbol(child.symbol) && !p.canCollapseHiddenChoicePassthroughSymbol(act.Symbol) {
 			if diag {
 				arena.collapseRawUnaryMissChild++
 			}
@@ -5807,7 +7169,7 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 	}
 
 	if parent := stackEntryPendingParent(entry); parent != nil {
-		if !p.isVisibleSymbol(parent.symbol) {
+		if !p.isVisibleSymbol(parent.symbol) && !p.canCollapseHiddenChoicePassthroughSymbol(act.Symbol) {
 			if diag {
 				arena.collapseRawUnaryMissChild++
 			}
@@ -5888,22 +7250,13 @@ func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collaps
 		if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
 			return collapseUnaryRuleNone
 		}
-		if p.wrapsSameNamedAnonymousToken(act.Symbol, childSym) {
-			return collapseUnaryRuleNone
-		}
-		// Only the inlined-token artifact collapses to a childless named leaf: a
-		// named rule whose body is a single literal that tree-sitter lexes
-		// directly as the rule symbol (e.g. go `nil`/`true`/`false`/`iota`). In
-		// the loaded Language ts2go splits that into a same-named named rule plus
-		// a same-named visible anonymous token, so the inlined case is exactly the
-		// same-named pair that wrapsSameNamedAnonymousToken did NOT mark as keep.
-		// A DIFFERENT-named visible anonymous child (e.g. optional_chain `?.`,
-		// empty `;`, moduleExpr `module`) is a genuine production member that C
-		// tree-sitter keeps as a visible child, so it must not collapse here.
-		if !p.sameSymbolName(act.Symbol, childSym) {
+		if p.shouldKeepVisibleAnonymousTokenChild(act.Symbol, childSym) {
 			return collapseUnaryRuleNone
 		}
 		return collapseUnaryRuleNamedLeafAlias
+	}
+	if p.isSharedVisibleAnonymousToken(childSym) {
+		return collapseUnaryRuleNone
 	}
 	return collapseUnaryRuleSameSymbol
 }
@@ -5919,7 +7272,20 @@ func (p *Parser) canCollapseInvisibleUnaryWrapperSymbol(parentSym Symbol) bool {
 	if symbolMarked(p.aliasPreservedWrapperSymbols, parentSym) {
 		return false
 	}
-	return invisibleUnaryWrapperCollapsible(meta[parentSym])
+	return invisibleUnaryWrapperCollapsible(meta[parentSym]) || p.canCollapseHiddenChoicePassthroughSymbol(parentSym)
+}
+
+func (p *Parser) canCollapseHiddenChoicePassthroughSymbol(parentSym Symbol) bool {
+	if p == nil || p.language == nil {
+		return false
+	}
+	if symbolMarked(p.aliasPreservedWrapperSymbols, parentSym) {
+		return false
+	}
+	idx := int(parentSym)
+	return idx >= 0 &&
+		idx < len(p.language.HiddenChoicePassthroughSymbols) &&
+		p.language.HiddenChoicePassthroughSymbols[idx]
 }
 
 // buildAliasPreservedWrapperSymbols marks invisible aux wrapper symbols that
@@ -5996,7 +7362,7 @@ func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, ar
 		}
 		return nil
 	}
-	if !p.isVisibleSymbol(child.symbol) {
+	if !p.isVisibleSymbol(child.symbol) && !p.canCollapseHiddenChoicePassthroughSymbol(act.Symbol) {
 		if diag {
 			arena.collapseRawUnaryMissChild++
 		}
@@ -6086,19 +7452,42 @@ func (p *Parser) collapseUnaryChildForReductionWithRule(act ParseAction, arena *
 		if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
 			return nil, collapseUnaryRuleNone
 		}
-		if p.wrapsSameNamedAnonymousToken(act.Symbol, child.symbol) {
-			return nil, collapseUnaryRuleNone
-		}
-		// Same rationale as collapseUnaryLeafRule: only the inlined-token artifact
-		// (a same-named anon token the lexer produces directly as the rule)
-		// collapses to a childless leaf. A different-named visible anonymous child
-		// is a real production member that C keeps, so it must not collapse.
-		if !p.sameSymbolName(act.Symbol, child.symbol) {
+		if p.shouldKeepVisibleAnonymousTokenChild(act.Symbol, child.symbol) {
 			return nil, collapseUnaryRuleNone
 		}
 		return aliasedNodeInArena(arena, p.language, child, act.Symbol), collapseUnaryRuleNamedLeafAlias
 	}
+	if p.isSharedVisibleAnonymousToken(child.symbol) {
+		return nil, collapseUnaryRuleNone
+	}
 	return child, collapseUnaryRuleSameSymbol
+}
+
+func (p *Parser) shouldKeepVisibleAnonymousTokenChild(parentSym, childSym Symbol) bool {
+	if p == nil || p.language == nil {
+		return true
+	}
+	meta := p.language.SymbolMetadata
+	if int(parentSym) < 0 || int(parentSym) >= len(meta) ||
+		int(childSym) < 0 || int(childSym) >= len(meta) {
+		return true
+	}
+	parent := meta[parentSym]
+	child := meta[childSym]
+	if !parent.Visible || !parent.Named || !child.Visible || child.Named {
+		return true
+	}
+	if p.wrapsSameNamedAnonymousToken(parentSym, childSym) || p.isSharedAnonymousToken(childSym) {
+		return true
+	}
+	// Only the inlined-token artifact collapses to a childless named leaf: a
+	// named rule whose body is a single literal that tree-sitter lexes directly as
+	// the rule symbol (e.g. go `nil`/`true`/`false`/`iota`). In the loaded
+	// Language ts2go splits that into a same-named named rule plus a same-named
+	// visible anonymous token. A DIFFERENT-named visible anonymous child (e.g.
+	// optional_chain `?.`, starlark continue_statement `continue`, empty `;`,
+	// moduleExpr `module`) is a genuine production member that C keeps.
+	return !p.sameSymbolName(parentSym, childSym)
 }
 
 func (p *Parser) canCollapseInvisibleUnaryWrapper(parentSym Symbol, child *Node) bool {
@@ -6112,19 +7501,16 @@ func (p *Parser) canCollapseInvisibleUnaryWrapper(parentSym Symbol, child *Node)
 	if symbolMarked(p.aliasPreservedWrapperSymbols, parentSym) {
 		return false
 	}
-	return invisibleUnaryWrapperCollapsible(meta[parentSym])
+	return invisibleUnaryWrapperCollapsible(meta[parentSym]) || p.canCollapseHiddenChoicePassthroughSymbol(parentSym)
 }
 
 // invisibleUnaryWrapperCollapsible reports whether an invisible unary wrapper
 // symbol may be collapsed (renamed-through to its lone child) during reduction.
-// Only anonymous (invisible AND unnamed) wrappers are collapsible. A wrapper
-// that is invisible AND named is a hidden named nonterminal -- e.g. twig's
-// $._expression which is aliased to the visible $.argument_value. Upstream
-// tree-sitter NESTS such a wrapper under its alias instead of renaming-through
-// to the lone visible child, so it must not be collapsed away here; leaving the
-// hidden named wrapper in place routes the alias through
-// flattenedVisibleAliasTarget/materializeHiddenNodeForAlias, which build the
-// proper single-child nesting.
+// Anonymous (invisible AND unnamed) wrappers are collapsible by default. Named
+// hidden wrappers need generated HiddenChoicePassthroughSymbols metadata before
+// they can collapse, because alias-referenced hidden named wrappers must survive
+// for flattenedVisibleAliasTarget/materializeHiddenNodeForAlias to build C's
+// single-child alias nesting.
 func invisibleUnaryWrapperCollapsible(meta SymbolMetadata) bool {
 	if meta.Visible {
 		return false
@@ -6231,6 +7617,25 @@ func (p *Parser) isSingleTokenWrapperSymbol(sym Symbol) bool {
 		return false
 	}
 	return p.singleTokenWrapperSymbol[sym]
+}
+
+func (p *Parser) isSharedAnonymousToken(sym Symbol) bool {
+	if p == nil || int(sym) < 0 || int(sym) >= len(p.sharedAnonymousTokenSymbol) {
+		return false
+	}
+	return p.sharedAnonymousTokenSymbol[sym]
+}
+
+func (p *Parser) isSharedVisibleAnonymousToken(sym Symbol) bool {
+	if !p.isSharedAnonymousToken(sym) || p == nil || p.language == nil {
+		return false
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(p.language.SymbolMetadata) {
+		return false
+	}
+	meta := p.language.SymbolMetadata[idx]
+	return meta.Visible && !meta.Named
 }
 
 func (p *Parser) sameSymbolName(a, b Symbol) bool {
@@ -6374,13 +7779,19 @@ func fieldIDSliceHasAny(fieldIDs []FieldID) bool {
 }
 
 func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol) *Node {
-	if n == nil || alias == 0 || n.symbol == alias {
+	if n == nil || alias == 0 {
 		return n
+	}
+	if n.symbol == alias {
+		return n
+	}
+	if shouldAliasMaterializeInvisibleLeafToAnonymousAlias(n, alias, lang) {
+		return materializeAnonymousLeafAliasWrapper(arena, lang, n, alias)
 	}
 
 	if lang != nil {
 		if idx := int(n.symbol); idx < len(lang.SymbolMetadata) && !lang.SymbolMetadata[n.symbol].Visible {
-			if child := flattenedVisibleAliasTarget(n, lang.SymbolMetadata); child != nil {
+			if child := flattenedVisibleAliasTarget(n, lang.SymbolMetadata, nil, alias, int(lang.TokenCount)); child != nil {
 				n = child
 			} else {
 				n = materializeHiddenNodeForAlias(arena, lang, n)
@@ -6408,11 +7819,50 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 	return cloned
 }
 
-func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata) *Node {
+func shouldAliasMaterializeInvisibleLeafToAnonymousAlias(n *Node, alias Symbol, lang *Language) bool {
+	if n == nil || lang == nil || nodeChildCountNoMaterialize(n) != 0 {
+		return false
+	}
+	childIdx := int(n.symbol)
+	aliasIdx := int(alias)
+	if childIdx < 0 || childIdx >= len(lang.SymbolMetadata) || aliasIdx < 0 || aliasIdx >= len(lang.SymbolMetadata) {
+		return false
+	}
+	childMeta := lang.SymbolMetadata[childIdx]
+	aliasMeta := lang.SymbolMetadata[aliasIdx]
+	if childMeta.Visible || !aliasMeta.Visible || aliasMeta.Named {
+		return false
+	}
+	return lang.TokenCount > 0 && uint32(childIdx) < lang.TokenCount && uint32(aliasIdx) >= lang.TokenCount
+}
+
+func materializeAnonymousLeafAliasWrapper(arena *nodeArena, lang *Language, n *Node, alias Symbol) *Node {
+	named := false
+	if lang != nil {
+		if aliasIdx := int(alias); aliasIdx >= 0 && aliasIdx < len(lang.SymbolMetadata) {
+			named = lang.SymbolMetadata[aliasIdx].Named
+		}
+	}
+	child := cloneNodeInArena(arena, n)
+	child.symbol = alias
+	child.setNamed(named)
+	wrapper := newParentNodeInArena(arena, alias, named, []*Node{child}, nil, n.productionID)
+	wrapper.startByte = n.startByte
+	wrapper.endByte = n.endByte
+	wrapper.startPoint = n.startPoint
+	wrapper.endPoint = n.endPoint
+	wrapper.parseState = n.parseState
+	wrapper.preGotoState = n.preGotoState
+	wrapper.rawShape = n.rawShape
+	wrapper.dynamicPrecedence = n.dynamicPrecedence
+	return wrapper
+}
+
+func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool, alias Symbol, tokenCount int) *Node {
 	if n == nil || hiddenTreeHasFieldIDs(n) {
 		return nil
 	}
-	if countFlattenedHiddenChildren(n, symbolMeta) != 1 {
+	if countFlattenedHiddenChildren(n, symbolMeta, preservedHidden) != 1 {
 		return nil
 	}
 	root := n
@@ -6442,6 +7892,9 @@ func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata) *Node {
 			if idx := int(n.symbol); idx < len(symbolMeta) && symbolMeta[n.symbol].Named {
 				return nil
 			}
+			if shouldAliasPreserveAnonymousLeafWrapper(n.symbol, alias, symbolMeta, tokenCount) {
+				return nil
+			}
 			// Rename-through is also only sound when the leaf covers the whole
 			// hidden wrapper. When the wrapper carries extra HIDDEN tokens
 			// alongside the lone visible leaf, C tree-sitter keeps the
@@ -6455,7 +7908,7 @@ func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata) *Node {
 		}
 		var next *Node
 		for _, child := range n.children {
-			if countFlattenedHiddenChildren(child, symbolMeta) == 0 {
+			if countFlattenedHiddenChildren(child, symbolMeta, preservedHidden) == 0 {
 				continue
 			}
 			next = child
@@ -6464,6 +7917,23 @@ func flattenedVisibleAliasTarget(n *Node, symbolMeta []SymbolMetadata) *Node {
 		n = next
 	}
 	return nil
+}
+
+func shouldAliasPreserveAnonymousLeafWrapper(child, alias Symbol, symbolMeta []SymbolMetadata, tokenCount int) bool {
+	childIdx := int(child)
+	aliasIdx := int(alias)
+	if childIdx < 0 || childIdx >= len(symbolMeta) || aliasIdx < 0 || aliasIdx >= len(symbolMeta) {
+		return false
+	}
+	childMeta := symbolMeta[childIdx]
+	aliasMeta := symbolMeta[aliasIdx]
+	if !childMeta.Visible || childMeta.Named || !aliasMeta.Visible {
+		return false
+	}
+	if tokenCount > 0 && aliasIdx >= tokenCount && aliasMeta.Named {
+		return true
+	}
+	return false
 }
 
 func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
@@ -6507,7 +7977,7 @@ func materializeHiddenNodeForAlias(arena *nodeArena, lang *Language, n *Node) *N
 		return n
 	}
 	symbolMeta := lang.SymbolMetadata
-	normalizedCount := countFlattenedHiddenChildren(n, symbolMeta)
+	normalizedCount := countFlattenedHiddenChildren(n, symbolMeta, nil)
 	if normalizedCount == 0 {
 		cloned := cloneNodeInArena(arena, n)
 		cloned.children = nil
@@ -6524,7 +7994,7 @@ func materializeHiddenNodeForAlias(arena *nodeArena, lang *Language, n *Node) *N
 		fieldIDs = arena.allocFieldIDSlice(normalizedCount)
 		fieldSources = arena.allocFieldSourceSlice(normalizedCount)
 	}
-	out := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, n, symbolMeta)
+	out := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, n, symbolMeta, nil)
 	cloned.children = children[:out]
 	if len(fieldIDs) > 0 {
 		fieldIDs = fieldIDs[:out]
