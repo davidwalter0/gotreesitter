@@ -43,7 +43,7 @@ func newCRecoverySyntheticReduceParser() *Parser {
 	lang := &Language{
 		TokenCount:  3,
 		StateCount:  4,
-		SymbolCount: 6,
+		SymbolCount: 7,
 		ParseTable: [][]uint16{
 			nil,
 			nil,
@@ -61,6 +61,7 @@ func newCRecoverySyntheticReduceParser() *Parser {
 			{Name: "unused", Visible: true, Named: true},
 			{Name: "parent", Visible: true, Named: true},
 			{Name: "alternate_parent", Visible: true, Named: true},
+			{Name: "extra", Visible: false, Named: false},
 		},
 	}
 	return &Parser{language: lang, denseLimit: len(lang.ParseTable)}
@@ -82,7 +83,7 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlices(t *testing.T) {
 	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
 	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
-	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	altRight := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
 		prev:  leftNode,
 		entry: newStackEntryNode(3, altRight),
@@ -108,8 +109,64 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlices(t *testing.T) {
 		if got := versions[0].gss.head.linkCount(); got != 1 {
 			t.Fatalf("reduced top link count = %d, want same-pop-target children collapsed to one alternative", got)
 		}
+		if len(top.children) != 2 || top.children[1] != altRight {
+			t.Fatal("same-pop collapse did not keep the C-selected child array")
+		}
 	} else {
 		t.Fatal("current version still points at the unreduced merged head")
+	}
+}
+
+func TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := newCRecoverySyntheticReduceParser()
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	altRight := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	extra := newLeafNodeInArena(arena, 6, false, 2, 3, Point{Column: 2}, Point{Column: 3})
+	extra.setExtra(true)
+	altExtra := newLeafNodeInArena(arena, 6, false, 2, 3, Point{Column: 2}, Point{Column: 3})
+	altExtra.setExtra(true)
+
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+	altRightNode := scratch.allocNode(newStackEntryNode(3, altRight), leftNode, 3)
+	head := scratch.allocNode(newStackEntryNode(3, extra), rightNode, 4)
+	head.extraLinks = append(head.extraLinks, gssMainLink{
+		prev:  altRightNode,
+		entry: newStackEntryNode(3, altExtra),
+	})
+	start := glrStack{gss: gssStack{head: head}, byteOffset: 3}
+
+	nodeCount := 0
+	versions, canShift := parser.cDoAllPotentialReductions(start, 0, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if canShift {
+		t.Fatal("canShift = true, want false")
+	}
+	if len(versions) != 1 {
+		t.Fatalf("version count = %d, want trailing-extra same-pop slices collapsed to one C version", len(versions))
+	}
+	if got := versions[0].gss.head.linkCount(); got != 1 {
+		t.Fatalf("replayed extra link count = %d, want one selected path", got)
+	}
+	if stackEntryNode(versions[0].top()) != altExtra {
+		t.Fatal("same-pop trailing-extra collapse did not replay the selected extras")
+	}
+	parent := stackEntryNode(versions[0].gss.head.prev.entry)
+	if parent == nil || parent.symbol != 4 {
+		t.Fatalf("extra predecessor = %+v, want reduced parent symbol 4", parent)
+	}
+	if len(parent.children) != 2 || parent.children[1] != altRight {
+		t.Fatal("trailing-extra same-pop collapse did not keep the C-selected parent children")
 	}
 }
 
@@ -211,6 +268,63 @@ func TestCDoAllPotentialReductionsMergesHeaderEquivalentDistinctPopTargets(t *te
 	}
 	if got := versions[0].gss.head.linkCount(); got != 2 {
 		t.Fatalf("reduced top link count = %d, want ts_stack_merge-style alternatives for distinct pop targets", got)
+	}
+}
+
+func TestCAppendActionReductionsCollapseSamePopBeforeOlderMerge(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := newCRecoverySyntheticReduceParser()
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	olderPop := scratch.allocNode(stackEntry{state: 8}, nil, 1)
+	popTo := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	original := glrStack{gss: gssStack{head: scratch.allocNode(stackEntry{state: 3}, popTo, 2)}, byteOffset: 2}
+
+	olderChild := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	lowChild := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	selectedChild := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	olderParent := newParentNodeInArena(arena, 4, true, []*Node{olderChild}, nil, 0)
+	lowParent := newParentNodeInArena(arena, 4, true, []*Node{lowChild}, nil, 0)
+	selectedParent := newParentNodeInArena(arena, 4, true, []*Node{selectedChild}, nil, 0)
+
+	versions := []glrStack{
+		{gss: gssStack{head: scratch.allocNode(newStackEntryNode(9, olderParent), olderPop, 2)}, byteOffset: 2},
+		original,
+	}
+	candidates := []glrStack{
+		{gss: gssStack{head: scratch.allocNode(newStackEntryNode(9, lowParent), popTo, 2)}, byteOffset: 2},
+		{gss: gssStack{head: scratch.allocNode(newStackEntryNode(9, selectedParent), popTo, 2)}, byteOffset: 2},
+	}
+
+	candidates = parser.cCollapseSamePopReductionCandidates(candidates)
+	if len(candidates) != 1 {
+		t.Fatalf("collapsed candidates = %d, want one same-pop representative", len(candidates))
+	}
+	if stackEntryNode(candidates[0].top()) != selectedParent {
+		t.Fatal("same-pop action-local collapse kept the wrong parent before older merge")
+	}
+	actionStartLen := len(versions)
+	appendedAny := false
+	for i := range candidates {
+		var appended bool
+		versions, appended = parser.cAppendReductionVersion(versions, candidates[i], 1, actionStartLen)
+		appendedAny = appendedAny || appended
+	}
+	if appendedAny {
+		t.Fatal("selected same-pop representative appended instead of merging into older header-equivalent version")
+	}
+	if got := versions[0].gss.head.linkCount(); got != 2 {
+		t.Fatalf("older merged head link count = %d, want one selected reduction link added", got)
+	}
+	_, mergedEntry := versions[0].gss.head.link(1)
+	if stackEntryNode(mergedEntry) != selectedParent {
+		t.Fatal("older header-equivalent merge received the unselected same-pop parent")
 	}
 }
 

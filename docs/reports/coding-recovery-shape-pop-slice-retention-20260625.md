@@ -175,3 +175,41 @@ Focused coverage was strengthened with synthetic GSS tests for:
 No bounded CUDA witness was rerun for this forward repair. The changed behavior
 is fully covered by grammar-neutral synthetic parser/GSS tests, and no CUDA
 runtime or language-specific path participates in the repaired helpers.
+
+## Same-pop C-fidelity repair
+
+The review follow-up found three remaining generalized C-fidelity gaps:
+
+- same-pop reduction collapse chose the survivor with whole-stack error cost and
+  stack score instead of the temporary parent subtree ordering used by C's
+  `ts_parser__select_children`;
+- candidates from one reduce action could merge into older header-equivalent
+  versions before all same-pop siblings from that action had been collapsed;
+- trailing extras could hide the original pop target because Go pushes parent
+  then extras, while C removes trailing extras before selecting children and
+  replays only the selected extras afterward.
+
+The repair stays local to the generalized C-recovery machinery:
+
+- `cDoAllPotentialReductions` now batches all candidates from one reduce action,
+  collapses same-pop candidates action-locally, then performs generic
+  header-equivalence merge;
+- same-pop collapse identifies the reduced parent by walking past replayed
+  trailing extras and compares the original pop target;
+- the parent survivor is selected by parent subtree error cost, positive-error
+  replacement behavior, then recursive node order. This baseline's `Node` model
+  does not retain subtree dynamic precedence, so that C tie-break is not
+  separately represented here.
+
+Focused coverage was added for:
+
+- same-pop child-array survivor selection;
+- trailing-extra same-pop collapse and selected-extra replay;
+- collapse-before-older-merge ordering.
+
+Host verification:
+
+```text
+go test . -run 'TestCDoAllPotentialReductions|TestCCollectPotentialReductions|TestCAppendActionReductions' -count=1
+ok  	github.com/odvcencio/gotreesitter	0.017s
+```

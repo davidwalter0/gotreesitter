@@ -1252,16 +1252,13 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 		for _, act := range reduces {
 			actionStartLen := len(versions)
 			actionReductionVersion := -1
+			actionCandidates := make([]glrStack, 0, 1+len(p.pendingForkStacks))
 			fork := versions[v].cloneWithScratch(gssScratch)
 			fork.cRec = versions[v].cRec.clone()
 			var dummy bool
 			p.applyAction(&fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
 			if !fork.dead {
-				var appended bool
-				versions, appended = p.cAppendReductionVersion(versions, fork, v, actionStartLen)
-				if appended {
-					actionReductionVersion = len(versions) - 1
-				}
+				actionCandidates = append(actionCandidates, fork)
 			}
 			// C's reduce over merged stack links creates stack versions for
 			// distinct viable pop slices. In this Go runtime,
@@ -1274,13 +1271,17 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 				if pending.dead {
 					continue
 				}
+				actionCandidates = append(actionCandidates, pending)
+			}
+			p.pendingForkStacks = p.pendingForkStacks[:0]
+			actionCandidates = p.cCollapseSamePopReductionCandidates(actionCandidates)
+			for i := range actionCandidates {
 				var appended bool
-				versions, appended = p.cAppendReductionVersion(versions, pending, v, actionStartLen)
+				versions, appended = p.cAppendReductionVersion(versions, actionCandidates[i], v, actionStartLen)
 				if appended && actionReductionVersion < 0 {
 					actionReductionVersion = len(versions) - 1
 				}
 			}
-			p.pendingForkStacks = p.pendingForkStacks[:0]
 			// C overwrites reduction_version for every reduce action, including
 			// STACK_VERSION_NONE when a later action creates no surviving new
 			// version or only merges into an existing version.
@@ -1309,6 +1310,26 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 		}
 	}
 	return versions, canShift
+}
+
+func (p *Parser) cCollapseSamePopReductionCandidates(candidates []glrStack) []glrStack {
+	if len(candidates) < 2 {
+		return candidates
+	}
+	out := candidates[:0]
+	for i := range candidates {
+		keep := true
+		for j := 0; j < len(out); j++ {
+			if p.cTryCollapseSamePopReductionVersion(&out[j], &candidates[i]) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			out = append(out, candidates[i])
+		}
+	}
+	return out
 }
 
 func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack, originalVersion int, samePopStart int) ([]glrStack, bool) {
@@ -1342,27 +1363,103 @@ func (p *Parser) cTryCollapseSamePopReductionVersion(target, candidate *glrStack
 	if target == nil || candidate == nil || target.dead || candidate.dead || target.accepted || candidate.accepted {
 		return false
 	}
-	if target.gss.head == nil || candidate.gss.head == nil || target.entries != nil || candidate.entries != nil {
+	targetParent, targetPopTo, ok := cReductionParentAndPopTarget(target)
+	if !ok {
 		return false
 	}
-	th, ch := target.gss.head, candidate.gss.head
-	if th.linkCount() != 1 || ch.linkCount() != 1 {
+	candidateParent, candidatePopTo, ok := cReductionParentAndPopTarget(candidate)
+	if !ok {
 		return false
 	}
-	targetPopTo, _ := th.link(0)
-	candidatePopTo, _ := ch.link(0)
 	if targetPopTo != candidatePopTo {
 		return false
 	}
 	if targetPopTo == nil || !stacksHeaderEquivalent(*target, *candidate) {
 		return false
 	}
-	targetCost := p.cStackErrorCost(target)
-	candidateCost := p.cStackErrorCost(candidate)
-	if candidateCost < targetCost || (candidateCost == targetCost && candidate.score > target.score) {
+	if p.cSelectReplacementParentNode(stackEntryNode(targetParent.entry), stackEntryNode(candidateParent.entry)) {
 		*target = *candidate
 	}
 	return true
+}
+
+func cReductionParentAndPopTarget(s *glrStack) (*gssNode, *gssNode, bool) {
+	if s == nil || s.gss.head == nil || s.entries != nil {
+		return nil, nil, false
+	}
+	n := s.gss.head
+	for n != nil {
+		node := stackEntryNode(n.entry)
+		if node == nil || !node.isExtra() {
+			break
+		}
+		n = n.prev
+	}
+	if n == nil || n.linkCount() != 1 || stackEntryNode(n.entry) == nil {
+		return nil, nil, false
+	}
+	popTo, _ := n.link(0)
+	return n, popTo, true
+}
+
+func (p *Parser) cSelectReplacementParentNode(existing, candidate *Node) bool {
+	if existing == nil {
+		return candidate != nil
+	}
+	if candidate == nil {
+		return false
+	}
+	existingCost := p.cNodeErrorCost(existing)
+	candidateCost := p.cNodeErrorCost(candidate)
+	if candidateCost < existingCost {
+		return true
+	}
+	if existingCost < candidateCost {
+		return false
+	}
+	// Go nodes in this baseline do not retain subtree dynamic precedence, so the
+	// closest available C ordering is error cost, positive-error replacement, and
+	// recursive subtree order.
+	if existingCost > 0 {
+		return true
+	}
+	return cCompareNodesForSelection(candidate, existing) < 0
+}
+
+func cCompareNodesForSelection(a, b *Node) int {
+	if a == nil || b == nil {
+		if a == b {
+			return 0
+		}
+		if a == nil {
+			return -1
+		}
+		return 1
+	}
+	if a.symbol != b.symbol {
+		if a.symbol < b.symbol {
+			return -1
+		}
+		return 1
+	}
+	if len(a.children) != len(b.children) {
+		if len(a.children) < len(b.children) {
+			return -1
+		}
+		return 1
+	}
+	if a.flags != b.flags {
+		if a.flags < b.flags {
+			return -1
+		}
+		return 1
+	}
+	for i := range a.children {
+		if cmp := cCompareNodesForSelection(a.children[i], b.children[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
 }
 
 func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {
