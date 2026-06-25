@@ -116,7 +116,9 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
-	return newTreeWithArenas(root, source, p.language, arena, nil), true
+	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	tree.setParseRuntime(forestAcceptedRuntime(root, source))
+	return tree, true
 }
 
 // languageWantsForest reports whether a language dispatches to the GSS-forest

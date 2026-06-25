@@ -50,4 +50,33 @@ Artifact: `harness_out/docker/20260625T140625Z-scala-forest-repeat-cap/container
 
 Result: `parityMatch=1/1(100%) diverge=0 errTree=0 panics=0`; `comparison_result result=match` for `AutomaticModuleName.scala`.
 
-Remaining nuance: `TestMeasureDtierVsC` still counts `trunc=1` because `ParseForestExperimental` returns a tree without an accepted parse runtime, so `stopReason=none` is classified as not accepted. The structural comparison against C now matches.
+## Accepted Runtime Follow-Up
+
+`ParseForestExperimental` now attaches the same accepted runtime metadata used by
+the default forest dispatch path after successful root finalization.
+
+Focused host runtime coverage:
+
+```sh
+go test . -run '^(TestForestExperimentalReportsAcceptedRuntime|TestForestDispatchReportsAcceptedRuntime|TestForestExperimentalAppliesBashCompatibility|TestForestDispatchPromotesJavaScript|TestForestDispatchPromotesCSharp)$' -count=1
+```
+
+Result: pass.
+
+Single Scala Docker forest replay:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-forest-accepted-runtime \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/AutomaticModuleName.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v"
+```
+
+Artifact: `harness_out/docker/20260625T141244Z-scala-forest-accepted-runtime/container.log`
+
+Result: `parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0`;
+`comparison_result result=match` for `AutomaticModuleName.scala`.
+
+This clears the Scala frame witness from structurally-clean-but-not-accepted to
+an accepted C match. It does not by itself move the whole Scala grammar out of
+Tier IV; that requires a broader Scala run.

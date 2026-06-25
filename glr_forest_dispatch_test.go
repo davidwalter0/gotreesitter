@@ -121,6 +121,22 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	}
 }
 
+func TestForestExperimentalReportsAcceptedRuntime(t *testing.T) {
+	src := []byte("f() { echo a; }\n")
+	tree, ok := gts.NewParser(grm.BashLanguage()).ParseForestExperimental(src)
+	if !ok || tree == nil {
+		t.Fatalf("ParseForestExperimental ok=%v tree nil=%v", ok, tree == nil)
+	}
+	defer tree.Release()
+	rt := tree.ParseRuntime()
+	if rt.StopReason != gts.ParseStopAccepted {
+		t.Fatalf("experimental forest stop reason = %q, want %q (%s)", rt.StopReason, gts.ParseStopAccepted, rt.Summary())
+	}
+	if rt.SourceLen != uint32(len(src)) || rt.ExpectedEOFByte != uint32(len(src)) || rt.LastTokenEndByte != uint32(len(src)) || !rt.LastTokenWasEOF {
+		t.Fatalf("experimental forest runtime mismatch: %s", rt.Summary())
+	}
+}
+
 func TestForestDispatchPromotesJavaScript(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
