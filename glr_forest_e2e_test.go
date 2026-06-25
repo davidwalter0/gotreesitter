@@ -102,6 +102,33 @@ func TestParseForestExtras(t *testing.T) {
 	}
 }
 
+func TestParseForestMaterializesNamedGrammarExtraInRealShiftGap(t *testing.T) {
+	lang := buildForestGapMaterializationLanguage()
+	got, ok := forestParseSExpr(t, lang, []byte("a/* gap */b"))
+	if !ok {
+		t.Fatal("forest parse failed")
+	}
+	want := "(source_file (a) (block_comment) (b))"
+	if got != want {
+		t.Fatalf("forest SExpr = %s, want %s", got, want)
+	}
+}
+
+func TestParseForestRealShiftGapKeepsPaddingButRejectsNonExtra(t *testing.T) {
+	lang := buildForestGapMaterializationLanguage()
+	got, ok := forestParseSExpr(t, lang, []byte("a   \n\tb"))
+	if !ok {
+		t.Fatal("forest parse failed across whitespace padding")
+	}
+	if want := "(source_file (a) (b))"; got != want {
+		t.Fatalf("forest SExpr = %s, want %s", got, want)
+	}
+
+	if got, ok := forestParseSExpr(t, lang, []byte("a,b")); ok {
+		t.Fatalf("forest parse accepted non-extra gap, SExpr = %s", got)
+	}
+}
+
 func mustParseSExpr(t *testing.T, lang *Language, src []byte) string {
 	tree, err := NewParser(lang).Parse(src)
 	if err != nil {
@@ -119,4 +146,96 @@ func forestParseSExpr(t *testing.T, lang *Language, src []byte) (string, bool) {
 		return "", false
 	}
 	return root.SExpr(lang), true
+}
+
+func buildForestGapMaterializationLanguage() *Language {
+	return &Language{
+		Name:              "forest_gap_materialization",
+		SymbolCount:       5,
+		TokenCount:        4,
+		StateCount:        5,
+		LargeStateCount:   5,
+		InitialState:      1,
+		ProductionIDCount: 1,
+		SymbolNames:       []string{"end", "a", "b", "block_comment", "source_file"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "a", Visible: true, Named: true},
+			{Name: "b", Visible: true, Named: true},
+			{Name: "block_comment", Visible: true, Named: true},
+			{Name: "source_file", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 0}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0, 0, 0},
+			{0, 1, 0, 0, 4},
+			{0, 0, 2, 0, 0},
+			{3, 0, 0, 0, 0},
+			{4, 0, 0, 0, 0},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'a', NextState: 1},
+					{Lo: 'b', Hi: 'b', NextState: 2},
+					{Lo: ' ', Hi: ' ', NextState: 3},
+					{Lo: '\t', Hi: '\t', NextState: 3},
+					{Lo: '\n', Hi: '\n', NextState: 3},
+					{Lo: '/', Hi: '/', NextState: 4},
+				},
+			},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+			{
+				Skip:    true,
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 3},
+					{Lo: '\t', Hi: '\t', NextState: 3},
+					{Lo: '\n', Hi: '\n', NextState: 3},
+				},
+			},
+			{
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '*', Hi: '*', NextState: 5}},
+			},
+			{
+				Default:     5,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '*', Hi: '*', NextState: 6}},
+			},
+			{
+				Default: 5,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: '/', Hi: '/', NextState: 7},
+					{Lo: '*', Hi: '*', NextState: 6},
+				},
+			},
+			{
+				AcceptToken: 3,
+				Skip:        true,
+				Default:     -1,
+				EOF:         -1,
+			},
+		},
+	}
 }

@@ -406,7 +406,13 @@ func (ts *recoverCommentGapTokenSource) advance() {
 
 func buildGapGuardExtrasLanguage() *Language {
 	return &Language{
-		Name:     "gap_guard_extras",
+		Name:        "gap_guard_extras",
+		SymbolNames: []string{"end", "value", "block_comment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "value", Visible: true, Named: true},
+			{Name: "block_comment", Visible: true, Named: true},
+		},
 		LexModes: []LexMode{{LexState: 0}},
 		LexStates: []LexState{
 			{
@@ -448,9 +454,10 @@ func buildGapGuardExtrasLanguage() *Language {
 				},
 			},
 			{
-				Skip:    true,
-				Default: -1,
-				EOF:     -1,
+				AcceptToken: 2,
+				Skip:        true,
+				Default:     -1,
+				EOF:         -1,
 			},
 		},
 	}

@@ -218,6 +218,14 @@ func (l *Lexer) errorRunToken() Token {
 // a token and true if an accepting state was reached, or false if not.
 // On a skip (whitespace) match, it returns a zero-Symbol token and true.
 func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32) (Token, bool) {
+	return l.scanInternal(startState, startPos, startRow, startCol, false)
+}
+
+func (l *Lexer) scanWithSkipSymbol(startState uint32, startPos int, startRow, startCol uint32) (Token, bool) {
+	return l.scanInternal(startState, startPos, startRow, startCol, true)
+}
+
+func (l *Lexer) scanInternal(startState uint32, startPos int, startRow, startCol uint32, exposeSkipSymbol bool) (Token, bool) {
 	curState := int32(startState)
 	if curState < 0 || int(curState) >= len(l.states) {
 		return Token{}, false
@@ -353,8 +361,20 @@ func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32)
 	l.col = acceptCol
 
 	if acceptSkip {
-		// Return a zero-Symbol token to signal "skip".
+		// Return a zero-Symbol token to signal "skip" for normal lexing.
+		// Some parser machinery needs the accepted grammar-extra symbol while
+		// scanning a known gap; expose it only through scanWithSkipSymbol.
+		sym := Symbol(0)
+		text := ""
+		if exposeSkipSymbol {
+			sym = acceptSymbol
+			if sym != 0 {
+				text = bytesToStringNoCopy(l.source[acceptStartPos:acceptPos])
+			}
+		}
 		return Token{
+			Symbol:     sym,
+			Text:       text,
 			StartByte:  uint32(acceptStartPos),
 			EndByte:    uint32(acceptPos),
 			StartPoint: Point{Row: acceptStartRow, Column: acceptStartCol},

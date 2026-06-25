@@ -2294,29 +2294,45 @@ func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 // lex state. It scans strictly so ordinary unrecognized bytes are not treated
 // as padding.
 func (p *Parser) gapIsCoveredByGrammarExtras(source []byte, start, end uint32) bool {
+	_, ok := p.materializableGrammarExtraGapTokens(source, start, end)
+	return ok
+}
+
+// materializableGrammarExtraGapTokens returns the grammar-defined extra tokens
+// that cover source[start:end]. Skip accepts with symbol 0 are parser padding
+// and intentionally produce no materialized node.
+func (p *Parser) materializableGrammarExtraGapTokens(source []byte, start, end uint32) ([]Token, bool) {
 	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
-		return false
+		return nil, false
 	}
 	if len(p.language.LexStates) == 0 || len(p.language.LexModes) == 0 {
-		return false
+		return nil, false
 	}
 	broadLS := p.language.LexModes[0].LexStateIndex()
 	if broadLS == noLookaheadLexState {
-		return false
+		return nil, false
 	}
-	gapSource := source[start:end]
-	lexer := NewLexer(p.language.LexStates, gapSource)
-	for lexer.pos < len(gapSource) {
+	lexer := NewLexer(p.language.LexStates, source)
+	lexer.asciiTable = p.language.LexAsciiTable()
+	startPoint := advancePointByBytes(Point{}, source[:start])
+	lexer.pos = int(start)
+	lexer.row = startPoint.Row
+	lexer.col = startPoint.Column
+	var tokens []Token
+	for lexer.pos < int(end) {
 		pos := lexer.pos
-		tok, ok := lexer.scan(broadLS, pos, lexer.row, lexer.col)
-		if !ok || tok.Symbol != 0 {
-			return false
+		tok, ok := lexer.scanWithSkipSymbol(broadLS, pos, lexer.row, lexer.col)
+		if !ok || tok.EndByte > end || lexer.pos <= pos {
+			return nil, false
 		}
-		if lexer.pos <= pos {
-			lexer.skipOneRune()
+		if tok.Symbol != 0 {
+			tokens = append(tokens, tok)
 		}
 	}
-	return true
+	if lexer.pos != int(end) {
+		return nil, false
+	}
+	return tokens, true
 }
 
 func bytesAreParserPadding(source []byte, start, end uint32) bool {

@@ -140,3 +140,39 @@ The next generalized fix should target forest parser machinery, not Scala:
 
 No safe generalized code fix is committed in this slice. The canonical smoke
 artifact and generated residual ledger remain unchanged.
+
+## Follow-up: Shift-Gap Materialization Probe
+
+Generalized forest shift-gap materialization was implemented for terminal
+grammar extras accepted by the broad DFA skip path:
+
+- skip accepts can now expose their accepted symbol to internal gap scanning;
+- `gapIsCoveredByGrammarExtras` is backed by a token-returning scanner;
+- forest `ParseActionShift` inserts transparent extra leaves before shifting a
+  real token across a fully grammar-extra gap;
+- whitespace-only gaps remain parser padding and do not create nodes;
+- non-extra stale gaps still dead-end.
+
+Focused coverage:
+
+- `TestParseForestMaterializesNamedGrammarExtraInRealShiftGap`
+- `TestParseForestRealShiftGapKeepsPaddingButRejectsNonExtra`
+
+Scala frame validation after this scoped fix remained unchanged:
+
+```text
+MEASURE-DTIER scala mode=forest files=1 ... parityMatch=0/1(0%) diverge=1
+diff="child-count" firstDiffPath="root"
+goRoot="compilation_unit" goRootSpan=0:658 goRootCC=4 goRootErr=false
+cRoot="compilation_unit" cRootSpan=0:658 cRootCC=5 cRootErr=false
+goErrors=0 cErrors=0 goMissing=0 cMissing=0 goStop="none"
+```
+
+The follow-up first-diff diagnostic still shows the same missing C
+`block_comment [60:395]` root child. This falsifies the terminal skip-token gap
+hypothesis for the Scala frame. The remaining residual should stay classified
+as `forest/root-extra-materialization-after-repetition-shift`, likely involving
+nonterminal extra-chain selection/materialization rather than the terminal
+grammar-extra gap handled here.
+
+Canonical smoke remains unchanged.

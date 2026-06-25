@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"unsafe"
@@ -1080,7 +1081,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						work = append(work, top)
 					})
 				case ParseActionShift:
-					if !p.guardForestRealShiftGap(source, node, tok) {
+					shiftBase, ok := p.prepareForestRealShiftGap(source, node, tok, &nextIndex, slab, arena)
+					if !ok {
 						continue
 					}
 					leaf := newLeafNodeInArena(arena, tok.Symbol, named(tok.Symbol), tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
@@ -1092,15 +1094,15 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					target := act.State
 					if act.Extra {
 						leaf.setExtra(true)
-						target = extraShiftTargetState(node.state, act)
+						target = extraShiftTargetState(shiftBase.state, act)
 					}
-					leaf.preGotoState = node.state
+					leaf.preGotoState = shiftBase.state
 					leaf.parseState = target
 					p.recordCurrentExternalLeafCheckpoint(leaf, tok)
 					before := nextIndex.len()
-					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, node,
+					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, shiftBase,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
-						0, node.errorCost) // a shifted leaf carries no dynamic precedence
+						0, shiftBase.errorCost) // a shifted leaf carries no dynamic precedence
 					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
@@ -1214,6 +1216,38 @@ func (p *Parser) guardForestRealShiftGap(source []byte, node *gssForestNode, tok
 	}
 	stack := glrStack{byteOffset: node.byteOffset}
 	return p.guardRealShiftGap(source, &stack, tok)
+}
+
+func (p *Parser) prepareForestRealShiftGap(source []byte, node *gssForestNode, tok Token, index *gssForestIndex, slab *gssForestNodeSlab, arena *nodeArena) (*gssForestNode, bool) {
+	if node == nil {
+		return node, true
+	}
+	stack := glrStack{byteOffset: node.byteOffset}
+	if realTokenAttachmentGapIsParserPadding(source, &stack, tok) {
+		return node, true
+	}
+	if tok.StartByte <= node.byteOffset {
+		return node, true
+	}
+	extras, ok := p.materializableGrammarExtraGapTokens(source, node.byteOffset, tok.StartByte)
+	if !ok {
+		if p != nil && p.glrTrace {
+			fmt.Printf("    KILL stale forest shift: stack_byte=%d tok=%d..%d gap=%q\n",
+				node.byteOffset, tok.StartByte, tok.EndByte, string(source[node.byteOffset:tok.StartByte]))
+		}
+		return nil, false
+	}
+	cur := node
+	for _, extraTok := range extras {
+		leaf := newLeafNodeInArena(arena, extraTok.Symbol, p.isNamedSymbol(extraTok.Symbol), extraTok.StartByte, extraTok.EndByte, extraTok.StartPoint, extraTok.EndPoint)
+		leaf.setExtra(true)
+		leaf.preGotoState = cur.state
+		leaf.parseState = cur.state
+		cur = coalesceForest(index, slab, cur.state, extraTok.EndByte, cur,
+			stackEntry{node: unsafe.Pointer(leaf), state: cur.state, kind: stackEntryKindNode},
+			0, cur.errorCost)
+	}
+	return cur, true
 }
 
 // reduceOverForest enumerates every length-childCount path of subtrees ending at
