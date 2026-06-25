@@ -1410,6 +1410,58 @@ func TestBuildResultFromGLRPrefersAliasTargetTreeOnFinalTie(t *testing.T) {
 	}
 	tree.Release()
 }
+
+func TestBuildResultFromGLRUsesCSubtreeOrderOnScoreTie(t *testing.T) {
+	lang := &Language{
+		SymbolCount: 5,
+		TokenCount:  1,
+		SymbolNames: []string{"EOF", "root", "exp_name", "exp_apply", "variable"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "exp_name", Visible: true, Named: true},
+			{Name: "exp_apply", Visible: true, Named: true},
+			{Name: "variable", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+	source := []byte("true")
+	arena := acquireNodeArena(arenaClassFull)
+
+	variable := newLeafNodeInArena(arena, 4, true, 0, 4, Point{}, Point{Column: 4})
+	expName := newParentNodeInArena(arena, 2, true, []*Node{variable}, nil, 0)
+	expApply := newParentNodeInArena(arena, 3, true, []*Node{expName}, nil, 0)
+	applyRoot := newParentNodeInArena(arena, 1, true, []*Node{expApply}, nil, 0)
+	nameRoot := newParentNodeInArena(arena, 1, true, []*Node{expName}, nil, 0)
+
+	stacks := []glrStack{
+		{
+			accepted:    true,
+			byteOffset:  4,
+			score:       0,
+			branchOrder: 0,
+			entries:     []stackEntry{newStackEntryNode(1, applyRoot)},
+		},
+		{
+			accepted:    true,
+			byteOffset:  4,
+			score:       0,
+			branchOrder: 1,
+			entries:     []stackEntry{newStackEntryNode(1, nameRoot)},
+		},
+	}
+
+	tree := parser.buildResultFromGLR(stacks, source, arena, nil, nil, nil, nil, nil, false, nil)
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("buildResultFromGLR returned nil tree/root")
+	}
+	root := tree.RootNode()
+	if got, want := root.Child(0).Type(lang), "exp_name"; got != want {
+		t.Fatalf("child type = %q, want %q", got, want)
+	}
+	tree.Release()
+}
+
 func TestFieldIDsAlignAfterExtrasFold(t *testing.T) {
 	lang := queryTestLanguage()
 

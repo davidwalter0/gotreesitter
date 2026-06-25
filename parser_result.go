@@ -330,6 +330,11 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 			return -1
 		}
 	}
+	if a.score == b.score {
+		if cmp := compareStackCSubtreeOrder(arena, *a, *b); cmp != 0 {
+			return cmp
+		}
+	}
 	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
 		return cmp
 	}
@@ -364,6 +369,64 @@ func stackCompareForResultSelection(p *Parser, arena *nodeArena, a, b *glrStack,
 			return 1
 		}
 		return -1
+	}
+	return 0
+}
+
+func compareStackCSubtreeOrder(arena *nodeArena, a, b glrStack) int {
+	aCount := stackMaterializingResultEntryCount(a)
+	if aCount == 0 || aCount != stackMaterializingResultEntryCount(b) {
+		return 0
+	}
+	const maxBufferedCSubtreeEntries = 8
+	if aCount > maxBufferedCSubtreeEntries {
+		return 0
+	}
+	var aBuf, bBuf [maxBufferedCSubtreeEntries]stackEntry
+	aEntries, aOK := stackMaterializingResultEntries(a, aBuf[:0], aCount)
+	bEntries, bOK := stackMaterializingResultEntries(b, bBuf[:0], aCount)
+	if !aOK || !bOK {
+		return 0
+	}
+	for i := 0; i < aCount; i++ {
+		if cmp := compareStackEntryCSubtreeOrder(arena, aEntries[i], bEntries[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func compareStackEntryCSubtreeOrder(arena *nodeArena, a, b stackEntry) int {
+	if !stackEntryMaterializesForResult(a) || !stackEntryMaterializesForResult(b) {
+		return 0
+	}
+	stack := [][2]stackEntry{{a, b}}
+	for len(stack) > 0 {
+		pair := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		left, right := pair[0], pair[1]
+		leftSym, rightSym := stackEntryNodeSymbol(left), stackEntryNodeSymbol(right)
+		if leftSym != rightSym {
+			if leftSym < rightSym {
+				return 1
+			}
+			return -1
+		}
+		leftCount, rightCount := stackEntryNodeChildCount(left), stackEntryNodeChildCount(right)
+		if leftCount != rightCount {
+			if leftCount < rightCount {
+				return 1
+			}
+			return -1
+		}
+		for i := leftCount - 1; i >= 0; i-- {
+			leftChild, leftOK := stackEntryAliasChild(left, arena, i)
+			rightChild, rightOK := stackEntryAliasChild(right, arena, i)
+			if !leftOK || !rightOK {
+				return 0
+			}
+			stack = append(stack, [2]stackEntry{leftChild, rightChild})
+		}
 	}
 	return 0
 }
