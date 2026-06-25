@@ -108,6 +108,55 @@ surviving frontier state uses lex mode `70`, whose DFA cannot emit the integer
 literal at the real input byte and instead skips to `)`, where the stale-gap
 guard correctly declines.
 
+## Transition Diagnostic
+
+Command:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-generate-function-converters-forest-transition-trace-v2 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5588:5600 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+```
+
+Artifact:
+`harness_out/docker/20260625T151558Z-scala-generate-function-converters-forest-transition-trace-v2`
+
+Result: no movement. The witness still returned
+`forestDeclineReason=no-shift-death`:
+
+```text
+MEASURE-DTIER scala mode=forest files=1 medianRatio=0.54x aggRatio=0.54x parityMatch=0/1(0%) diverge=0 trunc=1 errTree=0 panics=0 goNS=6338480 cNS=11757641
+```
+
+The transition immediately before byte `5594` is not a successful shift and is
+not a conflict-resolution loss. At step `1361`, the only surviving state is
+`8336`; raw and resolved actions for `operator_identifier` are identical and
+contain only `reduce(identifier)`:
+
+```text
+FOREST-X actions step=1361 node_state=8336 node_byte=5591 tok=sym=79(operator_identifier) 5592..5594 text="==" raw=[reduce(sym=281(identifier) cc=1 dyn=0 prod=0)] resolved=[reduce(sym=281(identifier) cc=1 dyn=0 prod=0)] filtered_shift=false
+FOREST-X reduce-goto-miss step=1361 node_state=8336 node_byte=5591 act=reduce(sym=281(identifier) cc=1 dyn=0 prod=0) pop_state=8336 pop_byte=5590 child_score=0 no_extras=true children=[65535:5590..5591]
+FOREST-X recover step=1361 from_state=8336 from_byte=5591 tok=sym=79(operator_identifier) 5592..5594 text="==" recover_state=8336 target_byte=5594 target_lex=(70,0 active=70) error_cost=370 new_frontier=true links=1
+```
+
+The byte-`5594` frontier is therefore built by forest recovery absorbing `==` as
+an `ERROR` leaf in the same state, after `reduce(identifier)` has no goto from
+the popped predecessor. The same pattern is already active for `if`, `(`, and
+`k` in the preceding steps. At byte `5594`, the next token source candidate is
+`)`; recovery cannot absorb it because that would skip real text `" 0"`:
+
+```text
+FOREST-X recover-gap-reject step=1362 state=8336 byte=5594 tok=sym=62()) 5596..5597 text=")"
+```
+
+This refines the immediate classification: the local `==` transition is
+`forest/recovery-error-leaf-survival-after-reduce-goto-miss`, not
+`forest/conflict-resolution-filtered-shift` and not an in-window coalescing or
+fan-out cap drop. The viable expression state was already gone before the
+`if (k == 0)` window; by byte `5569`, the only surviving frontier is already
+state `8336` with accumulated error cost.
+
 ## Negative Probes
 
 These probes were intentionally generalized and did not introduce or keep
@@ -179,43 +228,51 @@ artifact: harness_out/docker/20260625T150702Z-css-style-forest-window-trace-cana
 MEASURE-DTIER css mode=forest files=1 medianRatio=3.00x aggRatio=3.00x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=1263941 cNS=421964
 ```
 
+After adding the gated transition diagnostics, both canaries remained clean:
+
+```text
+artifact: harness_out/docker/20260625T151804Z-scala-automatic-module-name-forest-transition-diagnostics-canary
+MEASURE-DTIER scala mode=forest files=1 medianRatio=14.32x aggRatio=14.32x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=5889361 cNS=411255
+
+artifact: harness_out/docker/20260625T151847Z-css-style-forest-transition-diagnostics-canary
+MEASURE-DTIER css mode=forest files=1 medianRatio=3.05x aggRatio=3.05x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=1184986 cNS=388967
+```
+
 ## Classification
 
 The `GenerateFunctionConverters.scala` residual is best classified as:
 
 ```text
-forest/frontier-lex-state-survival/no-shift-death-after-real-token-skip
+forest/frontier-lex-state-survival/recovery-chain-no-shift-death-after-real-token-skip
 ```
 
 The parser is not reaching materialization or tree comparison. It loses the
-frontier state that should lex or shift the integer literal `0` inside an
-ordinary expression, then the generic stale-gap guard declines when the next
-token attempts to skip over that real text.
+frontier state that should parse the ordinary expression before the inspected
+window, then forest recovery keeps state `8336` alive by absorbing `if (k ==` as
+error leaves. The generic stale-gap guard correctly declines when the next token
+attempts to skip over the real integer literal text `" 0"`.
 
 The completed probes rule out a simple per-node link-cap increase, the existing
 materialization representation toggles, and in-window fan-out/pre-cap pruning.
 The primary-state probe shows that lex-state/frontier selection can materially
 change behavior, but the window trace shows this frame is already single-state
-when it fails, so a token-source primary selector change is not a justified
-small fix.
+when it fails, and the transition trace shows conflict resolution does not
+filter any shift-capable action in this window. A token-source primary selector
+change or local coalescing change is therefore not a justified small fix.
 
 ## Next Generalized Experiment
 
-Trace the reduction/shift transition that consumes `==` at `5592..5594` and
-builds the next single frontier state. The useful generalized question is now:
-which predecessor frontier, reduce path, or conflict-resolution decision removes
-the state whose lex mode can emit the integer literal at byte `5595`?
+Trace backward from the first transition that introduces the high-error-cost
+single-state chain before byte `5569`. The next generalized question is:
+which ordinary reduce/shift frontier first gives way to recovery-only survival
+in state `8336`, and was a lower-error, shift-capable branch dropped by
+coalescing, cap/pre-cap pruning, reduce-goto miss, or token-source candidate
+selection before recovery began?
 
-The trace should stay grammar-neutral and record, for the token immediately
-before the skip:
-
-- every reduce path emitted from the pre-`==` frontier;
-- each shift target that reaches byte `5594`;
-- the lex mode of each target before coalescing;
-- whether coalescing dedup/cap replacement collapses distinct viable histories;
-- whether conflict resolution filters a shift-capable action before the target
-  frontier is formed.
-
-The next fix should be a generic forest frontier/token-source invariant, not a
-Scala normalizer, not a language-name parser policy, and not an edit to
+The trace should stay grammar-neutral and record the same raw/resolved actions,
+reduce paths, goto targets, shift targets, target lex modes, coalescing
+dedup/replacement, cap/pre-cap drops, and recovery absorptions around the first
+error-cost jump into this chain. The next fix should be a generic forest
+frontier/recovery/error-cost invariant, not a Scala normalizer, not a
+language-name parser policy, and not an edit to
 `parser_result_scala_compilation.go`.

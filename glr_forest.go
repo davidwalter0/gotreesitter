@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -63,6 +64,7 @@ type glrForestTraceWindowConfig struct {
 }
 
 var glrForestTraceWindow = parseGLRForestTraceWindow(os.Getenv("GOT_GLR_FOREST_TRACE_WINDOW"))
+var glrForestTraceTransitions = os.Getenv("GOT_GLR_FOREST_TRACE_TRANSITIONS") == "1"
 
 func parseGLRForestTraceWindow(raw string) glrForestTraceWindowConfig {
 	if raw == "" {
@@ -99,6 +101,10 @@ func forestTraceRangeInWindow(start, end uint32) bool {
 		return forestTraceByteInWindow(start)
 	}
 	return start <= glrForestTraceWindow.end && end >= glrForestTraceWindow.start
+}
+
+func forestTraceTransitionEnabled() bool {
+	return glrForestTraceTransitions && glrForestTraceWindow.enabled
 }
 
 // languageWantsForestRecover reports whether a forest-dispatched language enables
@@ -358,6 +364,92 @@ func forestTraceEntrySymSpan(entry stackEntry) (Symbol, uint32, uint32) {
 	return 0, 0, 0
 }
 
+func forestTraceNodeState(node *gssForestNode) StateID {
+	if node == nil {
+		return 0
+	}
+	return node.state
+}
+
+func forestTraceNodeByte(node *gssForestNode) uint32 {
+	if node == nil {
+		return 0
+	}
+	return node.byteOffset
+}
+
+func forestTraceActionHasShift(actions []ParseAction) bool {
+	for _, act := range actions {
+		if act.Type == ParseActionShift {
+			return true
+		}
+	}
+	return false
+}
+
+func forestTraceAction(lang *Language, act ParseAction) string {
+	switch act.Type {
+	case ParseActionShift:
+		flags := ""
+		if act.Extra || act.ExtraChain || act.Repetition {
+			var parts []string
+			if act.Extra {
+				parts = append(parts, "extra")
+			}
+			if act.ExtraChain {
+				parts = append(parts, "extra_chain")
+			}
+			if act.Repetition {
+				parts = append(parts, "repeat")
+			}
+			flags = " " + strings.Join(parts, ",")
+		}
+		return fmt.Sprintf("shift(state=%d%s)", act.State, flags)
+	case ParseActionReduce:
+		return fmt.Sprintf("reduce(sym=%d(%s) cc=%d dyn=%d prod=%d)",
+			act.Symbol, forestTraceSymbolName(lang, act.Symbol), act.ChildCount, act.DynamicPrecedence, act.ProductionID)
+	case ParseActionAccept:
+		return "accept"
+	case ParseActionRecover:
+		return fmt.Sprintf("recover(state=%d)", act.State)
+	default:
+		return fmt.Sprintf("action(type=%d state=%d sym=%d)", act.Type, act.State, act.Symbol)
+	}
+}
+
+func forestTraceActions(lang *Language, actions []ParseAction) string {
+	if len(actions) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, act := range actions {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(forestTraceAction(lang, act))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func forestTraceChildren(children []stackEntry) string {
+	if len(children) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, child := range children {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		sym, start, end := forestTraceEntrySymSpan(child)
+		b.WriteString(fmt.Sprintf("%d:%d..%d", sym, start, end))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func forestTraceActionSummary(actions []ParseAction) string {
 	if len(actions) == 0 {
 		return "none"
@@ -411,19 +503,29 @@ func (p *Parser) traceForestTokenStep(ts *dfaTokenSource, source []byte, step in
 				ts.lexer.pos = savedPos
 				ts.lexer.row = savedRow
 				ts.lexer.col = savedCol
-				candActions := p.actionsForParseState(n.state, cand.Symbol, p.language.ParseActions)
-				candActions = p.forestResolveConflict(candActions, cand)
+				candRawActions := p.actionsForParseState(n.state, cand.Symbol, p.language.ParseActions)
+				candActions := p.forestResolveConflict(candRawActions, cand)
 				fmt.Printf("  state=%d lex=(%d,%d active=%d) candidate=%s end=(%d,%d,%d) actions=%s\n",
 					n.state, lex, after, active, forestTraceToken(p.language, cand), endPos, endRow, endCol, forestTraceActionSummary(candActions))
+				if forestTraceTransitionEnabled() {
+					fmt.Printf("    candidate_actions raw=%s resolved=%s filtered_shift=%t\n",
+						forestTraceActions(p.language, candRawActions), forestTraceActions(p.language, candActions),
+						forestTraceActionHasShift(candRawActions) && !forestTraceActionHasShift(candActions))
+				}
 			} else {
 				fmt.Printf("  state=%d lex=<missing>\n", n.state)
 			}
 		}
-		tokActions := p.actionsForParseState(n.state, tok.Symbol, p.language.ParseActions)
-		tokActions = p.forestResolveConflict(tokActions, tok)
+		tokRawActions := p.actionsForParseState(n.state, tok.Symbol, p.language.ParseActions)
+		tokActions := p.forestResolveConflict(tokRawActions, tok)
 		gapOK := p.guardForestRealShiftGap(source, n, tok)
 		fmt.Printf("    frontier state=%d byte=%d links=%d error_cost=%d dirty=%d tok_actions=%s gap_ok=%t\n",
 			n.state, n.byteOffset, len(n.links), n.errorCost, n.dirty, forestTraceActionSummary(tokActions), gapOK)
+		if forestTraceTransitionEnabled() {
+			fmt.Printf("      tok_actions raw=%s resolved=%s filtered_shift=%t\n",
+				forestTraceActions(p.language, tokRawActions), forestTraceActions(p.language, tokActions),
+				forestTraceActionHasShift(tokRawActions) && !forestTraceActionHasShift(tokActions))
+		}
 	}
 	ts.lexer.pos = savedPos
 	ts.lexer.row = savedRow
@@ -575,6 +677,10 @@ func coalesceForestWithMetadata(index *gssForestIndex, slab *gssForestNodeSlab, 
 	if node == nil {
 		node = slab.alloc(state, byteOffset, score, errorCost)
 		index.set(key, node)
+		if forestTraceTransitionEnabled() && forestTraceByteInWindow(byteOffset) {
+			fmt.Printf("FOREST-X coalesce-new state=%d byte=%d score=%d error_cost=%d prev_state=%d prev_byte=%d\n",
+				state, byteOffset, score, errorCost, forestTraceNodeState(prev), forestTraceNodeByte(prev))
+		}
 		if perfCountersEnabled {
 			perfRecordForestCoalesceNewNode()
 		}
@@ -616,6 +722,11 @@ func coalesceForestWithMetadata(index *gssForestIndex, slab *gssForestNodeSlab, 
 			if l.prevDirty != forestNodeDirty(prev) {
 				l.prevDirty = forestNodeDirty(prev)
 				node.dirty++
+			}
+			if forestTraceTransitionEnabled() && forestTraceByteInWindow(byteOffset) {
+				sym, start, end := forestTraceEntrySymSpan(entry)
+				fmt.Printf("FOREST-X coalesce-dedup state=%d byte=%d link=%d sym=%d span=%d..%d score=%d replaced=%t prev_state=%d prev_byte=%d dirty=%d links=%d\n",
+					state, byteOffset, i, sym, start, end, score, replaced, forestTraceNodeState(prev), forestTraceNodeByte(prev), node.dirty, len(node.links))
 			}
 			if perfCountersEnabled {
 				perfRecordForestCoalesceDedupHit(replaced)
@@ -677,6 +788,11 @@ func coalesceForestWithMetadata(index *gssForestIndex, slab *gssForestNodeSlab, 
 	node.links = append(node.links, gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score})
 	forestRecordMinLinkScore(node, firstLink, score)
 	forestRecordNoExtraDepth(node, firstLink, linkNoExtraDepth)
+	if forestTraceTransitionEnabled() && forestTraceByteInWindow(byteOffset) {
+		sym, start, end := forestTraceEntrySymSpan(entry)
+		fmt.Printf("FOREST-X coalesce-append state=%d byte=%d link=%d sym=%d span=%d..%d score=%d error_cost=%d prev_state=%d prev_byte=%d links=%d\n",
+			state, byteOffset, len(node.links)-1, sym, start, end, score, errorCost, forestTraceNodeState(prev), forestTraceNodeByte(prev), len(node.links))
+	}
 	if perfCountersEnabled {
 		perfRecordForestCoalesceLinkAppend()
 	}
@@ -1241,8 +1357,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			node.processedEpoch = processEpoch
 			node.processedDirty = node.dirty
 
-			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
-			nodeActions = p.forestResolveConflict(nodeActions, tok)
+			nodeRawActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
+			nodeActions := p.forestResolveConflict(nodeRawActions, tok)
+			if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(node.byteOffset)) {
+				fmt.Printf("FOREST-X actions step=%d node_state=%d node_byte=%d tok=%s raw=%s resolved=%s filtered_shift=%t\n",
+					processEpoch, node.state, node.byteOffset, forestTraceToken(lang, tok),
+					forestTraceActions(lang, nodeRawActions), forestTraceActions(lang, nodeActions),
+					forestTraceActionHasShift(nodeRawActions) && !forestTraceActionHasShift(nodeActions))
+			}
 			for _, act := range nodeActions {
 				switch act.Type {
 				case ParseActionReduce:
@@ -1251,6 +1373,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					reducer.reduce(node, cc, func(children []stackEntry, childScore int, popTo *gssForestNode, noExtras bool) {
 						gotoState := gotoCache.lookup(p, popTo.state, act.Symbol)
 						if gotoState == 0 {
+							if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(node.byteOffset)) {
+								fmt.Printf("FOREST-X reduce-goto-miss step=%d node_state=%d node_byte=%d act=%s pop_state=%d pop_byte=%d child_score=%d no_extras=%t children=%s\n",
+									processEpoch, node.state, node.byteOffset, forestTraceAction(lang, act), popTo.state, popTo.byteOffset, childScore, noExtras, forestTraceChildren(children))
+							}
 							if perfCountersEnabled {
 								perfRecordForestReduceGotoMiss()
 							}
@@ -1279,6 +1405,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						parentEnd := node.byteOffset
 						if reducedEnd < len(children) && reducedEnd > 0 {
 							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
+						}
+						if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(parentEnd) || forestTraceByteInWindow(node.byteOffset)) {
+							lex, after, active, ok := forestTraceLexMode(ts, gotoState)
+							if ok {
+								fmt.Printf("FOREST-X reduce step=%d node_state=%d node_byte=%d act=%s pop_state=%d pop_byte=%d goto_state=%d goto_lex=(%d,%d active=%d) parent_end=%d score=%d child_score=%d no_extras=%t children=%s\n",
+									processEpoch, node.state, node.byteOffset, forestTraceAction(lang, act), popTo.state, popTo.byteOffset, gotoState, lex, after, active, parentEnd, score, childScore, noExtras, forestTraceChildren(children))
+							} else {
+								fmt.Printf("FOREST-X reduce step=%d node_state=%d node_byte=%d act=%s pop_state=%d pop_byte=%d goto_state=%d goto_lex=<missing> parent_end=%d score=%d child_score=%d no_extras=%t children=%s\n",
+									processEpoch, node.state, node.byteOffset, forestTraceAction(lang, act), popTo.state, popTo.byteOffset, gotoState, parentEnd, score, childScore, noExtras, forestTraceChildren(children))
+							}
 						}
 						if forestCoalesceWouldDropForCap(&curIndex, lang.SymbolMetadata, act.Symbol, gotoState, parentEnd, score, popTo.errorCost) {
 							if forestTraceByteInWindow(parentEnd) || forestTraceByteInWindow(popTo.byteOffset) || forestTraceByteInWindow(node.byteOffset) {
@@ -1338,6 +1474,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				case ParseActionShift:
 					shiftBase, ok := p.prepareForestRealShiftGap(source, node, tok, &nextIndex, slab, arena)
 					if !ok {
+						if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(node.byteOffset)) {
+							fmt.Printf("FOREST-X shift-gap-reject step=%d node_state=%d node_byte=%d tok=%s act=%s\n",
+								processEpoch, node.state, node.byteOffset, forestTraceToken(lang, tok), forestTraceAction(lang, act))
+						}
 						continue
 					}
 					leaf := newLeafNodeInArena(arena, tok.Symbol, named(tok.Symbol), tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
@@ -1358,6 +1498,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					sh := coalesceForestWithMetadata(&nextIndex, slab, lang.SymbolMetadata, target, tok.EndByte, shiftBase,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
 						0, shiftBase.errorCost) // a shifted leaf carries no dynamic precedence
+					if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(tok.EndByte) || forestTraceByteInWindow(shiftBase.byteOffset) || forestTraceByteInWindow(node.byteOffset)) {
+						lex, after, active, ok := forestTraceLexMode(ts, target)
+						if ok {
+							fmt.Printf("FOREST-X shift step=%d from_state=%d from_byte=%d shift_base_state=%d shift_base_byte=%d tok=%s act=%s target=%d target_byte=%d target_lex=(%d,%d active=%d) new_frontier=%t links=%d\n",
+								processEpoch, node.state, node.byteOffset, shiftBase.state, shiftBase.byteOffset, forestTraceToken(lang, tok), forestTraceAction(lang, act), target, tok.EndByte, lex, after, active, nextIndex.len() != before, len(sh.links))
+						} else {
+							fmt.Printf("FOREST-X shift step=%d from_state=%d from_byte=%d shift_base_state=%d shift_base_byte=%d tok=%s act=%s target=%d target_byte=%d target_lex=<missing> new_frontier=%t links=%d\n",
+								processEpoch, node.state, node.byteOffset, shiftBase.state, shiftBase.byteOffset, forestTraceToken(lang, tok), forestTraceAction(lang, act), target, tok.EndByte, nextIndex.len() != before, len(sh.links))
+						}
+					}
 					if nextIndex.len() != before {
 						nextFrontier = append(nextFrontier, sh)
 					}
@@ -1433,6 +1583,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			nextFrontier = nextFrontier[:0]
 			for _, n := range frontier {
 				if !p.guardForestRealShiftGap(source, n, tok) {
+					if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(n.byteOffset)) {
+						fmt.Printf("FOREST-X recover-gap-reject step=%d state=%d byte=%d tok=%s\n",
+							processEpoch, n.state, n.byteOffset, forestTraceToken(lang, tok))
+					}
 					continue
 				}
 				recoverState := n.state
@@ -1447,6 +1601,16 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				sh := coalesceForestWithMetadata(&nextIndex, slab, lang.SymbolMetadata, recoverState, tok.EndByte, n,
 					stackEntry{node: unsafe.Pointer(errLeaf), state: recoverState, kind: stackEntryKindNode},
 					0, n.errorCost+tokWidth)
+				if forestTraceTransitionEnabled() && (forestTraceRangeInWindow(tok.StartByte, tok.EndByte) || forestTraceByteInWindow(tok.EndByte) || forestTraceByteInWindow(n.byteOffset)) {
+					lex, after, active, ok := forestTraceLexMode(ts, recoverState)
+					if ok {
+						fmt.Printf("FOREST-X recover step=%d from_state=%d from_byte=%d tok=%s recover_state=%d target_byte=%d target_lex=(%d,%d active=%d) error_cost=%d new_frontier=%t links=%d\n",
+							processEpoch, n.state, n.byteOffset, forestTraceToken(lang, tok), recoverState, tok.EndByte, lex, after, active, n.errorCost+tokWidth, nextIndex.len() != before, len(sh.links))
+					} else {
+						fmt.Printf("FOREST-X recover step=%d from_state=%d from_byte=%d tok=%s recover_state=%d target_byte=%d target_lex=<missing> error_cost=%d new_frontier=%t links=%d\n",
+							processEpoch, n.state, n.byteOffset, forestTraceToken(lang, tok), recoverState, tok.EndByte, n.errorCost+tokWidth, nextIndex.len() != before, len(sh.links))
+					}
+				}
 				if nextIndex.len() != before {
 					nextFrontier = append(nextFrontier, sh)
 				}

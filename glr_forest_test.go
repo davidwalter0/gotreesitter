@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -332,6 +333,49 @@ func TestForestResolveConflictPrefersBlockCommentRepetitionShift(t *testing.T) {
 	ordinary := p.forestResolveConflict(actions, Token{Symbol: 2})
 	if len(ordinary) != len(actions) {
 		t.Fatalf("ordinary repetition conflict resolved len = %d, want %d", len(ordinary), len(actions))
+	}
+}
+
+func TestForestTraceTransitionGateRequiresFlagAndWindow(t *testing.T) {
+	oldTransitions := glrForestTraceTransitions
+	oldWindow := glrForestTraceWindow
+	t.Cleanup(func() {
+		glrForestTraceTransitions = oldTransitions
+		glrForestTraceWindow = oldWindow
+	})
+
+	glrForestTraceTransitions = false
+	glrForestTraceWindow = glrForestTraceWindowConfig{enabled: true, start: 1, end: 2}
+	if forestTraceTransitionEnabled() {
+		t.Fatal("transition trace enabled without flag")
+	}
+
+	glrForestTraceTransitions = true
+	glrForestTraceWindow = glrForestTraceWindowConfig{}
+	if forestTraceTransitionEnabled() {
+		t.Fatal("transition trace enabled without window")
+	}
+
+	glrForestTraceTransitions = true
+	glrForestTraceWindow = glrForestTraceWindowConfig{enabled: true, start: 1, end: 2}
+	if !forestTraceTransitionEnabled() {
+		t.Fatal("transition trace disabled with flag and window")
+	}
+}
+
+func TestForestTraceActionsIncludeConflictRelevantFields(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "identifier"}}
+	got := forestTraceActions(lang, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 1, ChildCount: 1, DynamicPrecedence: 2, ProductionID: 7},
+		{Type: ParseActionShift, State: 42, Extra: true, Repetition: true},
+	})
+	for _, want := range []string{
+		"reduce(sym=1(identifier) cc=1 dyn=2 prod=7)",
+		"shift(state=42 extra,repeat)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("forestTraceActions() = %q, missing %q", got, want)
+		}
 	}
 }
 
