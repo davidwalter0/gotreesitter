@@ -4113,6 +4113,7 @@ func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack,
 	// stack is live. When only absorbing stacks remain, ERROR_STATE drives
 	// the lex exactly like C's error-mode lexing.
 	excludeAbsorbing := false
+	primaryIdx := 0
 	primary := stacks[0].top().state
 	if p.errorCostCompetitionEnabled() {
 		for si := range stacks {
@@ -4123,11 +4124,13 @@ func (p *Parser) updateParserStateTokenSource(ts TokenSource, stacks []glrStack,
 				continue
 			}
 			primary = stacks[si].top().state
+			primaryIdx = si
 			excludeAbsorbing = true
 			break
 		}
 	}
 	stateful.SetParserState(primary)
+	setAfterExtraLayoutTokenSource(stateful, stacks, primaryIdx)
 	if len(stacks) == 1 || p.usesPrimaryExternalScannerStateForGLR() {
 		clearGLRStateTokenSource(stateful, scratch)
 		return
@@ -4185,6 +4188,7 @@ func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks
 
 	primary := stacks[primaryIdx].top().state
 	stateful.SetParserState(primary)
+	setAfterExtraLayoutTokenSource(stateful, stacks, primaryIdx)
 	if p.usesPrimaryExternalScannerStateForGLR() {
 		clearGLRStateTokenSource(stateful, scratch)
 		return true
@@ -4210,6 +4214,22 @@ func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks
 	}
 	stateful.SetGLRStates(glrBuf)
 	return true
+}
+
+func setAfterExtraLayoutTokenSource(stateful parserStateTokenSource, stacks []glrStack, primaryIdx int) {
+	layoutAware, ok := stateful.(parserLayoutContextTokenSource)
+	if !ok {
+		return
+	}
+	layoutAware.SetAfterExtraLayout(primaryIdx >= 0 && primaryIdx < len(stacks) && stackTopIsExtraLayout(&stacks[primaryIdx]))
+}
+
+func stackTopIsExtraLayout(s *glrStack) bool {
+	if s == nil || s.depth() == 0 {
+		return false
+	}
+	top := s.top()
+	return stackEntryHasNode(top) && stackEntryNodeIsExtra(top)
 }
 
 func currentRelexStateStackEligible(s *glrStack) bool {

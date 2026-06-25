@@ -542,6 +542,10 @@ type parserStateTokenSource interface {
 	SetGLRStates(states []StateID)
 }
 
+type parserLayoutContextTokenSource interface {
+	SetAfterExtraLayout(after bool)
+}
+
 // stackEntry is a single parser LR-stack entry. The hot path stores real
 // public tree nodes directly; compact parse modes can tag the same 16-byte slot
 // as a noTreeNode, compact leaf, or pending-parent payload.

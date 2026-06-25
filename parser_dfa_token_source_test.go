@@ -620,6 +620,54 @@ func TestNextDFATokenAfterWhitespaceKeepsBaseTokenOverAfterWhitespaceError(t *te
 	}
 }
 
+func TestNextDFATokenAfterWhitespaceDoesNotPreferImmediateBaseTokenOverError(t *testing.T) {
+	lang := &Language{
+		Name:            "diff",
+		SymbolNames:     []string{"end", "bang"},
+		SymbolMetadata:  []SymbolMetadata{{Name: "end"}, {Name: "bang", Visible: true}},
+		ImmediateTokens: []bool{false, true},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+			},
+			{
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '!', Hi: '!', NextState: 2}},
+			},
+			{
+				AcceptToken: 1,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				Default: -1,
+				EOF:     -1,
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 1, AfterWhitespaceLexState: 3},
+		},
+	}
+
+	lexer := NewLexer(lang.LexStates, []byte("\n!"))
+	lexer.pos = 1
+	lexer.row = 1
+	d := newDFATokenSourceDirect(lexer, lang, nil, nil, nil)
+	d.state = 1
+	d.SetAfterExtraLayout(true)
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, errorSymbol; got != want {
+		t.Fatalf("token symbol after real newline content = %d, want error symbol %d", got, want)
+	}
+	if got, want := tok.Text, "!"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+}
+
 func TestNextDFATokenPrefersParserValidZeroWidthBaseToken(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"end", "text", "newline"},

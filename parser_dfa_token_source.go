@@ -19,6 +19,7 @@ type dfaTokenSource struct {
 	lexModeStarts              []lexModeStart
 	hasKeywordState            []bool
 	externalValidByState       [][]uint16
+	afterExtraLayout           bool
 	externalPayload            any
 	externalValid              []bool
 	externalSnapshot           []byte
@@ -271,6 +272,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 	}
 	d.state = 0
 	d.glrStates = nil
+	d.afterExtraLayout = false
 	if len(d.externalValid) > 0 {
 		d.externalValid = d.externalValid[:0]
 	}
@@ -522,6 +524,10 @@ func (d *dfaTokenSource) SetParserState(state StateID) {
 
 func (d *dfaTokenSource) SetGLRStates(states []StateID) {
 	d.glrStates = states
+}
+
+func (d *dfaTokenSource) SetAfterExtraLayout(after bool) {
+	d.afterExtraLayout = after
 }
 
 func (d *dfaTokenSource) nextDFAToken() Token {
@@ -943,7 +949,7 @@ func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) 
 		return true
 	}
 	if afterTok.Symbol == errorSymbol {
-		return true
+		return !d.isImmediateSymbol(baseTok.Symbol) || !d.afterExtraLayout
 	}
 	if d.hasZeroWidthTokens && d.shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok) {
 		return true

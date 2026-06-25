@@ -71,6 +71,12 @@ func (s *includedRangeTokenSource) SetGLRStates(states []StateID) {
 	}
 }
 
+func (s *includedRangeTokenSource) SetAfterExtraLayout(after bool) {
+	if p, ok := s.base.(parserLayoutContextTokenSource); ok {
+		p.SetAfterExtraLayout(after)
+	}
+}
+
 func (s *includedRangeTokenSource) SupportsIncrementalReuse() bool {
 	if s == nil || s.base == nil {
 		return false

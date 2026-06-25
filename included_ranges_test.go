@@ -6,6 +6,7 @@ type stubTokenSource struct {
 	tokens     []Token
 	i          int
 	state      StateID
+	afterExtra bool
 	nextCalls  int
 	skipCalls  int
 	relexTok   Token
@@ -45,6 +46,10 @@ func (s *stubTokenSource) SetParserState(state StateID) {
 
 func (s *stubTokenSource) SetGLRStates(states []StateID) {
 	// stub: no-op
+}
+
+func (s *stubTokenSource) SetAfterExtraLayout(after bool) {
+	s.afterExtra = after
 }
 
 func (s *stubTokenSource) CanRelexFromTokenStart(tok Token) bool {
@@ -109,6 +114,10 @@ func TestIncludedRangeTokenSourceDelegatesParserState(t *testing.T) {
 	ts.SetParserState(42)
 	if base.state != 42 {
 		t.Fatalf("delegated parser state: got %d, want 42", base.state)
+	}
+	ts.SetAfterExtraLayout(true)
+	if !base.afterExtra {
+		t.Fatal("included range token source did not delegate after-extra layout context")
 	}
 }
 
