@@ -59,7 +59,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | cairo | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | teal | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | groovy | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| purescript | `accepted_shape_materialization/accepted_diverge` | purescript-post-relex-n40-20260625 supersedes coding-accepted-shape-n40-20260625: frontier stop cleared, remains residual recovery_error_cost/accepted structural divergence at 1/40 parity, 39 diverge, 0 trunc, 1 errTree, frontierStopCount=0, stopReason=accepted | `generalized_recovery_shape_and_cost` |
+| purescript | `accepted_shape_materialization/accepted_diverge` | purescript-current-frame-stack-n40-20260625 supersedes purescript-post-relex-n40-20260625 and purescript-c-subtree-selection-n40-20260625: frontier stop remains cleared; current HEAD is 7/40 parity, 33 diverge, 0 trunc, 1 errTree, no panics/failures, frontierStopCount=0, stopReason=accepted; residual is recovery_error_cost plus accepted_divergence_cost with signature/patterns/constraint/foreign_import child-count families and one Ord.purs root error-tree outlier | `generalized_recovery_shape_and_cost` |
 | cobol | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | haxe | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | matlab | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |

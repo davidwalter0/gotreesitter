@@ -119,7 +119,7 @@ OVERLAY_STATUS = {
         "generalized_recovery_shape_and_cost",
     ),
     "purescript": (
-        "purescript-post-relex-n40-20260625 supersedes coding-accepted-shape-n40-20260625: frontier stop cleared, remains residual recovery_error_cost/accepted structural divergence at 1/40 parity, 39 diverge, 0 trunc, 1 errTree, frontierStopCount=0, stopReason=accepted",
+        "purescript-current-frame-stack-n40-20260625 supersedes purescript-post-relex-n40-20260625 and purescript-c-subtree-selection-n40-20260625: frontier stop remains cleared; current HEAD is 7/40 parity, 33 diverge, 0 trunc, 1 errTree, no panics/failures, frontierStopCount=0, stopReason=accepted; residual is recovery_error_cost plus accepted_divergence_cost with signature/patterns/constraint/foreign_import child-count families and one Ord.purs root error-tree outlier",
         "generalized_recovery_shape_and_cost",
     ),
     "swift": (
