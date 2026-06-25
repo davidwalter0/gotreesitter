@@ -134,13 +134,33 @@ OVERLAY_STATUS = {
         "post-retry and scoped-first reports migrate CUDA from runtime frontier to accepted/non-truncated recovery-shape/materialization evidence",
         "scoped_c_recovery_selection_and_materialization",
     ),
+    "disassembly": (
+        "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 40 diverge, 40 trunc, 40 errTree, stopReason=memory_budget/no_stacks_alive, no panics or failed files",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
     "glsl": (
         "post-retry report migrates GLSL from runtime frontier to accepted/non-truncated recovery-shape evidence; parity still residual",
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
+    "matlab": (
+        "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 4/40 parity, 36 diverge, 26 trunc, 33 errTree, stopReason=accepted/no_stacks_alive, no panics or failed files",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
+    "powershell": (
+        "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 25/40 parity, 15 diverge, 5 trunc, 11 errTree, stopReason=accepted/no_stacks_alive, no panics or failed files",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
     "scala": (
         "frame witness cleared under forest; forest N=40 remains residual at 29/40 parity with 3 comparison go_no_tree cases, 6 accepted/no-error span divergences, and 2 accepted/no-error root child-count divergences; one GenerateFunctionConverters.scala go_no_tree witness is now classified as a generalized forest C-recovery gap: production and forest both shift pre to state 8336, production uses C recovery potential reductions, recover-to-state 138, and same-token redispatch to continue, while forest absorbs } in state 8336 and later declines; the rejected local recover-to-state probe moved past byte 5029 but became reduce-cap; case-clause span residual is attributed to existing Scala result-normalizer behavior and excluded as an implementation target under the generalized-machinery-only policy",
         "faithful_forest_c_recovery_summary_election_error_cost_preservation",
+    ),
+    "uxntal": (
+        "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 40 diverge, 6 trunc, 40 errTree, stopReason=accepted/no_stacks_alive/node_limit, no panics or failed files",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
+    "wat": (
+        "true-coding-frontier-n40-20260625 completed available-corpus coverage only: 4/34 parity, 30 diverge, 0 trunc, 29 errTree, terminal timeout:go_compare_reparse_start:rc=124; timeout/fail is tracked separately from runtime frontier stops",
+        "generalized_recovery_shape_and_cost",
     ),
 }
 
