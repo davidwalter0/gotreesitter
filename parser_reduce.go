@@ -1980,6 +1980,97 @@ func (p *Parser) pushStackEntry(s *glrStack, entry stackEntry, entryScratch *glr
 	}
 }
 
+func cRecoveryTraceEntriesInWindow(entries []stackEntry, start, end int) bool {
+	if !cRecoveryTraceWindow.enabled {
+		return false
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > len(entries) {
+		end = len(entries)
+	}
+	for i := start; i < end; i++ {
+		if !stackEntryHasNode(entries[i]) {
+			continue
+		}
+		if cRecoveryTraceRangeInWindow(stackEntryNodeStartByte(entries[i]), stackEntryNodeEndByte(entries[i])) {
+			return true
+		}
+	}
+	return false
+}
+
+func cRecoveryTraceEntrySpan(entries []stackEntry, start, end int) (uint32, uint32, bool) {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(entries) {
+		end = len(entries)
+	}
+	var first, last uint32
+	have := false
+	for i := start; i < end; i++ {
+		if !stackEntryHasNode(entries[i]) {
+			continue
+		}
+		if !have {
+			first = stackEntryNodeStartByte(entries[i])
+			have = true
+		}
+		last = stackEntryNodeEndByte(entries[i])
+	}
+	return first, last, have
+}
+
+func cRecoveryTraceErrorExtraCounts(entries []stackEntry, start, reducedEnd, actualEnd int) (int, int) {
+	if start < 0 {
+		start = 0
+	}
+	if reducedEnd < start {
+		reducedEnd = start
+	}
+	if actualEnd < reducedEnd {
+		actualEnd = reducedEnd
+	}
+	if actualEnd > len(entries) {
+		actualEnd = len(entries)
+	}
+	reduced := 0
+	trailing := 0
+	for i := start; i < actualEnd; i++ {
+		if !stackEntryHasNode(entries[i]) || !stackEntryNodeIsExtra(entries[i]) || stackEntryNodeSymbol(entries[i]) != errorSymbol {
+			continue
+		}
+		if i < reducedEnd {
+			reduced++
+		} else {
+			trailing++
+		}
+	}
+	return reduced, trailing
+}
+
+func (p *Parser) cTraceReduceWindow(label string, s *glrStack, act ParseAction, tok Token, entries []stackEntry, start, reducedEnd, actualEnd int, topState StateID) {
+	if !cRecoveryTraceTokenInWindow(tok) && !cRecoveryTraceStackInWindow(s) && !cRecoveryTraceEntriesInWindow(entries, start, actualEnd) {
+		return
+	}
+	targetState := topState
+	if gotoState := p.lookupGoto(topState, act.Symbol); gotoState != 0 {
+		targetState = gotoState
+	}
+	reducedErrorExtras, trailingErrorExtras := cRecoveryTraceErrorExtraCounts(entries, start, reducedEnd, actualEnd)
+	spanStart, spanEnd, haveSpan := cRecoveryTraceEntrySpan(entries, start, actualEnd)
+	spanText := "none"
+	if haveSpan {
+		spanText = fmt.Sprintf("%d:%d", spanStart, spanEnd)
+	}
+	fmt.Printf("C-REC-TRACE reduceWindow phase=%s tok_sym=%d tok_name=%q tok=%d:%d reduce_symbol=%d reduce_symbol_name=%q child_count=%d production_id=%d dynamic_precedence=%d window_start=%d reduced_end=%d actual_end=%d raw_span=%s top_state=%d pre_goto_state=%d target_state=%d reduced_error_extras=%d trailing_error_extras=%d\n",
+		label, tok.Symbol, cTraceSymbolName(p.language, tok.Symbol), tok.StartByte, tok.EndByte,
+		act.Symbol, cTraceSymbolName(p.language, act.Symbol), act.ChildCount, act.ProductionID, act.DynamicPrecedence,
+		start, reducedEnd, actualEnd, spanText, topState, topState, targetState, reducedErrorExtras, trailingErrorExtras)
+}
+
 func reduceWindowFromGSS(s *glrStack, childCount int, buf []stackEntry) ([]stackEntry, StateID, bool) {
 	if s == nil || s.gss.head == nil || s.depth() == 0 {
 		return nil, 0, false
@@ -2296,6 +2387,7 @@ func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, to
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
+	p.cTraceReduceWindow("gss-notree", s, act, tok, windowEntries, window.start, window.reducedEnd, window.actualEnd, window.topState)
 
 	noTreeStart := time.Time{}
 	if timing != nil {
@@ -2344,6 +2436,7 @@ func (p *Parser) applyReduceActionFromGSS(s *glrStack, act ParseAction, tok Toke
 		releaseReduceWindowEntries(tmpEntries, windowEntries)
 		return
 	}
+	p.cTraceReduceWindow("gss", s, act, tok, windowEntries, window.start, window.reducedEnd, window.actualEnd, window.topState)
 
 	targetDepth := s.depth() - window.actualEnd
 	if pendingFullParents := p.usePendingFullParents(); pendingFullParents {
@@ -2755,6 +2848,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(s *glrStack, act Parse
 		}
 		reducedEnd--
 	}
+	p.cTraceReduceWindow("gss-transient", s, act, tok, windowEntries, 0, reducedEnd, actualEnd, topState)
 	if p.usePendingFullParents() {
 		pendingStart := time.Time{}
 		if timing != nil {
@@ -5242,6 +5336,7 @@ func (p *Parser) applyReduceAction(s *glrStack, act ParseAction, tok Token, anyR
 		s.dead = true
 		return
 	}
+	p.cTraceReduceWindow("flat", s, act, tok, entries, window.start, window.reducedEnd, window.actualEnd, window.topState)
 
 	if p != nil && p.noTreeBenchmarkOnly {
 		noTreeStart := time.Time{}
@@ -5422,6 +5517,7 @@ func (p *Parser) applyReduceActionTransientParents(s *glrStack, act ParseAction,
 		s.dead = true
 		return
 	}
+	p.cTraceReduceWindow("flat-transient", s, act, tok, entries, window.start, window.reducedEnd, window.actualEnd, window.topState)
 
 	if p != nil && p.noTreeBenchmarkOnly {
 		noTreeStart := time.Time{}

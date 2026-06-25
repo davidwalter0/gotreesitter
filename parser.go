@@ -2918,6 +2918,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if p.ambiguityProfile != nil {
 				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
 			}
+			p.cTraceActionLookup(si, currentState, tok, actions, s)
 			if len(actions) > 0 && actions[0].Type == ParseActionShift && actions[0].Extra {
 				actionKindStart := time.Time{}
 				if actionTiming != nil {

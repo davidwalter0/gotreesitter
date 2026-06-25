@@ -109,6 +109,43 @@ func cRecoveryTraceTokenInWindow(tok Token) bool {
 	return cRecoveryTraceRangeInWindow(tok.StartByte, tok.EndByte)
 }
 
+func cRecoveryTraceStackInWindow(s *glrStack) bool {
+	if !cRecoveryTraceWindow.enabled || s == nil || s.dead || s.depth() == 0 {
+		return false
+	}
+	if cRecoveryTraceByteInWindow(s.byteOffset) {
+		return true
+	}
+	top := s.top()
+	if !stackEntryHasNode(top) {
+		return false
+	}
+	return cRecoveryTraceRangeInWindow(stackEntryNodeStartByte(top), stackEntryNodeEndByte(top))
+}
+
+func cTraceSymbolName(lang *Language, sym Symbol) string {
+	if lang == nil {
+		return "?"
+	}
+	idx := int(sym)
+	if idx < 0 || idx >= len(lang.SymbolNames) || lang.SymbolNames[idx] == "" {
+		return "?"
+	}
+	return lang.SymbolNames[idx]
+}
+
+func (p *Parser) cTraceActionLookup(stackIndex int, state StateID, tok Token, actions []ParseAction, s *glrStack) {
+	if !cRecoveryTraceTokenInWindow(tok) && !cRecoveryTraceStackInWindow(s) {
+		return
+	}
+	fmt.Printf("C-REC-TRACE actionLookup stack=%d state=%d tok_sym=%d tok_name=%q tok=%d:%d action_count=%d\n",
+		stackIndex, state, tok.Symbol, cTraceSymbolName(p.language, tok.Symbol), tok.StartByte, tok.EndByte, len(actions))
+	for i, action := range actions {
+		fmt.Printf("C-REC-TRACE actionLookup action[%d] type=%d state=%d symbol=%d symbol_name=%q child_count=%d production_id=%d extra=%t repetition=%t dynamic_precedence=%d\n",
+			i, action.Type, action.State, action.Symbol, cTraceSymbolName(p.language, action.Symbol), action.ChildCount, action.ProductionID, action.Extra, action.Repetition, action.DynamicPrecedence)
+	}
+}
+
 // errorCostCompetitionLanguage reports whether the faithful C error-recovery
 // port is enabled for the active grammar. Enabled one grammar at a time, each
 // verified to net-improve its full corpus against the C oracle with zero
@@ -1601,8 +1638,17 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 		p.pushStackNode(&fork, goal, ex, entryScratch, gssScratch)
 	}
 	if rawFirst != nil && cRecoveryTraceRangeInWindow(rawFirst.startByte, rawLast.endByte) {
-		fmt.Printf("C-REC-TRACE cRecoverToState goal_state=%d depth=%d raw_span=%d:%d child_count=%d trailing_extras=%d\n",
-			goal, depth, rawFirst.startByte, rawLast.endByte, len(children), len(trailing))
+		top := fork.top()
+		topSym := Symbol(0)
+		topPreGoto := StateID(0)
+		topParseState := StateID(0)
+		if stackEntryHasNode(top) {
+			topSym = stackEntryNodeSymbol(top)
+			topPreGoto = stackEntryNodePreGotoState(top)
+			topParseState = stackEntryNodeParseState(top)
+		}
+		fmt.Printf("C-REC-TRACE cRecoverToState goal_state=%d depth=%d raw_span=%d:%d child_count=%d trailing_extras=%d pushed_error=%t top_state=%d top_symbol=%d top_symbol_name=%q top_pre_goto=%d top_parse_state=%d\n",
+			goal, depth, rawFirst.startByte, rawLast.endByte, len(children), len(trailing), rawFirst != nil, fork.top().state, topSym, cTraceSymbolName(p.language, topSym), topPreGoto, topParseState)
 	}
 	return fork, true
 }
