@@ -58,6 +58,28 @@ Failure-family counts:
 
 Zero-file/unmeasured: elsa external zero-file.
 
+## Reproducible Residual Ledger
+
+Machine-readable ledger:
+`docs/reports/206-residual-frame-domain-ledger-20260625.tsv`
+
+Concise generated summary:
+`docs/reports/206-residual-frame-domain-ledger-20260625.md`
+
+Regenerator:
+`cgo_harness/tier_scan/generate_206_residual_ledger.py`
+
+The ledger has one row for each current Tier IV residual from the smoke
+artifact plus `elsa` as unmeasured: 60 rows total, with 59 Tier IV residuals,
+1 unmeasured row, and 27 high-priority true programming-language rows.
+
+The ledger keeps true programming languages separate from config/build,
+markup/template/style, prose/docs, data/grammar, query/policy, and conservative
+`other` cases. The classification path is generalized parser machinery only:
+GLR frontier survival, recovery-shape/cost selection, forest/materialization,
+materialization invariants, or corpus accounting. It is not evidence for
+per-grammar normalizers or language-name parser policy.
+
 ## Coding Accepted-Shape N=40
 
 Artifact:
