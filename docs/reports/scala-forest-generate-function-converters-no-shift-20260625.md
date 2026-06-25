@@ -276,3 +276,140 @@ error-cost jump into this chain. The next fix should be a generic forest
 frontier/recovery/error-cost invariant, not a Scala normalizer, not a
 language-name parser policy, and not an edit to
 `parser_result_scala_compilation.go`.
+
+## Backward Transition Trace
+
+Command sequence:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-transition-5520-5570 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5520:5570 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-transition-5400-5520 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5400:5520 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-transition-5200-5405 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5200:5405 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-transition-5000-5205 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5000:5205 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-transition-4970-5040 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=4970:5040 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+```
+
+Artifacts:
+
+```text
+harness_out/docker/20260625T152318Z-scala-gfc-forest-transition-5520-5570
+harness_out/docker/20260625T152347Z-scala-gfc-forest-transition-5400-5520
+harness_out/docker/20260625T152410Z-scala-gfc-forest-transition-5200-5405
+harness_out/docker/20260625T152430Z-scala-gfc-forest-transition-5000-5205
+harness_out/docker/20260625T152457Z-scala-gfc-forest-transition-4970-5040
+```
+
+All runs left the witness unmoved:
+
+```text
+5520:5570 MEASURE-DTIER scala mode=forest ... parityMatch=0/1(0%) ... trunc=1 ... runtime="nil_tree forestDeclineReason=no-shift-death"
+5400:5520 MEASURE-DTIER scala mode=forest ... parityMatch=0/1(0%) ... trunc=1 ... runtime="nil_tree forestDeclineReason=no-shift-death"
+5200:5405 MEASURE-DTIER scala mode=forest ... parityMatch=0/1(0%) ... trunc=1 ... runtime="nil_tree forestDeclineReason=no-shift-death"
+5000:5205 MEASURE-DTIER scala mode=forest ... parityMatch=0/1(0%) ... trunc=1 ... runtime="nil_tree forestDeclineReason=no-shift-death"
+4970:5040 MEASURE-DTIER scala mode=forest ... parityMatch=0/1(0%) ... trunc=1 ... runtime="nil_tree forestDeclineReason=no-shift-death"
+```
+
+The requested `5520:5570` start window was still too late. It showed the same
+single-state chain at byte `5514`:
+
+```text
+FOREST-TRACE step=1346 lexer_start=5514 lexer_end=5528 selected_state=8336 glr=[8336] tok=sym=1(_alpha_identifier) 5514..5528 text="implicitToJava"
+FOREST-X recover step=1357 from_state=8336 from_byte=5553 tok=sym=60(() 5568..5569 text="(" recover_state=8336 target_byte=5569 target_lex=(70,0 active=70) error_cost=364 new_frontier=true links=1
+```
+
+The `5400:5520` and `5200:5405` windows showed the chain was already active at
+byte `5395` with `error_cost=261`, then at byte `5198` with
+`error_cost=108`:
+
+```text
+FOREST-TRACE step=1319 lexer_start=5395 lexer_end=5407 selected_state=8336 glr=[8336] tok=sym=1(_alpha_identifier) 5395..5407 text="priorityName"
+FOREST-TRACE step=1265 lexer_start=5198 lexer_end=5202 selected_state=8336 glr=[8336] tok=sym=1(_alpha_identifier) 5198..5202 text="defs"
+```
+
+The tight `4970:5040` replay identified the first error-cost transition:
+
+```text
+FOREST-X shift step=1225 from_state=716 from_byte=5025 shift_base_state=716 shift_base_byte=5025 tok=sym=1(_alpha_identifier) 5026..5029 text="pre" act=shift(state=8336) target=8336 target_byte=5029 target_lex=(70,0 active=70) new_frontier=true links=1
+FOREST-TRACE step=1226 lexer_start=5029 lexer_end=5037 selected_state=8336 glr=[8336] tok=sym=5(}) 5036..5037 text="}"
+  state=8336 lex=(70,0 active=70) candidate=sym=5(}) 5036..5037 text="}" ... actions=none
+    frontier state=8336 byte=5029 links=1 error_cost=0 ... tok_actions=none gap_ok=true
+FOREST-X recover step=1226 from_state=8336 from_byte=5029 tok=sym=5(}) 5036..5037 text="}" recover_state=8336 target_byte=5037 target_lex=(70,0 active=70) error_cost=1 new_frontier=true links=1
+```
+
+Source context:
+
+```scala
+      def priorityName(n: Int, pure: Boolean = false): String = {
+        val pre =
+          if (pure) s"Priority${n}FunctionExtensions"
+          else s"trait ${priorityName(n, pure = true)}"
+        if (!pure && n < (sccDepthSet.size-1)) s"$pre extends ${priorityName(n+1, pure = true)}" else pre
+      }
+      val impls =
+```
+
+The lower-error path does not disappear through coalescing, dedup, fan-out cap,
+pre-cap, conflict resolution, reduce-goto miss, or shift-gap rejection at the
+first transition. Immediately before the chain starts, the ordinary zero-cost
+frontier has exactly one state and shifts `pre` to state `8336`. The next
+selected token is `}` after the line break/indentation gap; state `8336` has no
+action for `}`, so forest recovery absorbs it as the first `ERROR` leaf. The
+first `reduce-goto-miss` in the chain happens one step later at `val`, after
+the branch is already error-bearing:
+
+```text
+FOREST-X reduce-goto-miss step=1227 node_state=8336 node_byte=5037 act=reduce(sym=281(identifier) cc=1 dyn=0 prod=0) pop_state=8336 pop_byte=5029 child_score=0 no_extras=true children=[65535:5036..5037]
+```
+
+This classifies the first handoff as:
+
+```text
+forest/token-source-external-boundary/recovery-after-single-state-no-action
+```
+
+The live evidence points at a generic token-source/frontier problem around
+context-sensitive external boundary tokens such as automatic semicolons or
+newline-sensitive statement terminators. It is not yet a proven behavior fix:
+single-state external token selection uses that state's external lex row
+directly, while GLR-scored external selection only runs when more than one
+state is live. At this failure point the parser has already narrowed to one
+state, so a broader external candidate experiment must prove that an alternate
+external boundary token is valid and usable before changing behavior.
+
+No generalized behavior fix was applied in this pass.
+
+## Updated Next Generalized Experiment
+
+Add a tightly gated token-source diagnostic around the single-state external
+path to print, for one byte window, the active state's external lex-state ID,
+valid external symbols, scanner result, and whether each produced external
+candidate has a parse action in the current frontier. Re-run the `4970:5040`
+window to prove or disprove that an automatic semicolon or newline-sensitive
+external boundary token is available before `}` at byte `5036`.
+
+Only if that diagnostic proves a usable lower-cost external boundary exists,
+test a generalized fix that lets forest recovery perform a bounded alternate
+external-boundary probe before absorbing a later real token in a single-state
+frontier. Gate it by parse-action usability and byte progress, then verify the
+`GenerateFunctionConverters.scala` witness, `AutomaticModuleName.scala`, and one
+non-Scala external-scanner forest canary. Do not add Scala-specific behavior or
+edit `parser_result_scala_compilation.go`.
