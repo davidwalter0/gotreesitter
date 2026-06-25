@@ -144,10 +144,11 @@ type LanguageMetadata struct {
 
 // SymbolMetadata holds display information about a symbol.
 type SymbolMetadata struct {
-	Name      string
-	Visible   bool
-	Named     bool
-	Supertype bool
+	Name               string
+	Visible            bool
+	Named              bool
+	Supertype          bool
+	GeneratedRepeatAux bool
 }
 
 // FieldMapEntry maps a child index to a field name.
@@ -215,6 +216,15 @@ type Language struct {
 	// GeneratedByGrammargen is true for languages assembled by grammargen at
 	// runtime rather than decoded from a checked-in ts2go blob.
 	GeneratedByGrammargen bool
+
+	// CRecoveryCostCompetitionCapable records generated table evidence that the
+	// grammar exposes the parser.c recovery surface. It is capability metadata,
+	// not an unconditional default-on gate.
+	CRecoveryCostCompetitionCapable bool
+
+	// CRecoveryCostCompetitionEnabledByDefault certifies that the generated
+	// language can use the parser.c recovery-cost competition by default.
+	CRecoveryCostCompetitionEnabledByDefault bool
 
 	// LanguageVersion is the tree-sitter language ABI version.
 	// A value of 0 means "unknown/unspecified" and is treated as compatible.

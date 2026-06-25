@@ -2717,6 +2717,7 @@ func adaptExternalScanner(refLang, genLang *gotreesitter.Language) {
 		name = refLang.Name
 	}
 	if name != "" && grammars.AdaptScannerForLanguage(name, genLang) {
+		gotreesitter.CertifyCRecoveryCostCompetition(genLang)
 		return
 	}
 	if refLang == nil || refLang.ExternalScanner == nil {
@@ -2724,6 +2725,7 @@ func adaptExternalScanner(refLang, genLang *gotreesitter.Language) {
 	}
 	if scanner, ok := gotreesitter.AdaptExternalScannerByExternalOrder(refLang, genLang); ok {
 		genLang.ExternalScanner = scanner
+		gotreesitter.CertifyCRecoveryCostCompetition(genLang)
 	}
 }
 

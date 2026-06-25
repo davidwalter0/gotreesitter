@@ -2,12 +2,21 @@ package grammargen
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+func parserCRecoveryEnabledForTest(parser *gotreesitter.Parser) bool {
+	if parser == nil {
+		return false
+	}
+	v := reflect.ValueOf(parser).Elem().FieldByName("errorCostCompetition")
+	return v.IsValid() && v.Kind() == reflect.Bool && v.Bool()
+}
 
 func TestPythonKeywordIdentificationIncludesSoftKeywords(t *testing.T) {
 	gram := loadPythonGrammarJSONForTest(t)

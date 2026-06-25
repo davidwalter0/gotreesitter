@@ -947,6 +947,7 @@ type lrContext struct {
 	bracedTemplateBody2Sym          int
 	annotationArgCarrierLHS         []bool
 	templateDefinitionCarrierLHS    []bool
+	definitionBoundaryTagBySym      []uint32
 	repeatWrapperLHS                []bool
 	operatorIdentSym                int
 	operatorStarSym                 int

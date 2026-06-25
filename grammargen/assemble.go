@@ -82,10 +82,11 @@ func assemble(
 	for i, sym := range ng.Symbols {
 		lang.SymbolNames[i] = sym.Name
 		lang.SymbolMetadata[i] = gotreesitter.SymbolMetadata{
-			Name:      sym.Name,
-			Visible:   sym.Visible,
-			Named:     sym.Named,
-			Supertype: sym.Supertype,
+			Name:               sym.Name,
+			Visible:            sym.Visible,
+			Named:              sym.Named,
+			Supertype:          sym.Supertype,
+			GeneratedRepeatAux: sym.GeneratedRepeatAux,
 		}
 	}
 
@@ -191,7 +192,13 @@ func assemble(
 	// Supertype map.
 	buildSupertypeMap(lang, ng)
 
+	certifyGeneratedCRecoveryCostCompetition(lang)
+
 	return lang, nil
+}
+
+func certifyGeneratedCRecoveryCostCompetition(lang *gotreesitter.Language) {
+	gotreesitter.CertifyCRecoveryCostCompetition(lang)
 }
 
 func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar) {

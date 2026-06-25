@@ -555,7 +555,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 				if err != nil {
 					return nil, fmt.Errorf("rebuild LR tables after split rollback: %w", err)
 				}
-				if err := resolveConflicts(tables, ng); err != nil {
+				if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
 					return nil, fmt.Errorf("resolve conflicts after split rollback: %w", err)
 				}
 				sr.StatesSplit = 0
@@ -572,7 +572,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			}
 		}
 	} else {
-		if err := resolveConflicts(tables, ng); err != nil {
+		if _, err := resolveConflicts(bgCtx, tables, ng); err != nil {
 			return nil, fmt.Errorf("resolve conflicts: %w", err)
 		}
 	}
