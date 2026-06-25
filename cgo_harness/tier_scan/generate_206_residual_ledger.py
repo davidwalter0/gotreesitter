@@ -119,8 +119,8 @@ OVERLAY_STATUS = {
         "generalized_recovery_shape_and_cost",
     ),
     "purescript": (
-        "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as runtime_frontier_stop: 1/40 parity, 39 diverge, 1 trunc, 0 errTree; not pure accepted materialization evidence",
-        "glr_frontier_survival_and_reuse_selection",
+        "purescript-post-relex-n40-20260625 supersedes coding-accepted-shape-n40-20260625: frontier stop cleared, remains residual recovery_error_cost/accepted structural divergence at 1/40 parity, 39 diverge, 0 trunc, 1 errTree, frontierStopCount=0, stopReason=accepted",
+        "generalized_recovery_shape_and_cost",
     ),
     "swift": (
         "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as mixed runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 27 trunc, 9 errTree; not pure accepted materialization evidence",

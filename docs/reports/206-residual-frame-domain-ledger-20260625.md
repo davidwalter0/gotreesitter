@@ -25,8 +25,8 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 
 | Next generalized machinery target | Count |
 | --- | ---: |
-| `glr_frontier_survival_and_reuse_selection` | 38 |
-| `generalized_recovery_shape_and_cost` | 11 |
+| `glr_frontier_survival_and_reuse_selection` | 37 |
+| `generalized_recovery_shape_and_cost` | 12 |
 | `generalized_materialization_invariant` | 6 |
 | `recovery_shape_and_materialization_after_generalized_retry` | 2 |
 | `scoped_c_recovery_selection_and_materialization` | 1 |
@@ -59,7 +59,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | cairo | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | teal | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | groovy | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| purescript | `accepted_shape_materialization/accepted_diverge` | coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as runtime_frontier_stop: 1/40 parity, 39 diverge, 1 trunc, 0 errTree; not pure accepted materialization evidence | `glr_frontier_survival_and_reuse_selection` |
+| purescript | `accepted_shape_materialization/accepted_diverge` | purescript-post-relex-n40-20260625 supersedes coding-accepted-shape-n40-20260625: frontier stop cleared, remains residual recovery_error_cost/accepted structural divergence at 1/40 parity, 39 diverge, 0 trunc, 1 errTree, frontierStopCount=0, stopReason=accepted | `generalized_recovery_shape_and_cost` |
 | cobol | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | haxe | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | matlab | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
