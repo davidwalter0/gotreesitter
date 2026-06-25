@@ -2,6 +2,57 @@ package gotreesitter
 
 import "testing"
 
+func TestCCollectPotentialReductionsKeepsFullReduceIdentity(t *testing.T) {
+	lang := &Language{
+		TokenCount:  3,
+		StateCount:  1,
+		SymbolCount: 5,
+		ParseTable: [][]uint16{
+			{0, 1, 1},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 7, DynamicPrecedence: 0},
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 7, DynamicPrecedence: 0},
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 8, DynamicPrecedence: 0},
+				{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 7, DynamicPrecedence: 3},
+			}},
+		},
+	}
+	parser := &Parser{language: lang, denseLimit: len(lang.ParseTable)}
+
+	var reductions []ParseAction
+	hasShift := parser.cCollectPotentialReductions(0, 1, &reductions)
+	if hasShift {
+		t.Fatal("hasShift = true, want false")
+	}
+	if len(reductions) != 3 {
+		t.Fatalf("reduction count = %d, want 3", len(reductions))
+	}
+
+	want := map[cReduceActionKey]bool{
+		{symbol: 4, count: 2, productionID: 7, dynamicPrecedence: 0}: true,
+		{symbol: 4, count: 2, productionID: 8, dynamicPrecedence: 0}: true,
+		{symbol: 4, count: 2, productionID: 7, dynamicPrecedence: 3}: true,
+	}
+	for _, reduction := range reductions {
+		key := cReduceActionKey{
+			symbol:            reduction.Symbol,
+			count:             reduction.ChildCount,
+			productionID:      reduction.ProductionID,
+			dynamicPrecedence: reduction.DynamicPrecedence,
+		}
+		if !want[key] {
+			t.Fatalf("unexpected reduction survived collection: %+v", reduction)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing reductions after collection: %+v", want)
+	}
+}
+
 func TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true

@@ -928,8 +928,10 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 // ---------------------------------------------------------------------------
 
 type cReduceActionKey struct {
-	symbol Symbol
-	count  uint8
+	symbol            Symbol
+	count             uint8
+	dynamicPrecedence int16
+	productionID      uint16
 }
 
 // cCollectPotentialReductions gathers the deduped reduce-action set for the
@@ -952,7 +954,12 @@ func (p *Parser) cCollectPotentialReductions(state StateID, lookaheadSym Symbol,
 				}
 			case ParseActionReduce:
 				if act.ChildCount > 0 {
-					key := cReduceActionKey{symbol: act.Symbol, count: act.ChildCount}
+					key := cReduceActionKey{
+						symbol:            act.Symbol,
+						count:             act.ChildCount,
+						dynamicPrecedence: act.DynamicPrecedence,
+						productionID:      act.ProductionID,
+					}
 					if !seen[key] {
 						seen[key] = true
 						*reduces = append(*reduces, act)
