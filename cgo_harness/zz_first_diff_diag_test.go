@@ -492,7 +492,14 @@ func TestFirstDiffDiag(t *testing.T) {
 	if os.Getenv("REPRO_GLR_TRACE") == "1" {
 		gp.SetGLRTrace(true)
 	}
-	tr, _ := gp.Parse(src)
+	var tr *gts.Tree
+	if os.Getenv("REPRO_FOREST") == "1" {
+		gts.SetGLRForestRecover(true)
+		defer gts.SetGLRForestRecover(false)
+		tr, _ = gp.ParseForestExperimental(src)
+	} else {
+		tr, _ = gp.Parse(src)
+	}
 	if tr == nil || tr.RootNode() == nil {
 		t.Fatalf("go parse failed")
 	}
