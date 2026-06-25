@@ -178,6 +178,18 @@ OVERLAY_STATUS = {
         "nushell-true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 8/40 parity, 32 diverge, 9 trunc, 23 errTree, no panics or failed files",
         "glr_frontier_survival_and_reuse_selection",
     ),
+    "objc": (
+        "objc-true-coding-recovery-n40-20260625 recertifies recovery_error_cost plus accepted_divergence_cost: 25/40 parity, 15 diverge, 0 trunc, 19 errTree, stopReason=accepted, no panics or failed files",
+        "generalized_recovery_shape_and_cost",
+    ),
+    "odin": (
+        "odin-true-coding-recovery-n40-20260625 recertifies terminal_timeout_or_fail plus recovery_error_cost: 21/40 parity, 19 diverge, 3 trunc, 15 errTree, no panics, 1 failed file; terminal status timeout:go_parse_start:rc=124",
+        "generalized_recovery_shape_and_terminal_timeout_accounting",
+    ),
+    "pascal": (
+        "pascal-true-coding-recovery-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 40 diverge, 6 trunc, 36 errTree, stopReason=accepted/memory_budget/no_stacks_alive, no panics or failed files",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
     "powershell": (
         "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 25/40 parity, 15 diverge, 5 trunc, 11 errTree, stopReason=accepted/no_stacks_alive, no panics or failed files",
         "glr_frontier_survival_and_reuse_selection",
@@ -197,6 +209,10 @@ OVERLAY_STATUS = {
     "wat": (
         "true-coding-frontier-n40-20260625 completed available-corpus coverage only: 4/34 parity, 30 diverge, 0 trunc, 29 errTree, terminal timeout:go_compare_reparse_start:rc=124; timeout/fail is tracked separately from runtime frontier stops",
         "generalized_recovery_shape_and_cost",
+    ),
+    "wolfram": (
+        "wolfram-true-coding-recovery-n40-20260625 completed available-corpus coverage only: 0/11 parity, 11 diverge, 0 trunc, 8 errTree, no panics, 3 failed files; terminal status timeout:go_parse_start:rc=124 repeated 3 times",
+        "generalized_recovery_shape_and_terminal_timeout_accounting",
     ),
 }
 
