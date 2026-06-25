@@ -1147,6 +1147,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			return root, true
 		}
 		if len(nextFrontier) == 0 {
+			if tok.Symbol != 0 && tok.EndByte <= tok.StartByte && ts.prepareRetryAfterUnshiftableZeroWidthExternal(tok) {
+				frontier = appendForestIndexNodes(frontier[:0], &curIndex)
+				if len(frontier) == 0 {
+					forestLastDeclineReason = "zero-width-no-frontier"
+					return nil, false
+				}
+				continue
+			}
 			// No frontier node could shift this token: the production parser would
 			// recover here. EXPERIMENTAL: absorb the token into an error region and
 			// keep the frontier alive in its current states, advancing past the

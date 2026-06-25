@@ -2383,6 +2383,24 @@ func (d *dfaTokenSource) canRetryAfterUnusableZeroWidthExternal(tok Token) bool 
 	return true
 }
 
+func (d *dfaTokenSource) prepareRetryAfterUnshiftableZeroWidthExternal(tok Token) bool {
+	if d == nil || d.language == nil || d.lexer == nil || tok.Symbol == 0 || tok.EndByte > tok.StartByte {
+		return false
+	}
+	if d.allowRepeatedZeroWidthExternalSymbol(tok.Symbol) {
+		return false
+	}
+	idx := d.externalSymbolIndex(tok.Symbol)
+	if idx < 0 || d.lexer.pos != int(tok.EndByte) {
+		return false
+	}
+	if d.extZeroPos == d.lexer.pos && d.extZeroState == d.state &&
+		idx < len(d.extZeroTried) && d.extZeroTried[idx] {
+		return true
+	}
+	return d.canRetryAfterUnusableZeroWidthExternal(tok)
+}
+
 func (d *dfaTokenSource) currentLineStartsWithHashDirective() bool {
 	if d == nil || d.lexer == nil {
 		return false

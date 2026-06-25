@@ -229,7 +229,7 @@ Forest frontier before-finalization follow-up:
 
 | Grammar/file | Current frame | Variant evidence | Classified next lane |
 | --- | --- | --- | --- |
-| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; `16120` repeats a `namespace_wildcard` reduce whose goto from `16120` misses | `forest/materialization`, refined to `forest/zero-width-successor-frontier-after-no-lookahead` |
+| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; after the zero-width external retry fix, forest masks that unusable external marker and advances through `object AutomaticModuleName`, but still returns `go_no_tree` because the surviving frontier lacks the object-definition path and later dies on a stale-byte attachment gap near the method body `{` | `forest/materialization`, refined to `forest/object-definition-frontier-after-zero-width-external-retry` |
 
 Scala remains a true-coding runtime-frontier witness under production settings,
 but the next useful machinery lane is forest/materialization rather than node
@@ -252,6 +252,29 @@ successor token after the block comment: `_automatic_semicolon` at byte `396`
 has no shift from the surviving frontier, and the repeated
 `namespace_wildcard` reduction has no goto from state `16120`. The object
 definition path is still absent before EOF.
+
+Zero-width external retry follow-up landed a small generic forest fix: when a
+zero-width external token is emitted, reductions run, and no frontier can shift
+it, the forest now asks the token source to mark that external token unusable at
+the current lexer position and re-lexes from the reduced frontier. This matches
+the token source's existing zero-width external loop-prevention model and is
+covered by `TestParseForestRetriesUnshiftableZeroWidthExternalToken`.
+
+Validation artifacts:
+
+- `harness_out/docker/20260625T113614Z-forest-zero-width-external-unit-final-20260625`
+- `harness_out/docker/20260625T113621Z-scala-zero-width-external-retry-final-20260625`
+
+Scala frame 1 did not move out of Tier IV. The Scala forest run still reports
+`comparison_result result=go_no_tree` and
+`MEASURE-DTIER scala mode=forest files=1 ... parityMatch=0/1(0%) diverge=0
+trunc=0 errTree=0 panics=0`. Local token tracing confirms progress beyond the
+prior byte-`396` `_automatic_semicolon`: the lexer reaches `object`, the object
+identifier, signature tokens, and then dies later around the method body `{`
+because the surviving states remain the post-comment frontier rather than an
+object-definition frontier. The next generalized target is therefore
+`forest/object-definition-frontier-after-zero-width-external-retry`, not
+zero-width token-source state selection.
 
 ## F# State
 

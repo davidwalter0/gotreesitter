@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+type forestZeroWidthRetryScanner struct{}
+
+func (forestZeroWidthRetryScanner) Create() any               { return nil }
+func (forestZeroWidthRetryScanner) Destroy(any)               {}
+func (forestZeroWidthRetryScanner) Serialize(any, []byte) int { return 0 }
+func (forestZeroWidthRetryScanner) Deserialize(any, []byte)   {}
+func (forestZeroWidthRetryScanner) Scan(_ any, lexer *ExternalLexer, valid []bool) bool {
+	if len(valid) == 0 || !valid[0] || lexer.Lookahead() != 'x' {
+		return false
+	}
+	lexer.SetResultSymbol(1)
+	return true
+}
+
 // pathsOf reduces childCount children over node and returns each visited path as
 // "child-states|popToState" so order and fan-out are easy to assert.
 func pathsOf(node *gssForestNode, childCount int) []string {
@@ -122,6 +136,85 @@ func TestParseForestNoLookaheadReductionContinuesToRealToken(t *testing.T) {
 	}
 	if got, want := root.Child(1).Type(lang), "b"; got != want {
 		t.Fatalf("second child type = %q, want %q", got, want)
+	}
+}
+
+func TestParseForestRetriesUnshiftableZeroWidthExternalToken(t *testing.T) {
+	lang := &Language{
+		Name:               "forest_zero_width_external_retry",
+		SymbolCount:        5,
+		TokenCount:         3,
+		StateCount:         4,
+		LargeStateCount:    4,
+		InitialState:       1,
+		ProductionIDCount:  2,
+		ExternalTokenCount: 1,
+		ExternalSymbols:    []Symbol{1},
+		ExternalScanner:    forestZeroWidthRetryScanner{},
+		SymbolNames:        []string{"end", "_zero", "x", "source_file", "dead_reduce"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: "_zero", Visible: false, Named: false},
+			{Name: "x", Visible: true, Named: false},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "dead_reduce", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+		ExternalLexStates: [][]bool{
+			{false},
+			{true},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 0, ProductionID: 0}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0, 0, 0},
+			{0, 2, 1, 3, 0},
+			{3, 0, 0, 0, 0},
+			{4, 0, 0, 0, 0},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0, ExternalLexState: 1},
+			{LexState: 0},
+			{LexState: 0},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+	}
+
+	tree, ok := NewParser(lang).ParseForestExperimental([]byte("x"))
+	if !ok || tree == nil {
+		t.Fatal("ParseForestExperimental failed after unshiftable zero-width external")
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("root is nil")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if got, want := root.EndByte(), uint32(1); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	if got, want := root.ChildCount(), 1; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got, want := root.Child(0).Type(lang), "x"; got != want {
+		t.Fatalf("child type = %q, want %q", got, want)
 	}
 }
 
