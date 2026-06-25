@@ -35,6 +35,25 @@ A grammar-neutral unit test constructs a synthetic merged GSS and verifies that
 two viable pop slices at the same elected depth/state produce two recovered
 ERROR forks with distinct spans.
 
+## Review Repair
+
+The reviewed follow-up closed two remaining C-fidelity gaps in the generalized
+machinery:
+
+- `ts_stack_pop_error` parity: the closed-ERROR splice now scans all top GSS
+  links in C stack-iterator order, so a directly preceding closed `ERROR` behind
+  `extraLinks` is popped and its children are prepended before the new recovered
+  `ERROR` is pushed.
+- `ts_stack_pop_count` parity: pop-slice discovery no longer stops at
+  `MAX_VERSION_COUNT`. It uses C's structural `MAX_ITERATOR_COUNT` frontier cap
+  and lets `recover_to_state` materialization plus the existing version-count
+  cull decide which recovered forks survive.
+
+Added grammar-neutral unit coverage for both cases:
+
+- `TestCRecoverToStatePopsClosedErrorFromPackedTopLink`
+- `TestCRecoverPopSlicesDoesNotCapBeforeLaterSlices`
+
 ## CUDA Witness
 
 Command:
@@ -67,6 +86,7 @@ go stopReason=accepted runtime=truncated=false ... rootHasError=true cRootHasErr
 ```sh
 go test . -run '^(TestCRecoverToStateEnumeratesMergedPopSlices|TestCBuildMergedGroupSummaryMatchesStackIterDelayedBranchOrder|TestCRecoverGroupMemberIndexSurvivesStackReorder|TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks|TestParseCRecoveryTraceWindow)$' -count=1
 go test . -run 'TestC' -count=1
+git diff --check
 ```
 
 Results:
@@ -74,6 +94,9 @@ Results:
 ```text
 ok  	github.com/odvcencio/gotreesitter	0.004s
 ok  	github.com/odvcencio/gotreesitter	0.275s
+review repair focused rerun:
+ok  	github.com/odvcencio/gotreesitter	0.230s
+git diff --check: clean
 ```
 
 ## Conclusion

@@ -193,6 +193,126 @@ func TestCRecoverToStateEnumeratesMergedPopSlices(t *testing.T) {
 	}
 }
 
+func TestCRecoverToStatePopsClosedErrorFromPackedTopLink(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"end", "closed_child", "payload"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "closed_child", Visible: true, Named: true},
+			{Name: "payload", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := func(sym Symbol, start, end uint32) *Node {
+		return newLeafNodeInArena(arena, sym, true, start, end, Point{Column: start}, Point{Column: end})
+	}
+	closedChild := leaf(1, 0, 1)
+	closedErr := newParentNodeInArena(arena, errorSymbol, true, []*Node{closedChild}, nil, 0)
+	cSetNodeSpan(closedErr, 0, 1, Point{}, Point{Column: 1})
+	closedErr.setHasError(true)
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	goalHead := scratch.allocNode(newStackEntryNode(10, leaf(2, 4, 5)), base, 2)
+	goalHead.extraLinks = append(goalHead.extraLinks, gssMainLink{
+		prev:  base,
+		entry: newStackEntryNode(10, closedErr),
+	})
+	stack := glrStack{gss: gssStack{head: goalHead}, byteOffset: 5}
+
+	payload := leaf(2, 10, 11)
+	fork, ok := parser.cRecoverToStateSlice(
+		&stack,
+		1,
+		10,
+		cRecoverPopSlice{popTo: goalHead, window: []stackEntry{newStackEntryNode(30, payload)}},
+		arena,
+		nil,
+		&scratch,
+		nil,
+	)
+	if !ok {
+		t.Fatal("cRecoverToStateSlice failed")
+	}
+	var forkPrev *gssNode
+	if fork.gss.head != nil {
+		forkPrev = fork.gss.head.prev
+	}
+	if fork.gss.head == nil || forkPrev != base {
+		t.Fatalf("fork did not pop the packed ERROR link to base; head=%p prev=%p base=%p", fork.gss.head, forkPrev, base)
+	}
+	top := stackEntryNode(fork.top())
+	if top == nil || top.symbol != errorSymbol {
+		t.Fatalf("top = %+v, want recovered ERROR", top)
+	}
+	if len(top.children) != 2 || top.children[0] != closedChild || top.children[1] != payload {
+		t.Fatalf("recovered ERROR children = %+v, want closed ERROR child then payload", top.children)
+	}
+	if top.startByte != 0 || top.endByte != 11 {
+		t.Fatalf("recovered ERROR span = %d:%d, want 0:11", top.startByte, top.endByte)
+	}
+}
+
+func TestCRecoverPopSlicesDoesNotCapBeforeLaterSlices(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"end", "leaf"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "leaf", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := func(start uint32) *Node {
+		return newLeafNodeInArena(arena, 1, true, start, start+1, Point{Column: start}, Point{Column: start + 1})
+	}
+	entry := func(i int) stackEntry {
+		return newStackEntryNode(StateID(20+i), leaf(uint32(i)))
+	}
+
+	var scratch gssScratch
+	goals := make([]*gssNode, cRecoverMaxVersionCount+1)
+	for i := range goals {
+		goals[i] = scratch.allocNode(stackEntry{state: 10}, nil, 1)
+	}
+	mid0 := scratch.allocNode(entry(100), goals[0], 2)
+	for i := 1; i < cRecoverMaxVersionCount; i++ {
+		mid0.extraLinks = append(mid0.extraLinks, gssMainLink{
+			prev:  goals[i],
+			entry: entry(100 + i),
+		})
+	}
+	mid1 := scratch.allocNode(entry(200), goals[cRecoverMaxVersionCount], 2)
+	head := scratch.allocNode(entry(300), mid0, 3)
+	head.extraLinks = append(head.extraLinks, gssMainLink{
+		prev:  mid1,
+		entry: entry(301),
+	})
+	stack := glrStack{gss: gssStack{head: head}, byteOffset: 302}
+
+	slices := parser.cRecoverPopSlices(&stack, 2, 10, &scratch)
+	if len(slices) != cRecoverMaxVersionCount+1 {
+		t.Fatalf("slice count = %d, want %d", len(slices), cRecoverMaxVersionCount+1)
+	}
+	foundLater := false
+	for _, slice := range slices {
+		if slice.popTo == goals[cRecoverMaxVersionCount] {
+			foundLater = true
+			break
+		}
+	}
+	if !foundLater {
+		t.Fatalf("later viable slice beyond version cap was not enumerated: %+v", slices)
+	}
+}
+
 func TestCRecoverGroupMemberIndexSurvivesStackReorder(t *testing.T) {
 	group := &cRecGroup{}
 	stacks := []glrStack{

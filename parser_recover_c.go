@@ -56,6 +56,7 @@ const (
 	cRecoverMaxVersionCount   = 6
 	cRecoverMaxSummaryDepth   = 16
 	cRecoverMaxCostDifference = 18 * cErrCostPerSkippedTree
+	cRecoverMaxIteratorCount  = 64
 	// cErrorState is the C ERROR_STATE: the generated tables' recover row.
 	cErrorState = StateID(0)
 )
@@ -1655,7 +1656,7 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 		if !currentHasAction {
 			continue
 		}
-		if forks := p.cRecoverToStateForks(&(*stacks)[mi], depth, entry.state, cRecoverMaxVersionCount, arena, entryScratch, gssScratch, trackChildErrors); len(forks) > 0 {
+		if forks := p.cRecoverToStateForks(&(*stacks)[mi], depth, entry.state, 0, arena, entryScratch, gssScratch, trackChildErrors); len(forks) > 0 {
 			for i := range forks {
 				forks[i].branchOrder = (*stacks)[mi].branchOrder
 				*stacks = append(*stacks, forks[i])
@@ -1773,8 +1774,8 @@ func cSetNodeSpan(n *Node, startByte, endByte uint32, startPoint, endPoint Point
 	n.endPoint = endPoint
 }
 
-func (p *Parser) cRecoverPopSlices(v *glrStack, depth int, goal StateID, maxSlices int, gssScratch *gssScratch) []cRecoverPopSlice {
-	if v == nil || depth < 0 || maxSlices <= 0 {
+func (p *Parser) cRecoverPopSlices(v *glrStack, depth int, goal StateID, gssScratch *gssScratch) []cRecoverPopSlice {
+	if v == nil || depth < 0 {
 		return nil
 	}
 	v.ensureGSS(gssScratch)
@@ -1791,8 +1792,8 @@ func (p *Parser) cRecoverPopSlices(v *glrStack, depth int, goal StateID, maxSlic
 	var out []cRecoverPopSlice
 	seen := make(map[*gssNode]bool, 4)
 
-	for len(iters) > 0 && len(out) < maxSlices {
-		for i, size := 0, len(iters); i < size && len(out) < maxSlices; i++ {
+	for len(iters) > 0 {
+		for i, size := 0, len(iters); i < size; i++ {
 			it := iters[i]
 			n := it.node
 			if n == nil {
@@ -1831,6 +1832,12 @@ func (p *Parser) cRecoverPopSlices(v *glrStack, depth int, goal StateID, maxSlic
 					next = &iters[i]
 				} else {
 					prev, entry = n.link(j)
+					// C stack__iter caps only the live iterator frontier, not
+					// the number of pop slices that may later survive
+					// recover_to_state's state/materialization filtering.
+					if len(iters) >= cRecoverMaxIteratorCount {
+						continue
+					}
 					iters = append(iters, it)
 					next = &iters[len(iters)-1]
 				}
@@ -1859,7 +1866,7 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 }
 
 func (p *Parser) cRecoverToStateForks(v *glrStack, depth int, goal StateID, maxForks int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) []glrStack {
-	slices := p.cRecoverPopSlices(v, depth, goal, maxForks, gssScratch)
+	slices := p.cRecoverPopSlices(v, depth, goal, gssScratch)
 	if len(slices) == 0 {
 		return nil
 	}
@@ -1868,9 +1875,35 @@ func (p *Parser) cRecoverToStateForks(v *glrStack, depth int, goal StateID, maxF
 		fork, ok := p.cRecoverToStateSlice(v, depth, goal, slice, arena, entryScratch, gssScratch, trackChildErrors)
 		if ok {
 			forks = append(forks, fork)
+			if maxForks > 0 && len(forks) >= maxForks {
+				break
+			}
 		}
 	}
 	return forks
+}
+
+func (p *Parser) cPopDirectPrecedingClosedError(fork *glrStack, gssScratch *gssScratch) (*Node, bool) {
+	if fork == nil {
+		return nil, false
+	}
+	fork.ensureGSS(gssScratch)
+	head := fork.gss.head
+	if head == nil {
+		return nil, false
+	}
+	for i := 0; i < head.linkCount(); i++ {
+		prev, entry := head.link(i)
+		top := stackEntryNode(entry)
+		if top == nil || top.symbol != errorSymbol || top.isMissing() {
+			continue
+		}
+		fork.gss.head = prev
+		fork.entries = nil
+		fork.byteOffset = fork.gss.byteOffset()
+		return top, true
+	}
+	return nil, false
 }
 
 func (p *Parser) cRecoverToStateSlice(v *glrStack, depth int, goal StateID, slice cRecoverPopSlice, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (glrStack, bool) {
@@ -1935,15 +1968,12 @@ func (p *Parser) cRecoverToStateSlice(v *glrStack, depth int, goal StateID, slic
 	}
 	// C also pops a directly-preceding closed ERROR subtree and splices its
 	// children in front (ts_stack_pop_error).
-	if top := stackEntryNode(fork.top()); top != nil && top.symbol == errorSymbol && !top.isMissing() && fork.depth() > 1 {
-		prev := top
-		if fork.truncate(fork.depth() - 1) {
-			children = append(append(make([]*Node, 0, len(prev.children)+len(children)), prev.children...), children...)
-			if rawFirst == nil {
-				rawLast = prev
-			}
-			rawFirst = prev
+	if prev, ok := p.cPopDirectPrecedingClosedError(&fork, gssScratch); ok {
+		children = append(append(make([]*Node, 0, len(prev.children)+len(children)), prev.children...), children...)
+		if rawFirst == nil {
+			rawLast = prev
 		}
+		rawFirst = prev
 	}
 
 	if rawFirst != nil {
