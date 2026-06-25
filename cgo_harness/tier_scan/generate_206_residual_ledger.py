@@ -142,6 +142,10 @@ OVERLAY_STATUS = {
         "post-retry report migrates GLSL from runtime frontier to accepted/non-truncated recovery-shape evidence; parity still residual",
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
+    "groovy": (
+        "groovy-true-coding-frontier-focused-20260625 completes bounded deterministic frames 1-16, not full N=40 recertification: 4/16 parity, 12 diverge, 1 trunc, 9 errTree, no panics, 2 terminal go_parse_start timeouts at frames 2 and 8, interrupted frame 11 plus frames 12-16 complete; classify as terminal timeout/control evidence plus recovery_error_cost",
+        "generalized_recovery_shape_and_cost",
+    ),
     "matlab": (
         "true-coding-frontier-n40-20260625 recertifies runtime_frontier_stop plus recovery_error_cost: 4/40 parity, 36 diverge, 26 trunc, 33 errTree, stopReason=accepted/no_stacks_alive, no panics or failed files",
         "glr_frontier_survival_and_reuse_selection",

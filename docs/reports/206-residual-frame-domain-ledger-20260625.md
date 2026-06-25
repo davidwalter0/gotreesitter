@@ -25,8 +25,8 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 
 | Next generalized machinery target | Count |
 | --- | ---: |
-| `glr_frontier_survival_and_reuse_selection` | 36 |
-| `generalized_recovery_shape_and_cost` | 13 |
+| `glr_frontier_survival_and_reuse_selection` | 35 |
+| `generalized_recovery_shape_and_cost` | 14 |
 | `generalized_materialization_invariant` | 6 |
 | `recovery_shape_and_materialization_after_generalized_retry` | 2 |
 | `scoped_c_recovery_selection_and_materialization` | 1 |
@@ -58,7 +58,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | swift | `accepted_shape_materialization/accepted_diverge` | coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as mixed runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 27 trunc, 9 errTree; not pure accepted materialization evidence | `generalized_recovery_shape_and_cost` |
 | cairo | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | teal | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| groovy | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
+| groovy | `runtime_frontier_stop/no_stacks_alive` | groovy-true-coding-frontier-focused-20260625 completes bounded deterministic frames 1-16, not full N=40 recertification: 4/16 parity, 12 diverge, 1 trunc, 9 errTree, no panics, 2 terminal go_parse_start timeouts at frames 2 and 8, interrupted frame 11 plus frames 12-16 complete; classify as terminal timeout/control evidence plus recovery_error_cost | `generalized_recovery_shape_and_cost` |
 | purescript | `accepted_shape_materialization/accepted_diverge` | purescript-current-frame-stack-n40-20260625 supersedes purescript-post-relex-n40-20260625 and purescript-c-subtree-selection-n40-20260625: frontier stop remains cleared; current HEAD is 7/40 parity, 33 diverge, 0 trunc, 1 errTree, no panics/failures, frontierStopCount=0, stopReason=accepted; residual is recovery_error_cost plus accepted_divergence_cost with signature/patterns/constraint/foreign_import child-count families and one Ord.purs root error-tree outlier | `generalized_recovery_shape_and_cost` |
 | cobol | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | haxe | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
