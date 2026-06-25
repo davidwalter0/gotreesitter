@@ -37,13 +37,13 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 
 | Grammar | Current frame/lane | Latest overlay | Next target |
 | --- | --- | --- | --- |
-| cpp | `runtime_frontier_stop/no_stacks_alive` | post-retry reports migrate C++ from runtime frontier to accepted/non-truncated recovery-shape evidence | `recovery_shape_and_materialization_after_generalized_retry` |
+| cpp | `runtime_frontier_stop/no_stacks_alive` | post-retry reports migrate C++ from runtime frontier to accepted/non-truncated recovery-shape evidence; parity still residual | `recovery_shape_and_materialization_after_generalized_retry` |
 | fennel | `accepted_shape_materialization/accepted_diverge` | current_smoke_only | `generalized_materialization_invariant` |
 | uxntal | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | cuda | `runtime_frontier_stop/no_stacks_alive` | post-retry and scoped-first reports migrate CUDA from runtime frontier to accepted/non-truncated recovery-shape/materialization evidence | `scoped_c_recovery_selection_and_materialization` |
 | asm | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | nushell | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| scala | `runtime_frontier_stop/iteration_limit` | frame witness cleared under forest; forest N=40 is accepted/non-truncated but residual with 29/40 parity, 8 divergences, and 3 comparison go_no_tree cases | `forest_materialization_and_comparison_residuals` |
+| scala | `runtime_frontier_stop/iteration_limit` | frame witness cleared under forest; forest N=40 remains residual at 29/40 parity with 3 comparison go_no_tree cases, 6 accepted/no-error span divergences, and 2 accepted/no-error root child-count divergences; case-clause span residual is attributed to existing Scala result-normalizer behavior and excluded as an implementation target under the generalized-machinery-only policy | `forest_materialization_and_comparison_residuals` |
 | objc | `recovery_error_cost/error_tree_or_root_error` | current_smoke_only | `generalized_recovery_shape_and_cost` |
 | wat | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | fsharp | `accepted_shape_materialization/accepted_diverge` | current_smoke_only | `generalized_materialization_invariant` |
@@ -53,7 +53,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | disassembly | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | perl | `accepted_shape_materialization/accepted_diverge` | current_smoke_only | `generalized_materialization_invariant` |
 | brightscript | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| glsl | `runtime_frontier_stop/no_stacks_alive` | post-retry report migrates GLSL from runtime frontier to accepted/non-truncated recovery-shape evidence | `recovery_shape_and_materialization_after_generalized_retry` |
+| glsl | `runtime_frontier_stop/no_stacks_alive` | post-retry report migrates GLSL from runtime frontier to accepted/non-truncated recovery-shape evidence; parity still residual | `recovery_shape_and_materialization_after_generalized_retry` |
 | powershell | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | swift | `accepted_shape_materialization/accepted_diverge` | current_smoke_only | `generalized_materialization_invariant` |
 | cairo | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |

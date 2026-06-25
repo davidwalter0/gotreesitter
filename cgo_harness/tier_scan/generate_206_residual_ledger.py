@@ -119,8 +119,8 @@ OVERLAY_STATUS = {
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
     "scala": (
-        "generic forest block-comment repeat conflict choice advances Scala frame 1 from go_no_tree to full-span root child-count divergence; validation artifacts harness_out/docker/20260625T115517Z-forest-block-comment-repeat-unit-final-20260625 and harness_out/docker/20260625T115526Z-scala-block-comment-repeat-final-20260625",
-        "forest/root-extra-materialization-after-repetition-shift",
+        "frame witness cleared under forest; forest N=40 remains residual at 29/40 parity with 3 comparison go_no_tree cases, 6 accepted/no-error span divergences, and 2 accepted/no-error root child-count divergences; case-clause span residual is attributed to existing Scala result-normalizer behavior and excluded as an implementation target under the generalized-machinery-only policy",
+        "forest_materialization_and_comparison_residuals",
     ),
 }
 
@@ -335,8 +335,6 @@ def write_markdown(path: Path, rows: list[dict[str, str]], scan_dir: Path, tsv_p
         if row["true_coding_priority"] != "high":
             continue
         overlay = row["latest_overlay_status"]
-        if overlay != "current_smoke_only":
-            overlay = overlay.split(";")[0]
         lines.append(
             f"| {row['grammar']} | `{row['observed_frame_lane']}` | {overlay} | `{row['next_generalized_machinery_target']}` |"
         )

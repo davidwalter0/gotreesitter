@@ -33,6 +33,12 @@ shared machinery or a language family.
 
 Domain axis: coding, query, config, markup, prose, data, other.
 
+Frames are used as a classifier and proof harness. Accepted/no-error
+divergences must be attributed before they become implementation targets. If
+the raw reducer or forest materialization matches C and a result-normalizer
+widens or otherwise diverges afterward, that residual is classification-only
+normalizer debt, not a parser-machinery target for this 206 effort.
+
 ## Current 206 Snapshot
 
 Artifact:
