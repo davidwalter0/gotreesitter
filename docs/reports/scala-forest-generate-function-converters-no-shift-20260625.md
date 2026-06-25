@@ -72,6 +72,42 @@ The forest token source skipped over the real `0` and later tried to attach the
 guard correctly rejected that stack because the gap `" 0"` is not parser
 padding or a grammar extra.
 
+## Window Diagnostic
+
+Command:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-generate-function-converters-forest-window-trace-v2 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=5588:5600 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+```
+
+Artifact:
+`harness_out/docker/20260625T150602Z-scala-generate-function-converters-forest-window-trace-v2`
+
+Result: no movement. The witness still returned
+`forestDeclineReason=no-shift-death`.
+
+The byte-window trace shows the forest has already collapsed to a single
+frontier state by the failing expression:
+
+```text
+FOREST-TRACE step=1361 lexer_start=5591 lexer_end=5594 selected_state=8336 glr=[8336] tok=sym=79(operator_identifier) 5592..5594 text="=="
+  state=8336 lex=(70,0 active=70) candidate=sym=79(operator_identifier) 5592..5594 text="==" ...
+    frontier state=8336 byte=5591 ... tok_actions=count=1 shift=0 reduce=1 accept=0 gap_ok=true
+FOREST-TRACE step=1362 lexer_start=5594 lexer_end=5597 selected_state=8336 glr=[8336] tok=sym=62()) 5596..5597 text=")"
+  state=8336 lex=(70,0 active=70) candidate=sym=62()) 5596..5597 text=")" ...
+    frontier state=8336 byte=5594 ... tok_actions=count=1 shift=0 reduce=1 accept=0 gap_ok=false
+```
+
+No fan-out cap or pre-cap drops were reported in the requested byte window.
+The immediate invariant is therefore narrower than "primary state selected the
+wrong branch from a live union": there is no live union at byte `5594`. The only
+surviving frontier state uses lex mode `70`, whose DFA cannot emit the integer
+literal at the real input byte and instead skips to `)`, where the stale-gap
+guard correctly declines.
+
 ## Negative Probes
 
 These probes were intentionally generalized and did not introduce or keep
@@ -129,6 +165,20 @@ Result:
 MEASURE-DTIER scala mode=forest files=1 medianRatio=12.43x aggRatio=12.43x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=5185465 cNS=417331
 ```
 
+After adding the gated byte-window diagnostics, the same canary remained clean:
+
+```text
+artifact: harness_out/docker/20260625T150644Z-scala-automatic-module-name-forest-window-trace-canary-v2
+MEASURE-DTIER scala mode=forest files=1 medianRatio=12.36x aggRatio=12.36x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=5118081 cNS=414232
+```
+
+A small non-Scala forest canary also remained clean:
+
+```text
+artifact: harness_out/docker/20260625T150702Z-css-style-forest-window-trace-canary-v2
+MEASURE-DTIER css mode=forest files=1 medianRatio=3.00x aggRatio=3.00x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=1263941 cNS=421964
+```
+
 ## Classification
 
 The `GenerateFunctionConverters.scala` residual is best classified as:
@@ -142,21 +192,29 @@ frontier state that should lex or shift the integer literal `0` inside an
 ordinary expression, then the generic stale-gap guard declines when the next
 token attempts to skip over that real text.
 
-The completed probes rule out a simple per-node link-cap increase and the
-existing materialization representation toggles. The primary-state probe shows
-that lex-state/frontier selection can materially change behavior, but it is not
-a safe small fix as attempted.
+The completed probes rule out a simple per-node link-cap increase, the existing
+materialization representation toggles, and in-window fan-out/pre-cap pruning.
+The primary-state probe shows that lex-state/frontier selection can materially
+change behavior, but the window trace shows this frame is already single-state
+when it fails, so a token-source primary selector change is not a justified
+small fix.
 
 ## Next Generalized Experiment
 
-Instrument the forest loop around byte `5594` to record, per token step:
+Trace the reduction/shift transition that consumes `==` at `5592..5594` and
+builds the next single frontier state. The useful generalized question is now:
+which predecessor frontier, reduce path, or conflict-resolution decision removes
+the state whose lex mode can emit the integer literal at byte `5595`?
 
-- frontier states and byte offsets before lexing;
-- selected primary parser state and GLR state union;
-- lex-mode pair per frontier state;
-- candidate DFA token per unique lex-mode pair and its action score;
-- coalesced nodes dropped by fan-out cap or pre-cap pruning for the same byte
-  window.
+The trace should stay grammar-neutral and record, for the token immediately
+before the skip:
+
+- every reduce path emitted from the pre-`==` frontier;
+- each shift target that reaches byte `5594`;
+- the lex mode of each target before coalescing;
+- whether coalescing dedup/cap replacement collapses distinct viable histories;
+- whether conflict resolution filters a shift-capable action before the target
+  frontier is formed.
 
 The next fix should be a generic forest frontier/token-source invariant, not a
 Scala normalizer, not a language-name parser policy, and not an edit to

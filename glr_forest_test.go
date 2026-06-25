@@ -607,6 +607,28 @@ func TestForestCoalescePreCapKeepsGeneratedRepeatAuxCandidate(t *testing.T) {
 	}
 }
 
+func TestParseGLRForestTraceWindow(t *testing.T) {
+	disabled := parseGLRForestTraceWindow("")
+	if disabled.enabled {
+		t.Fatal("empty trace window enabled diagnostics")
+	}
+
+	single := parseGLRForestTraceWindow("5594")
+	if !single.enabled || single.start != 5594 || single.end != 5594 {
+		t.Fatalf("single trace window = %+v, want enabled 5594..5594", single)
+	}
+
+	span := parseGLRForestTraceWindow("5600:5588")
+	if !span.enabled || span.start != 5588 || span.end != 5600 {
+		t.Fatalf("reversed trace window = %+v, want enabled 5588..5600", span)
+	}
+
+	invalid := parseGLRForestTraceWindow("not-a-window")
+	if invalid.enabled {
+		t.Fatalf("invalid trace window enabled diagnostics: %+v", invalid)
+	}
+}
+
 func TestGSSForestIndexLookupCacheClearsOnReset(t *testing.T) {
 	idx := newGSSForestIndex(0)
 	key := gssForestKey{state: 7, byteOffset: 11}

@@ -56,6 +56,51 @@ var glrForestRecover = os.Getenv("GOT_GLR_FOREST_RECOVER") == "1"
 // SetGLRForestRecover toggles experimental forest error recovery (tests).
 func SetGLRForestRecover(on bool) { glrForestRecover = on }
 
+type glrForestTraceWindowConfig struct {
+	enabled bool
+	start   uint32
+	end     uint32
+}
+
+var glrForestTraceWindow = parseGLRForestTraceWindow(os.Getenv("GOT_GLR_FOREST_TRACE_WINDOW"))
+
+func parseGLRForestTraceWindow(raw string) glrForestTraceWindowConfig {
+	if raw == "" {
+		return glrForestTraceWindowConfig{}
+	}
+	var start, end uint32
+	if n, _ := fmt.Sscanf(raw, "%d:%d", &start, &end); n == 2 {
+		if end < start {
+			start, end = end, start
+		}
+		return glrForestTraceWindowConfig{enabled: true, start: start, end: end}
+	}
+	if n, _ := fmt.Sscanf(raw, "%d", &start); n == 1 {
+		return glrForestTraceWindowConfig{enabled: true, start: start, end: start}
+	}
+	return glrForestTraceWindowConfig{}
+}
+
+func forestTraceByteInWindow(pos uint32) bool {
+	if !glrForestTraceWindow.enabled {
+		return false
+	}
+	return pos >= glrForestTraceWindow.start && pos <= glrForestTraceWindow.end
+}
+
+func forestTraceRangeInWindow(start, end uint32) bool {
+	if !glrForestTraceWindow.enabled {
+		return false
+	}
+	if end < start {
+		start, end = end, start
+	}
+	if end == start {
+		return forestTraceByteInWindow(start)
+	}
+	return start <= glrForestTraceWindow.end && end >= glrForestTraceWindow.start
+}
+
 // languageWantsForestRecover reports whether a forest-dispatched language enables
 // the recover-action error_cost recovery path by default (so error-bearing files
 // dispatch to the forest instead of declining to production). Restricted to
@@ -271,6 +316,118 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 		LastTokenSymbol:  0,
 		LastTokenWasEOF:  true,
 	}
+}
+
+func forestTraceShouldEmit(frontier []*gssForestNode, lexerPos int, tok Token) bool {
+	if !glrForestTraceWindow.enabled {
+		return false
+	}
+	if lexerPos >= 0 && forestTraceByteInWindow(uint32(lexerPos)) {
+		return true
+	}
+	if tok.Symbol != 0 && forestTraceRangeInWindow(tok.StartByte, tok.EndByte) {
+		return true
+	}
+	for _, n := range frontier {
+		if n != nil && forestTraceByteInWindow(n.byteOffset) {
+			return true
+		}
+	}
+	return false
+}
+
+func forestTraceSymbolName(lang *Language, sym Symbol) string {
+	if lang != nil && int(sym) >= 0 && int(sym) < len(lang.SymbolNames) {
+		return lang.SymbolNames[sym]
+	}
+	return ""
+}
+
+func forestTraceToken(lang *Language, tok Token) string {
+	name := forestTraceSymbolName(lang, tok.Symbol)
+	if name == "" {
+		return fmt.Sprintf("sym=%d %d..%d", tok.Symbol, tok.StartByte, tok.EndByte)
+	}
+	return fmt.Sprintf("sym=%d(%s) %d..%d text=%q", tok.Symbol, name, tok.StartByte, tok.EndByte, tok.Text)
+}
+
+func forestTraceEntrySymSpan(entry stackEntry) (Symbol, uint32, uint32) {
+	if entry.kind == stackEntryKindNode && entry.node != nil {
+		return entrySymSpan(entry)
+	}
+	return 0, 0, 0
+}
+
+func forestTraceActionSummary(actions []ParseAction) string {
+	if len(actions) == 0 {
+		return "none"
+	}
+	shifts, reduces, accepts := 0, 0, 0
+	for _, act := range actions {
+		switch act.Type {
+		case ParseActionShift:
+			shifts++
+		case ParseActionReduce:
+			reduces++
+		case ParseActionAccept:
+			accepts++
+		}
+	}
+	return fmt.Sprintf("count=%d shift=%d reduce=%d accept=%d", len(actions), shifts, reduces, accepts)
+}
+
+func forestTraceLexMode(ts *dfaTokenSource, state StateID) (uint32, uint32, uint32, bool) {
+	if ts == nil {
+		return 0, 0, 0, false
+	}
+	lexModes := ts.lexModeStartRows()
+	if int(state) < 0 || int(state) >= len(lexModes) {
+		return 0, 0, 0, false
+	}
+	mode := lexModes[state]
+	return mode.lexState, mode.afterWhitespaceLexState, ts.lexStateForState(state), true
+}
+
+func (p *Parser) traceForestTokenStep(ts *dfaTokenSource, source []byte, step int32, lexStart int, lexStartRow, lexStartCol uint32, frontier []*gssForestNode, selected StateID, glrStates []StateID, tok Token) {
+	if ts == nil || ts.lexer == nil || !forestTraceShouldEmit(frontier, lexStart, tok) {
+		return
+	}
+	fmt.Printf("FOREST-TRACE step=%d lexer_start=%d lexer_end=%d selected_state=%d glr=%v tok=%s\n",
+		step, lexStart, ts.lexer.pos, selected, glrStates, forestTraceToken(p.language, tok))
+	seenState := make(map[StateID]bool, len(frontier))
+	savedPos, savedRow, savedCol := ts.lexer.pos, ts.lexer.row, ts.lexer.col
+	for _, n := range frontier {
+		if n == nil {
+			continue
+		}
+		if !seenState[n.state] {
+			seenState[n.state] = true
+			lex, after, active, ok := forestTraceLexMode(ts, n.state)
+			if ok {
+				ts.lexer.pos = lexStart
+				ts.lexer.row = lexStartRow
+				ts.lexer.col = lexStartCol
+				cand, endPos, endRow, endCol := ts.scanPreferredTokenForState(n.state)
+				ts.lexer.pos = savedPos
+				ts.lexer.row = savedRow
+				ts.lexer.col = savedCol
+				candActions := p.actionsForParseState(n.state, cand.Symbol, p.language.ParseActions)
+				candActions = p.forestResolveConflict(candActions, cand)
+				fmt.Printf("  state=%d lex=(%d,%d active=%d) candidate=%s end=(%d,%d,%d) actions=%s\n",
+					n.state, lex, after, active, forestTraceToken(p.language, cand), endPos, endRow, endCol, forestTraceActionSummary(candActions))
+			} else {
+				fmt.Printf("  state=%d lex=<missing>\n", n.state)
+			}
+		}
+		tokActions := p.actionsForParseState(n.state, tok.Symbol, p.language.ParseActions)
+		tokActions = p.forestResolveConflict(tokActions, tok)
+		gapOK := p.guardForestRealShiftGap(source, n, tok)
+		fmt.Printf("    frontier state=%d byte=%d links=%d error_cost=%d dirty=%d tok_actions=%s gap_ok=%t\n",
+			n.state, n.byteOffset, len(n.links), n.errorCost, n.dirty, forestTraceActionSummary(tokActions), gapOK)
+	}
+	ts.lexer.pos = savedPos
+	ts.lexer.row = savedRow
+	ts.lexer.col = savedCol
 }
 
 // languageAllowsForestIncrementalPath reports forest-default languages whose
@@ -496,11 +653,23 @@ func coalesceForestWithMetadata(index *gssForestIndex, slab *gssForestNodeSlab, 
 			forestRefreshMinLinkScore(node)
 			forestRefreshNoExtraDepth(node)
 			node.dirty++
+			if forestTraceByteInWindow(byteOffset) {
+				sym, start, end := forestTraceEntrySymSpan(entry)
+				fmt.Printf("FOREST-TRACE cap-replace state=%d byte=%d link=%d sym=%d span=%d..%d score=%d error_cost=%d links=%d\n",
+					state, byteOffset, replacement, sym, start, end, score, errorCost, len(node.links))
+			}
 			if perfCountersEnabled {
 				perfRecordForestCoalesceCap(true)
 			}
-		} else if perfCountersEnabled {
-			perfRecordForestCoalesceCap(false)
+		} else {
+			if forestTraceByteInWindow(byteOffset) {
+				sym, start, end := forestTraceEntrySymSpan(entry)
+				fmt.Printf("FOREST-TRACE cap-drop state=%d byte=%d sym=%d span=%d..%d score=%d error_cost=%d min_score=%d links=%d\n",
+					state, byteOffset, sym, start, end, score, errorCost, node.minLinkScore, len(node.links))
+			}
+			if perfCountersEnabled {
+				perfRecordForestCoalesceCap(false)
+			}
 		}
 		return node
 	}
@@ -1037,9 +1206,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			glrStates = append(glrStates, n.state)
 		}
 		ts.SetGLRStates(glrStates)
-		ts.SetParserState(frontier[len(frontier)-1].state)
+		selectedState := frontier[len(frontier)-1].state
+		ts.SetParserState(selectedState)
+		lexStart := ts.lexer.pos
+		lexStartRow := ts.lexer.row
+		lexStartCol := ts.lexer.col
 		tok := ts.Next()
 		p.updateCurrentExternalTokenCheckpoint(ts, tok)
+		p.traceForestTokenStep(ts, source, processEpoch, lexStart, lexStartRow, lexStartCol, frontier, selectedState, glrStates, tok)
 		eof := tok.Symbol == 0
 
 		// Reduces coalesce into curIndex (same position, seeded with the
@@ -1107,6 +1281,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
 						}
 						if forestCoalesceWouldDropForCap(&curIndex, lang.SymbolMetadata, act.Symbol, gotoState, parentEnd, score, popTo.errorCost) {
+							if forestTraceByteInWindow(parentEnd) || forestTraceByteInWindow(popTo.byteOffset) || forestTraceByteInWindow(node.byteOffset) {
+								fmt.Printf("FOREST-TRACE pre-cap-drop state=%d byte=%d sym=%d(%s) score=%d error_cost=%d pop_state=%d pop_byte=%d node_state=%d node_byte=%d\n",
+									gotoState, parentEnd, act.Symbol, forestTraceSymbolName(lang, act.Symbol), score, popTo.errorCost, popTo.state, popTo.byteOffset, node.state, node.byteOffset)
+							}
 							if perfCountersEnabled {
 								perfRecordForestCoalescePreCapDrop()
 							}
