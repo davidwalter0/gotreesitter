@@ -1006,6 +1006,14 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 	}
 
 	bestTree := tree
+	if runCRecoveryRetry && tree.ParseRuntime().StopReason == ParseStopAccepted && !retryDeadlineExceeded() {
+		p.withScopedErrorCostCompetition(true, func() {
+			replaceBest(&bestTree, runRetry(initialMaxStacks, 0, 0))
+		})
+		if treeParseClean(bestTree) {
+			return bestTree
+		}
+	}
 	if shouldRunInitialFullParseMergeRetry(tree) {
 		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
 			mergeRetryTree := runRetry(initialMaxStacks, initialMergePerKey, 0)

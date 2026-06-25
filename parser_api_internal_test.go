@@ -1205,6 +1205,63 @@ func TestRetryFullParseCRecoveryCandidateRestoresParserFlag(t *testing.T) {
 	}
 }
 
+func TestRetryFullParseAcceptedErrorCRecoveryRunsBeforeWidening(t *testing.T) {
+	parser := &Parser{}
+	source := []byte("ab")
+	const initialMaxStacks = 8
+	initial := &Tree{
+		root: &Node{
+			endByte: uint32(len(source)),
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     uint32(len(source)),
+			LastTokenWasEOF: true,
+			MaxStacksSeen:   initialMaxStacks,
+			NodesAllocated:  20,
+		},
+	}
+	cRecoveryRetry := &Tree{
+		root: &Node{
+			endByte: uint32(len(source)),
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     uint32(len(source)),
+			LastTokenWasEOF: true,
+			NodesAllocated:  10,
+		},
+	}
+	calls := 0
+
+	got := parser.retryFullParse(source, initialMaxStacks, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		if calls != 1 {
+			t.Fatalf("runRetry call %d = maxStacks %d merge %d nodes %d, want only early scoped C-recovery", calls, maxStacks, maxMergePerKeyOverride, maxNodes)
+		}
+		if !parser.errorCostCompetitionEnabled() {
+			t.Fatal("early retry did not enable scoped C-recovery")
+		}
+		if maxStacks != initialMaxStacks || maxMergePerKeyOverride != 0 || maxNodes != 0 {
+			t.Fatalf("early retry args = (%d, %d, %d), want (%d, 0, 0)", maxStacks, maxMergePerKeyOverride, maxNodes, initialMaxStacks)
+		}
+		return cRecoveryRetry
+	})
+
+	if got != cRecoveryRetry {
+		t.Fatalf("retryFullParse returned %p, want early C-recovery tree %p", got, cRecoveryRetry)
+	}
+	if calls != 1 {
+		t.Fatalf("runRetry calls = %d, want 1", calls)
+	}
+	if parser.errorCostCompetition {
+		t.Fatal("parser.errorCostCompetition = true after retry, want restored false")
+	}
+}
+
 func TestScopedErrorCostCompetitionRestoresAfterPanic(t *testing.T) {
 	parser := &Parser{}
 	defer func() {

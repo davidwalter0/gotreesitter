@@ -176,6 +176,13 @@ lowered frame 1 to `1/2` errors/missing and kept frame 3 as a no-error control.
 Do not treat this as additional parity movement; the next machinery target is
 scoped-vs-forced C-recovery behavior, selection, and materialization.
 
+Scoped-first C-recovery follow-up:
+`docs/reports/accepted-error-crecovery-scoped-first-20260625.md` moved CUDA
+frame 1's default result to the forced candidate shape (`1/2` errors/missing)
+by scheduling one scoped C-recovery retry before merge/widening retries for
+accepted full-EOF error trees. CUDA frame 3 remained the `0/0` no-error control.
+The frame 1 domain is still recovery tree shape/materialization, not admission.
+
 ## F# State
 
 Post-F# first N=40 artifact, built after the initial F# normalizer but before
