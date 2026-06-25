@@ -139,6 +139,99 @@ func TestParseForestNoLookaheadReductionContinuesToRealToken(t *testing.T) {
 	}
 }
 
+func TestParseForestNoLookaheadSameStateReductionMaterializesExtra(t *testing.T) {
+	lang := &Language{
+		Name:              "forest_no_lookahead_same_state_extra",
+		SymbolCount:       6,
+		TokenCount:        4,
+		StateCount:        6,
+		LargeStateCount:   6,
+		InitialState:      1,
+		ProductionIDCount: 2,
+		SymbolNames:       []string{"end", "x", "a", "b", "source_file", "ghost"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "x", Visible: true, Named: true},
+			{Name: "a", Visible: true, Named: true},
+			{Name: "b", Visible: true, Named: true},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "ghost", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 5, ChildCount: 1, ProductionID: 0}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 2, ProductionID: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0, 0, 0, 0},
+			{0, 1, 0, 0, 5, 0},
+			{0, 0, 2, 3, 0, 2},
+			{4, 0, 0, 0, 0, 0},
+			{5, 0, 0, 0, 0, 0},
+			{6, 0, 0, 0, 0, 0},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+			{LexStateID: noLookaheadLexState},
+			{LexState: 0},
+			{LexState: 0},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+					{Lo: 'a', Hi: 'a', NextState: 2},
+					{Lo: 'b', Hi: 'b', NextState: 3},
+				},
+			},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+			{AcceptToken: 3, Default: -1, EOF: -1},
+		},
+	}
+
+	tree, ok := NewParser(lang).ParseForestExperimental([]byte("xab"))
+	if !ok || tree == nil {
+		t.Fatal("ParseForestExperimental failed for same-state no-lookahead reduction")
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("root is nil")
+	}
+	if got, want := root.SExpr(lang), "(source_file (x) (ghost (a)) (b))"; got != want {
+		t.Fatalf("root SExpr = %s, want %s", got, want)
+	}
+	if got, want := root.ChildCount(), 3; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	ghost := root.Child(1)
+	if ghost == nil {
+		t.Fatal("root child[1] is nil")
+	}
+	if got, want := ghost.Type(lang), "ghost"; got != want {
+		t.Fatalf("root child[1] type = %q, want %q", got, want)
+	}
+	if !ghost.IsExtra() {
+		t.Fatal("same-state no-lookahead reduction was not materialized as an extra")
+	}
+	if got, want := root.Child(0).Type(lang), "x"; got != want {
+		t.Fatalf("root child[0] type = %q, want %q", got, want)
+	}
+	if got, want := root.Child(2).Type(lang), "b"; got != want {
+		t.Fatalf("root child[2] type = %q, want %q", got, want)
+	}
+}
+
 func TestParseForestRetriesUnshiftableZeroWidthExternalToken(t *testing.T) {
 	lang := &Language{
 		Name:               "forest_zero_width_external_retry",

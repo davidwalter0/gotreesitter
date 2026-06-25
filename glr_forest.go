@@ -1064,6 +1064,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						// re-pushed on top.
 						parent.preGotoState = popTo.state
 						parent.parseState = gotoState
+						if tok.NoLookahead && gotoState == popTo.state {
+							parent.setExtra(true)
+						}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
 						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
