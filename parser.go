@@ -2276,6 +2276,9 @@ func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token
 	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
 		return true
 	}
+	if tok.ExternalScannerToken && tok.ExternalScannerStartByte == s.byteOffset {
+		return true
+	}
 	if int(s.byteOffset) > len(source) || int(tok.StartByte) > len(source) {
 		return true
 	}
@@ -2284,6 +2287,36 @@ func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token
 
 func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 	return realTokenAttachmentGapIsParserPadding(source, s, tok)
+}
+
+// gapIsCoveredByGrammarExtras reports whether all bytes in source[start:end]
+// can be consumed as grammar-defined skip tokens using the grammar's broad
+// lex state. It scans strictly so ordinary unrecognized bytes are not treated
+// as padding.
+func (p *Parser) gapIsCoveredByGrammarExtras(source []byte, start, end uint32) bool {
+	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
+		return false
+	}
+	if len(p.language.LexStates) == 0 || len(p.language.LexModes) == 0 {
+		return false
+	}
+	broadLS := p.language.LexModes[0].LexStateIndex()
+	if broadLS == noLookaheadLexState {
+		return false
+	}
+	gapSource := source[start:end]
+	lexer := NewLexer(p.language.LexStates, gapSource)
+	for lexer.pos < len(gapSource) {
+		pos := lexer.pos
+		tok, ok := lexer.scan(broadLS, pos, lexer.row, lexer.col)
+		if !ok || tok.Symbol != 0 {
+			return false
+		}
+		if lexer.pos <= pos {
+			lexer.skipOneRune()
+		}
+	}
+	return true
 }
 
 func bytesAreParserPadding(source []byte, start, end uint32) bool {
@@ -2298,6 +2331,17 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 		switch source[i] {
 		case ' ', '\t', '\n', '\r', '\f', '\v':
 			continue
+		case '\\':
+			next := i + 1
+			if next < int(end) && source[next] == '\n' {
+				i = next
+				continue
+			}
+			if next+1 < int(end) && source[next] == '\r' && source[next+1] == '\n' {
+				i = next + 1
+				continue
+			}
+			return false
 		default:
 			return false
 		}
@@ -2307,6 +2351,9 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 
 func (p *Parser) guardRealTokenAttachmentGap(source []byte, s *glrStack, tok Token, consumer string) bool {
 	if realTokenAttachmentGapIsParserPadding(source, s, tok) {
+		return true
+	}
+	if s != nil && p.gapIsCoveredByGrammarExtras(source, s.byteOffset, tok.StartByte) {
 		return true
 	}
 	if consumer == "" {

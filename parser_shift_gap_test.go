@@ -74,6 +74,29 @@ func TestRealShiftGapAllowsTriviaOnlySource(t *testing.T) {
 	}
 }
 
+func TestRealShiftGapAllowsEscapedNewlinePadding(t *testing.T) {
+	source := []byte("call(arg1 \\\r\n  \\\n)")
+	stack := newGLRStack(1)
+	stack.byteOffset = uint32(len("call(arg1"))
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	if !realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = false, want true for gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = false, want true")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
 func TestRealShiftGapAllowsNoLookaheadToken(t *testing.T) {
 	source := []byte("call(arg1/*c*/)")
 	stack := newGLRStack(1)
@@ -95,6 +118,96 @@ func TestRealShiftGapAllowsNoLookaheadToken(t *testing.T) {
 	}
 	if stack.dead {
 		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+func TestRealShiftGapAllowsExternalScannerOwnedSkippedGap(t *testing.T) {
+	source := []byte("aaaaaa identification division.")
+	stack := newGLRStack(1)
+	tok := Token{
+		Symbol:                   1,
+		StartByte:                6,
+		EndByte:                  6,
+		StartPoint:               Point{Column: 6},
+		EndPoint:                 Point{Column: 6},
+		ExternalScannerToken:     true,
+		ExternalScannerStartByte: 0,
+	}
+
+	if !realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = false, want true for scanner-owned gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if !parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = false, want true")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+func TestRealShiftGapRejectsExternalScannerTokenFromDifferentStart(t *testing.T) {
+	source := []byte("aaaaaa identification division.")
+	stack := newGLRStack(1)
+	tok := Token{
+		Symbol:                   1,
+		StartByte:                6,
+		EndByte:                  6,
+		StartPoint:               Point{Column: 6},
+		EndPoint:                 Point{Column: 6},
+		ExternalScannerToken:     true,
+		ExternalScannerStartByte: 2,
+	}
+
+	if realShiftGapIsParserPadding(source, &stack, tok) {
+		t.Fatalf("realShiftGapIsParserPadding = true, want false for mismatched scanner start gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+
+	parser := &Parser{glrTrace: false}
+	if parser.guardRealShiftGap(source, &stack, tok) {
+		t.Fatal("guardRealShiftGap = true, want false")
+	}
+	if !stack.dead {
+		t.Fatal("stack.dead = false, want true")
+	}
+}
+
+func TestRealTokenAttachmentGapAllowsGrammarExtraCommentSource(t *testing.T) {
+	source := []byte("call(arg1/*c*/)")
+	stack := newGLRStack(1)
+	stack.byteOffset = uint32(len("call(arg1"))
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	parser := &Parser{language: buildGapGuardExtrasLanguage()}
+	if !parser.guardRealTokenAttachmentGap(source, &stack, tok, "test") {
+		t.Fatal("guardRealTokenAttachmentGap = false, want true for grammar extra gap")
+	}
+	if stack.dead {
+		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+func TestRealTokenAttachmentGapRejectsNonExtraSourceWithGrammarExtras(t *testing.T) {
+	source := []byte("call(arg1,)")
+	stack := newGLRStack(1)
+	stack.byteOffset = uint32(len("call(arg1"))
+	tok := Token{
+		Symbol:    1,
+		StartByte: uint32(len(source) - 1),
+		EndByte:   uint32(len(source)),
+	}
+
+	parser := &Parser{language: buildGapGuardExtrasLanguage()}
+	if parser.guardRealTokenAttachmentGap(source, &stack, tok, "test") {
+		t.Fatal("guardRealTokenAttachmentGap = true, want false for non-extra gap")
+	}
+	if !stack.dead {
+		t.Fatal("stack.dead = false, want true")
 	}
 }
 
@@ -289,4 +402,56 @@ func (ts *recoverCommentGapTokenSource) advance() {
 	}
 	ts.pos++
 	ts.col++
+}
+
+func buildGapGuardExtrasLanguage() *Language {
+	return &Language{
+		Name:     "gap_guard_extras",
+		LexModes: []LexMode{{LexState: 0}},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 1},
+					{Lo: '\t', Hi: '\t', NextState: 1},
+					{Lo: '\n', Hi: '\n', NextState: 1},
+					{Lo: '/', Hi: '/', NextState: 2},
+				},
+			},
+			{
+				Skip:    true,
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: ' ', Hi: ' ', NextState: 1},
+					{Lo: '\t', Hi: '\t', NextState: 1},
+					{Lo: '\n', Hi: '\n', NextState: 1},
+				},
+			},
+			{
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '*', Hi: '*', NextState: 3}},
+			},
+			{
+				Default:     3,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '*', Hi: '*', NextState: 4}},
+			},
+			{
+				Default: 3,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: '/', Hi: '/', NextState: 5},
+					{Lo: '*', Hi: '*', NextState: 4},
+				},
+			},
+			{
+				Skip:    true,
+				Default: -1,
+				EOF:     -1,
+			},
+		},
+	}
 }

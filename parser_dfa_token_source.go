@@ -1992,6 +1992,10 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 		snapshot.restore(d)
 		return Token{}, false
 	}
+	if tok.ExternalScannerToken && next.ExternalScannerToken &&
+		next.StartByte == tok.StartByte && next.EndByte == tok.EndByte {
+		next.ExternalScannerStartByte = tok.ExternalScannerStartByte
+	}
 	return next, true
 }
 
@@ -2181,6 +2185,8 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	if !ok {
 		return Token{}, false
 	}
+	tok.ExternalScannerToken = true
+	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
 
 	if dfaTok, endPos, endRow, endCol, ok := d.preferDFASemicolonOverJSXText(tok, states); ok {
 		d.lexer.pos = endPos
@@ -2472,6 +2478,8 @@ func (d *dfaTokenSource) nextGLRScoredExternalToken(states []StateID) (Token, bo
 		if !ok {
 			continue
 		}
+		tok.ExternalScannerToken = true
+		tok.ExternalScannerStartByte = uint32(startPos)
 
 		support := 0
 		originActions := 0
@@ -2542,6 +2550,8 @@ func (d *dfaTokenSource) nextGLRScoredExternalToken(states []StateID) (Token, bo
 		d.restoreExternalScannerState(snapshot)
 		return Token{}, false
 	}
+	tok.ExternalScannerToken = true
+	tok.ExternalScannerStartByte = uint32(startPos)
 
 	d.trackZeroWidthExternalToken(tok)
 	d.lexer.pos = int(tok.EndByte)
