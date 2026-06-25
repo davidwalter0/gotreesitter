@@ -1250,16 +1250,17 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 		hasShift := p.cCollectPotentialReductions(state, lookaheadSym, &reduces)
 		lastReduction := -1
 		for _, act := range reduces {
+			actionStartLen := len(versions)
+			actionReductionVersion := -1
 			fork := versions[v].cloneWithScratch(gssScratch)
 			fork.cRec = versions[v].cRec.clone()
 			var dummy bool
 			p.applyAction(&fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
-			reductionVersion := -1
 			if !fork.dead {
 				var appended bool
-				versions, appended = p.cAppendReductionVersion(versions, fork, v)
+				versions, appended = p.cAppendReductionVersion(versions, fork, v, actionStartLen)
 				if appended {
-					reductionVersion = len(versions) - 1
+					actionReductionVersion = len(versions) - 1
 				}
 			}
 			// C's reduce over merged stack links creates stack versions for
@@ -1274,15 +1275,16 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 					continue
 				}
 				var appended bool
-				versions, appended = p.cAppendReductionVersion(versions, pending, v)
-				if appended && reductionVersion < 0 {
-					reductionVersion = len(versions) - 1
+				versions, appended = p.cAppendReductionVersion(versions, pending, v, actionStartLen)
+				if appended && actionReductionVersion < 0 {
+					actionReductionVersion = len(versions) - 1
 				}
 			}
 			p.pendingForkStacks = p.pendingForkStacks[:0]
-			if reductionVersion >= 0 {
-				lastReduction = reductionVersion
-			}
+			// C overwrites reduction_version for every reduce action, including
+			// STACK_VERSION_NONE when a later action creates no surviving new
+			// version or only merges into an existing version.
+			lastReduction = actionReductionVersion
 		}
 		if hasShift {
 			canShift = true
@@ -1309,7 +1311,21 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 	return versions, canShift
 }
 
-func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack, originalVersion int) ([]glrStack, bool) {
+func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack, originalVersion int, samePopStart int) ([]glrStack, bool) {
+	if samePopStart < 0 {
+		samePopStart = 0
+	}
+	if samePopStart > len(versions) {
+		samePopStart = len(versions)
+	}
+	for i := samePopStart; i < len(versions); i++ {
+		if i == originalVersion {
+			continue
+		}
+		if p.cTryCollapseSamePopReductionVersion(&versions[i], &candidate) {
+			return versions, false
+		}
+	}
 	for i := range versions {
 		if i == originalVersion {
 			continue
@@ -1320,6 +1336,33 @@ func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack
 	}
 	versions = append(versions, candidate)
 	return versions, true
+}
+
+func (p *Parser) cTryCollapseSamePopReductionVersion(target, candidate *glrStack) bool {
+	if target == nil || candidate == nil || target.dead || candidate.dead || target.accepted || candidate.accepted {
+		return false
+	}
+	if target.gss.head == nil || candidate.gss.head == nil || target.entries != nil || candidate.entries != nil {
+		return false
+	}
+	th, ch := target.gss.head, candidate.gss.head
+	if th.linkCount() != 1 || ch.linkCount() != 1 {
+		return false
+	}
+	targetPopTo, _ := th.link(0)
+	candidatePopTo, _ := ch.link(0)
+	if targetPopTo != candidatePopTo {
+		return false
+	}
+	if targetPopTo == nil || !stacksHeaderEquivalent(*target, *candidate) {
+		return false
+	}
+	targetCost := p.cStackErrorCost(target)
+	candidateCost := p.cStackErrorCost(candidate)
+	if candidateCost < targetCost || (candidateCost == targetCost && candidate.score > target.score) {
+		*target = *candidate
+	}
+	return true
 }
 
 func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {

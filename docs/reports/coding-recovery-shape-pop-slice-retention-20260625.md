@@ -142,3 +142,36 @@ ok  	github.com/odvcencio/gotreesitter/cgo_harness	5.301s
 artifacts: /home/draco/work/gotreesitter-build-baseline/harness_out/docker/20260625T222049Z-c-recovery-pop-slice-review-repair-cuda-20260625
 oom_killed: false
 ```
+
+## Forward repair
+
+Reviewer blockers found two remaining C-equivalence gaps in the review repair:
+
+- `cDoAllPotentialReductions` retained the last successful Go reduction, but
+  upstream C overwrites `reduction_version` for every reduce action, including
+  `STACK_VERSION_NONE`.
+- same-pop-target slices were collapsed too late by merging already-pushed
+  parent links, which preserved multiple reduced children alternatives that C's
+  `stack__add_slice` / `ts_parser__select_children` flow reduces to one.
+
+The forward repair keeps the behavior grammar-neutral:
+
+- each reduce action now records its raw action-local reduction version, and a
+  later no-new-version action clears the earlier renumber candidate;
+- same-pop-target sibling slices collapse only within the current reduce action,
+  before the normal header-equivalence merge path;
+- distinct pop targets that reduce to equal top state/byte/error-cost still
+  merge through the C `ts_stack_merge`-style path, while non-equivalent distinct
+  pop targets remain separate.
+
+Focused coverage was strengthened with synthetic GSS tests for:
+
+- same-pop-target collapse leaving a single reduced top link;
+- a later no-new-version reduce preventing renumbering of an earlier reduction;
+- header-equivalent distinct pop targets merging into one version with two top
+  links;
+- non-equivalent distinct pop targets remaining separate versions.
+
+No bounded CUDA witness was rerun for this forward repair. The changed behavior
+is fully covered by grammar-neutral synthetic parser/GSS tests, and no CUDA
+runtime or language-specific path participates in the repaired helpers.

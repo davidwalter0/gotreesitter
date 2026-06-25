@@ -105,6 +105,9 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlices(t *testing.T) {
 		if top == nil || top.symbol != 4 {
 			t.Fatalf("current version top = %+v, want reduced parent symbol 4", top)
 		}
+		if got := versions[0].gss.head.linkCount(); got != 1 {
+			t.Fatalf("reduced top link count = %d, want same-pop-target children collapsed to one alternative", got)
+		}
 	} else {
 		t.Fatal("current version still points at the unreduced merged head")
 	}
@@ -154,10 +157,60 @@ func TestCDoAllPotentialReductionsRetainsDistinctPopTargetSlices(t *testing.T) {
 		if top == nil || top.symbol != 4 {
 			t.Fatalf("version %d top = %+v, want reduced parent symbol 4", i, top)
 		}
+		if got := versions[i].gss.head.linkCount(); got != 1 {
+			t.Fatalf("version %d reduced top link count = %d, want one alternative", i, got)
+		}
 		gotStates[versions[i].top().state] = true
 	}
 	if !gotStates[1] || !gotStates[7] {
 		t.Fatalf("version top states = %v, want distinct pop target states 1 and 7", gotStates)
+	}
+}
+
+func TestCDoAllPotentialReductionsMergesHeaderEquivalentDistinctPopTargets(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := newCRecoverySyntheticReduceParser()
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+
+	altBase := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	altLeft := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	altLeftNode := scratch.allocNode(newStackEntryNode(2, altLeft), altBase, 2)
+	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  altLeftNode,
+		entry: newStackEntryNode(3, altRight),
+	})
+	start := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+
+	nodeCount := 0
+	versions, canShift := parser.cDoAllPotentialReductions(start, 0, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if canShift {
+		t.Fatal("canShift = true, want false")
+	}
+	if len(parser.pendingForkStacks) != 0 {
+		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
+	}
+	if len(versions) != 1 {
+		t.Fatalf("version count = %d, want header-equivalent distinct pop targets merged into one C version", len(versions))
+	}
+	top := stackEntryNode(versions[0].top())
+	if top == nil || top.symbol != 4 {
+		t.Fatalf("current version top = %+v, want reduced parent symbol 4", top)
+	}
+	if got := versions[0].gss.head.linkCount(); got != 2 {
+		t.Fatalf("reduced top link count = %d, want ts_stack_merge-style alternatives for distinct pop targets", got)
 	}
 }
 
@@ -194,6 +247,46 @@ func TestCDoAllPotentialReductionsOverwritesReductionVersionWithLastAction(t *te
 	current := stackEntryNode(versions[0].top())
 	if current == nil || current.symbol != 5 {
 		t.Fatalf("current version top = %+v, want last reduce action symbol 5", current)
+	}
+	sibling := stackEntryNode(versions[1].top())
+	if sibling == nil || sibling.symbol != 4 {
+		t.Fatalf("sibling version top = %+v, want earlier reduce action symbol 4", sibling)
+	}
+}
+
+func TestCDoAllPotentialReductionsLastNoNewReductionPreventsRenumber(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := newCRecoverySyntheticReduceParser()
+	parser.language.ParseActions[1] = ParseActionEntry{Actions: []ParseAction{
+		{Type: ParseActionReduce, Symbol: 4, ChildCount: 2},
+		{Type: ParseActionReduce, Symbol: 5, ChildCount: 4},
+	}}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+	start := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+
+	nodeCount := 0
+	versions, canShift := parser.cDoAllPotentialReductions(start, 0, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if canShift {
+		t.Fatal("canShift = true, want false")
+	}
+	if len(versions) != 2 {
+		t.Fatalf("version count = %d, want unreduced current plus earlier reduction sibling", len(versions))
+	}
+	if versions[0].gss.head != rightNode {
+		top := stackEntryNode(versions[0].top())
+		t.Fatalf("current version top = %+v, want last STACK_VERSION_NONE to leave original version unrenumbered", top)
 	}
 	sibling := stackEntryNode(versions[1].top())
 	if sibling == nil || sibling.symbol != 4 {
