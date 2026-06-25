@@ -128,9 +128,20 @@ func TestMeasureDtierVsC(t *testing.T) {
 
 	// minParse runs the parse for the configured rounds and returns the min wall time; recovers
 	// panics (returns panicked=true) so one bad file cannot kill the run.
-	// notAccepted == the parser stopped early (memory/no-stacks/node-limit) —
-	// the REAL truncation signal (endByte<len is a false positive: trailing
-	// comments/extras legitimately aren't covered by the root, same as C).
+	nilParseSummary := func() string {
+		if !forest {
+			return "nil_tree"
+		}
+		if reason := gts.ForestLastDeclineReason(); reason != "" {
+			return "nil_tree forestDeclineReason=" + reason
+		}
+		return "nil_tree forestDeclineReason=unknown"
+	}
+
+	// notAccepted == the parser stopped early (memory/no-stacks/node-limit) or
+	// did not produce an inspectable tree. This is the REAL truncation/decline
+	// signal (endByte<len is a false positive: trailing comments/extras
+	// legitimately aren't covered by the root, same as C).
 	minParse := func(src []byte, fileIndex, fileTotal int, path string, fileStart time.Time) (dur time.Duration, endByte uint32, hasErr, notAccepted bool, stopReason gts.ParseStopReason, runtimeSummary string, panicked bool) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -164,6 +175,12 @@ func TestMeasureDtierVsC(t *testing.T) {
 				stopReason = tr.ParseStopReason()
 				notAccepted = stopReason != gts.ParseStopAccepted
 				runtimeSummary = tr.ParseRuntime().Summary()
+			} else if i == rounds-1 {
+				notAccepted = true
+				if tr != nil {
+					stopReason = tr.ParseStopReason()
+				}
+				runtimeSummary = nilParseSummary()
 			}
 			if tr != nil {
 				tr.Release()
@@ -238,7 +255,9 @@ func TestMeasureDtierVsC(t *testing.T) {
 			continue
 		}
 		dispatched++
+		countedNotAccepted := false
 		if notAccepted {
+			countedNotAccepted = true
 			trunc++
 		}
 		if hasErr {
@@ -285,8 +304,12 @@ func TestMeasureDtierVsC(t *testing.T) {
 			}
 			gtree.Release()
 		} else {
-			progressf("lang=%s file=%d/%d base=%q path=%q bytes=%d phase=comparison_result result=go_no_tree elapsed_ms=%d",
-				name, fileIndex+1, totalFiles, filepath.Base(f), f, len(src), time.Since(fileStart).Milliseconds())
+			compareRuntime := nilParseSummary()
+			if !countedNotAccepted {
+				trunc++
+			}
+			progressf("lang=%s file=%d/%d base=%q path=%q bytes=%d phase=comparison_result result=go_no_tree runtime=%q elapsed_ms=%d",
+				name, fileIndex+1, totalFiles, filepath.Base(f), f, len(src), compareRuntime, time.Since(fileStart).Milliseconds())
 		}
 		if cBest > 0 {
 			ratios = append(ratios, float64(goDur)/float64(cBest))
