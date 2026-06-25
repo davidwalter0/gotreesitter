@@ -105,6 +105,10 @@ var dfaTokenSourcePool = sync.Pool{
 // (LexModes[0], the C ERROR_STATE mode) into the lexer so NextWithErrorRuns
 // can mirror C's skipped-error lexing for truly unlexable runs.
 func setLexerErrorRunLexState(l *Lexer, language *Language) {
+	setLexerErrorRunLexStateWithCRecovery(l, language, false)
+}
+
+func setLexerErrorRunLexStateWithCRecovery(l *Lexer, language *Language, forceCRecovery bool) {
 	if l == nil {
 		return
 	}
@@ -131,7 +135,7 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 		// error-mode retry first (returning real, often invisible tokens
 		// that the recovery absorbs as hidden error-region leaves), then
 		// skipped-run errorSymbol tokens when even LexModes[0] fails.
-		if !errorCostCompetitionLanguage(language) {
+		if !forceCRecovery && !errorCostCompetitionLanguage(language) {
 			return
 		}
 		errorModeRetry = true
@@ -146,6 +150,10 @@ func setLexerErrorRunLexState(l *Lexer, language *Language) {
 }
 
 func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) {
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, false)
+}
+
+func initDFATokenSourceWithCRecovery(ts *dfaTokenSource, lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, forceCRecovery bool) {
 	ts.lexer = lexer
 	ts.language = language
 	ts.state = 0
@@ -159,7 +167,7 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 		ts.lexer.zeroWidthTokens = language.ZeroWidthTokens
 		ts.lexer.asciiTable = language.LexAsciiTable()
 		ts.lexModeStarts = language.LexModeStarts()
-		setLexerErrorRunLexState(ts.lexer, language)
+		setLexerErrorRunLexStateWithCRecovery(ts.lexer, language, forceCRecovery)
 	}
 	if language != nil {
 		ts.hasExternalScanner = language.ExternalScanner != nil
@@ -179,9 +187,13 @@ func initDFATokenSource(ts *dfaTokenSource, lexer *Lexer, language *Language, lo
 }
 
 func acquireDFATokenSource(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16) *dfaTokenSource {
+	return acquireDFATokenSourceWithCRecovery(lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, false)
+}
+
+func acquireDFATokenSourceWithCRecovery(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, forceCRecovery bool) *dfaTokenSource {
 	ts := dfaTokenSourcePool.Get().(*dfaTokenSource)
 	resetPooledDFATokenSource(ts)
-	initDFATokenSource(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState)
+	initDFATokenSourceWithCRecovery(ts, lexer, language, lookupActionIndex, hasKeywordState, externalValidByState, forceCRecovery)
 	return ts
 }
 

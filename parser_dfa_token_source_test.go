@@ -75,6 +75,31 @@ func TestNextExternalTokenPrefersCandidateUsableByPrimaryState(t *testing.T) {
 	}
 }
 
+func TestAcquireDFATokenSourceWithCRecoveryForcesErrorModeRetry(t *testing.T) {
+	t.Setenv("GOT_C_RECOVERY", "")
+	lang := &Language{
+		Name:            "forced_recovery_test",
+		ExternalScanner: dualChoiceExternalScanner{},
+		ExternalSymbols: []Symbol{1},
+		LexModes:        []LexMode{{LexState: 0}},
+	}
+
+	ordinary := acquireDFATokenSource(NewLexer(nil, []byte("x")), lang, nil, nil, nil)
+	if ordinary.lexer.hasErrorRunLexState {
+		t.Fatal("ordinary token source has error-run lex state, want default gate off")
+	}
+	ordinary.Close()
+
+	forced := acquireDFATokenSourceWithCRecovery(NewLexer(nil, []byte("x")), lang, nil, nil, nil, true)
+	defer forced.Close()
+	if !forced.lexer.hasErrorRunLexState {
+		t.Fatal("forced token source hasErrorRunLexState = false, want true")
+	}
+	if !forced.lexer.errorModeRetry {
+		t.Fatal("forced token source errorModeRetry = false, want true")
+	}
+}
+
 func TestBashGeneratedShellOperatorsDoNotRequireArithmeticContext(t *testing.T) {
 	shellOps := []string{"|", "|&", "||", "&&", "<", ">", "<<", "<<-", ">>", "<<<", "&>", "&>>", "<&", ">&", "<&-", ">&-", ">|", ";", ";;"}
 	for _, op := range shellOps {

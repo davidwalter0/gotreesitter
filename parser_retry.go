@@ -38,6 +38,37 @@ type resettableTokenSource interface {
 
 type fullParseRetryRunner func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree
 
+func shouldRetryFullParseWithCRecovery(tree *Tree, sourceLen int) bool {
+	if tree == nil || treeParseClean(tree) {
+		return false
+	}
+	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	switch rt.StopReason {
+	case ParseStopNoStacksAlive:
+		return rt.Truncated || retryTreeEndByte(tree) < rt.ExpectedEOFByte
+	case ParseStopNodeLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) withScopedErrorCostCompetition(enabled bool, fn func()) {
+	if p == nil || !enabled {
+		fn()
+		return
+	}
+	prev := p.errorCostCompetition
+	p.errorCostCompetition = true
+	defer func() {
+		p.errorCostCompetition = prev
+	}()
+	fn()
+}
+
 func shouldRetryFullParse(tree *Tree, sourceLen int) bool {
 	if tree == nil {
 		return false
@@ -894,6 +925,7 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
 func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree, runRetry fullParseRetryRunner) *Tree {
 	maxStacksOverride := fullParseRetryMaxStacksOverride(tree, len(source), initialMaxStacks)
 	maxNodesOverride := fullParseRetryNodeLimitOverride(tree, len(source))
+	runCRecoveryRetry := p != nil && !p.errorCostCompetition && shouldRetryFullParseWithCRecovery(tree, len(source))
 	retryMaxStacks := initialMaxStacks
 	if maxStacksOverride > 0 {
 		retryMaxStacks = maxStacksOverride
@@ -959,6 +991,11 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 
 	nodeRetryTree := tree
 	if maxStacksOverride == 0 && maxNodesOverride == 0 {
+		if runCRecoveryRetry && !retryDeadlineExceeded() {
+			p.withScopedErrorCostCompetition(true, func() {
+				replaceBest(&bestTree, runRetry(retryMaxStacks, 0, 0))
+			})
+		}
 		return bestTree
 	}
 	// A widened-stack retry would normally also enable the retry-pass
@@ -1036,6 +1073,11 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
 			release(nodeRetryTree)
 		}
+		if runCRecoveryRetry && !retryDeadlineExceeded() && !treeParseClean(bestTree) {
+			p.withScopedErrorCostCompetition(true, func() {
+				replaceBest(&bestTree, runRetry(retryMaxStacks, 0, maxNodesOverride))
+			})
+		}
 		return bestTree
 	}
 	if retryDeadlineExceeded() {
@@ -1048,13 +1090,18 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 		release(nodeRetryTree)
 	}
 	replaceBest(&bestTree, mergeRetryTree)
+	if runCRecoveryRetry && !retryDeadlineExceeded() && !treeParseClean(bestTree) {
+		p.withScopedErrorCostCompetition(true, func() {
+			replaceBest(&bestTree, runRetry(retryMaxStacks, 0, maxNodesOverride))
+		})
+	}
 	return bestTree
 }
 
 func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
 	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		retryLexer := NewLexer(p.language.LexStates, source)
-		retryTS := acquireDFATokenSource(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState)
+		retryTS := acquireDFATokenSourceWithCRecovery(retryLexer, p.language, p.lookupActionIndex, p.hasKeywordState, p.externalValidByState, p.errorCostCompetitionEnabled())
 		defer retryTS.Close()
 		return p.parseInternal(
 			source,
@@ -1078,6 +1125,27 @@ func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, dete
 	return result
 }
 
+func withScopedDFATokenSourceCRecovery(ts TokenSource, language *Language, enabled bool, fn func() *Tree) *Tree {
+	if !enabled {
+		return fn()
+	}
+	dfaTS, ok := ts.(*dfaTokenSource)
+	if !ok || dfaTS.lexer == nil {
+		return fn()
+	}
+	lexer := dfaTS.lexer
+	prevState := lexer.errorRunLexState
+	prevHasState := lexer.hasErrorRunLexState
+	prevRetry := lexer.errorModeRetry
+	setLexerErrorRunLexStateWithCRecovery(lexer, language, true)
+	defer func() {
+		lexer.errorRunLexState = prevState
+		lexer.hasErrorRunLexState = prevHasState
+		lexer.errorModeRetry = prevRetry
+	}()
+	return fn()
+}
+
 func (p *Parser) retryFullParseWithTokenSource(source []byte, ts TokenSource, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
 	resettable, ok := ts.(resettableTokenSource)
 	if !ok {
@@ -1085,18 +1153,20 @@ func (p *Parser) retryFullParseWithTokenSource(source []byte, ts TokenSource, in
 	}
 	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		resettable.Reset(source)
-		return p.parseInternal(
-			source,
-			p.wrapIncludedRanges(ts),
-			nil,
-			nil,
-			arenaClassFull,
-			nil,
-			maxStacks,
-			maxNodes,
-			maxMergePerKeyOverride,
-			deterministicExternalConflicts,
-		)
+		return withScopedDFATokenSourceCRecovery(ts, p.language, p.errorCostCompetitionEnabled(), func() *Tree {
+			return p.parseInternal(
+				source,
+				p.wrapIncludedRanges(ts),
+				nil,
+				nil,
+				arenaClassFull,
+				nil,
+				maxStacks,
+				maxNodes,
+				maxMergePerKeyOverride,
+				deterministicExternalConflicts,
+			)
+		})
 	})
 	// Same as retryFullParseWithDFA: release the original tree if a retry won.
 	if result != tree {

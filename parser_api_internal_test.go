@@ -1081,6 +1081,78 @@ func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestRetryFullParseCRecoveryCandidateRestoresParserFlag(t *testing.T) {
+	parser := &Parser{}
+	source := []byte("ab")
+	initial := &Tree{
+		root: &Node{
+			endByte: 1,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopNoStacksAlive,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     1,
+			Truncated:       true,
+			MaxStacksSeen:   1,
+			NodesAllocated:  20,
+		},
+	}
+	cRecoveryRetry := &Tree{
+		root: &Node{
+			endByte: uint32(len(source)),
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:      ParseStopAccepted,
+			ExpectedEOFByte: uint32(len(source)),
+			RootEndByte:     uint32(len(source)),
+			NodesAllocated:  10,
+		},
+	}
+	calls := 0
+	scopedCalls := 0
+
+	got := parser.retryFullParse(source, 2, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		if !parser.errorCostCompetitionEnabled() {
+			return nil
+		}
+		scopedCalls++
+		return cRecoveryRetry
+	})
+
+	if got != cRecoveryRetry {
+		t.Fatalf("retryFullParse returned %p, want C-recovery retry tree %p", got, cRecoveryRetry)
+	}
+	if calls == 0 {
+		t.Fatal("runRetry was not called")
+	}
+	if scopedCalls != 1 {
+		t.Fatalf("scoped C-recovery runRetry calls = %d, want 1", scopedCalls)
+	}
+	if parser.errorCostCompetition {
+		t.Fatal("parser.errorCostCompetition = true after retry, want restored false")
+	}
+}
+
+func TestScopedErrorCostCompetitionRestoresAfterPanic(t *testing.T) {
+	parser := &Parser{}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("withScopedErrorCostCompetition did not panic")
+		}
+		if parser.errorCostCompetition {
+			t.Fatal("parser.errorCostCompetition = true after panic, want restored false")
+		}
+	}()
+	parser.withScopedErrorCostCompetition(true, func() {
+		if !parser.errorCostCompetitionEnabled() {
+			t.Fatal("errorCostCompetitionEnabled = false inside scope, want true")
+		}
+		panic("sentinel")
+	})
+}
+
 func TestParseForRecoveryReusesRecoveryParser(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
 	tree, err := parser.parseForRecovery([]byte("1+2"))
