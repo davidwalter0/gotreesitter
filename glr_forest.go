@@ -356,6 +356,20 @@ func forestRefreshMinLinkScore(node *gssForestNode) {
 	node.minLinkScore = minScore
 }
 
+func forestRefreshNoExtraDepth(node *gssForestNode) {
+	if node == nil || len(node.links) == 0 {
+		return
+	}
+	minDepth := forestLinkNoExtraDepth(node.links[0].prev, node.links[0].subtree)
+	for i := 1; i < len(node.links); i++ {
+		depth := forestLinkNoExtraDepth(node.links[i].prev, node.links[i].subtree)
+		if depth < minDepth {
+			minDepth = depth
+		}
+	}
+	node.noExtraDepth = minDepth
+}
+
 // gssForestNode is a coalesced graph-structured-stack node: all parses that
 // reach (state, byteOffset) share this single node; their differing histories
 // are the links. This replaces the singly-linked gssNode{entry, prev} chain in
@@ -389,6 +403,10 @@ type gssForestNode struct {
 // Stage 1 scaffold: builds the DAG. Correct trees require Stage 2 (reduce walks
 // every link); until then this is exercised only under the flag + parity gate.
 func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
+	return coalesceForestWithMetadata(index, slab, nil, state, byteOffset, prev, entry, score, errorCost)
+}
+
+func coalesceForestWithMetadata(index *gssForestIndex, slab *gssForestNodeSlab, symbolMeta []SymbolMetadata, state StateID, byteOffset uint32, prev *gssForestNode, entry stackEntry, score, errorCost int) *gssForestNode {
 	if perfCountersEnabled {
 		perfRecordForestCoalesceCall()
 	}
@@ -457,10 +475,24 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 				worst = i
 			}
 		}
-		if score > node.links[worst].score {
-			node.links[worst] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
+		replacement := worst
+		replace := score > node.links[worst].score
+		if !replace && score == node.links[worst].score && forestEntryIsGeneratedRepeatAux(entry, symbolMeta) {
+			for i := range node.links {
+				if node.links[i].score != score {
+					continue
+				}
+				if forestGeneratedRepeatAuxEntryBetter(entry, node.links[i].subtree, symbolMeta) {
+					replacement = i
+					replace = true
+					break
+				}
+			}
+		}
+		if replace {
+			node.links[replacement] = gssLink{prev: prev, prevDirty: forestNodeDirty(prev), subtree: entry, score: score}
 			forestRefreshMinLinkScore(node)
-			forestRecordNoExtraDepth(node, false, linkNoExtraDepth)
+			forestRefreshNoExtraDepth(node)
 			node.dirty++
 			if perfCountersEnabled {
 				perfRecordForestCoalesceCap(true)
@@ -479,6 +511,34 @@ func coalesceForest(index *gssForestIndex, slab *gssForestNodeSlab, state StateI
 	}
 	node.dirty++
 	return node
+}
+
+func forestEntryIsGeneratedRepeatAux(entry stackEntry, symbolMeta []SymbolMetadata) bool {
+	if entry.kind != stackEntryKindNode || entry.node == nil {
+		return false
+	}
+	n := (*Node)(entry.node)
+	idx := int(n.symbol)
+	if idx < 0 || idx >= len(symbolMeta) {
+		return false
+	}
+	meta := symbolMeta[idx]
+	return meta.GeneratedRepeatAux && !meta.Visible && !meta.Named
+}
+
+func forestGeneratedRepeatAuxEntryBetter(candidate, retained stackEntry, symbolMeta []SymbolMetadata) bool {
+	if !forestEntryIsGeneratedRepeatAux(candidate, symbolMeta) || !forestEntryIsGeneratedRepeatAux(retained, symbolMeta) {
+		return false
+	}
+	csym, cstart, cend := entrySymSpan(candidate)
+	rsym, rstart, rend := entrySymSpan(retained)
+	if csym != rsym {
+		return false
+	}
+	if cstart != rstart {
+		return cstart < rstart
+	}
+	return cend > rend
 }
 
 const forestGotoCacheSize = 8
@@ -504,7 +564,7 @@ func (c *forestGotoCache) lookup(p *Parser, state StateID, sym Symbol) StateID {
 	return target
 }
 
-func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOffset uint32, score, errorCost int) bool {
+func forestCoalesceWouldDropForCap(index *gssForestIndex, symbolMeta []SymbolMetadata, sym Symbol, state StateID, byteOffset uint32, score, errorCost int) bool {
 	if index == nil {
 		return false
 	}
@@ -515,7 +575,19 @@ func forestCoalesceWouldDropForCap(index *gssForestIndex, state StateID, byteOff
 	if errorCost < node.errorCost {
 		return false
 	}
+	if score == node.minLinkScore && forestSymbolIsGeneratedRepeatAux(sym, symbolMeta) {
+		return false
+	}
 	return score <= node.minLinkScore
+}
+
+func forestSymbolIsGeneratedRepeatAux(sym Symbol, symbolMeta []SymbolMetadata) bool {
+	idx := int(sym)
+	if idx < 0 || idx >= len(symbolMeta) {
+		return false
+	}
+	meta := symbolMeta[idx]
+	return meta.GeneratedRepeatAux && !meta.Visible && !meta.Named
 }
 
 // forestMaxLinksPerNode caps the alternative fan-out coalesced at one
@@ -1032,7 +1104,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						if reducedEnd < len(children) && reducedEnd > 0 {
 							parentEnd = stackEntryNodeEndByte(children[reducedEnd-1])
 						}
-						if forestCoalesceWouldDropForCap(&curIndex, gotoState, parentEnd, score, popTo.errorCost) {
+						if forestCoalesceWouldDropForCap(&curIndex, lang.SymbolMetadata, act.Symbol, gotoState, parentEnd, score, popTo.errorCost) {
 							if perfCountersEnabled {
 								perfRecordForestCoalescePreCapDrop()
 							}
@@ -1069,7 +1141,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 						}
 						// Subtree score = this production's dynamic precedence +
 						// the children's accumulated scores.
-						top := coalesceForest(&curIndex, slab, gotoState, parentEnd, popTo,
+						top := coalesceForestWithMetadata(&curIndex, slab, lang.SymbolMetadata, gotoState, parentEnd, popTo,
 							stackEntry{node: unsafe.Pointer(parent), state: gotoState, kind: stackEntryKindNode},
 							score, popTo.errorCost)
 						for _, ex := range children[reducedEnd:] {
@@ -1077,7 +1149,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 							extra.parseState = gotoState
 							nodeBumpEquivVersion(extra)
 							exEnd := extra.endByte
-							top = coalesceForest(&curIndex, slab, gotoState, exEnd, top,
+							top = coalesceForestWithMetadata(&curIndex, slab, lang.SymbolMetadata, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},
 								0, top.errorCost)
 						}
@@ -1103,7 +1175,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 					leaf.parseState = target
 					p.recordCurrentExternalLeafCheckpoint(leaf, tok)
 					before := nextIndex.len()
-					sh := coalesceForest(&nextIndex, slab, target, tok.EndByte, shiftBase,
+					sh := coalesceForestWithMetadata(&nextIndex, slab, lang.SymbolMetadata, target, tok.EndByte, shiftBase,
 						stackEntry{node: unsafe.Pointer(leaf), state: target, kind: stackEntryKindNode},
 						0, shiftBase.errorCost) // a shifted leaf carries no dynamic precedence
 					if nextIndex.len() != before {
@@ -1192,7 +1264,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 				errLeaf.preGotoState = n.state
 				errLeaf.parseState = recoverState
 				before := nextIndex.len()
-				sh := coalesceForest(&nextIndex, slab, recoverState, tok.EndByte, n,
+				sh := coalesceForestWithMetadata(&nextIndex, slab, lang.SymbolMetadata, recoverState, tok.EndByte, n,
 					stackEntry{node: unsafe.Pointer(errLeaf), state: recoverState, kind: stackEntryKindNode},
 					0, n.errorCost+tokWidth)
 				if nextIndex.len() != before {

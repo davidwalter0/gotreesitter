@@ -552,6 +552,61 @@ func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
 	}
 }
 
+func TestCoalesceForestCapKeepsWiderGeneratedRepeatAux(t *testing.T) {
+	const repeatSym Symbol = 3
+	meta := []SymbolMetadata{
+		{Name: "end"},
+		{Name: "close", Visible: true},
+		{Name: "wrapper", Visible: true, Named: true},
+		{Name: "wrapper_repeat1", GeneratedRepeatAux: true},
+	}
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	for i := 0; i < forestMaxLinksPerNode; i++ {
+		prev := &gssForestNode{state: StateID(20 + i), byteOffset: uint32(90 + i)}
+		entry := newStackEntryNode(10, &Node{symbol: repeatSym, startByte: uint32(90 + i), endByte: 100})
+		coalesceForestWithMetadata(&idx, slab, meta, 10, 100, prev, entry, 0, 0)
+	}
+
+	closeCapablePrev := &gssForestNode{state: 99, byteOffset: 0}
+	wide := newStackEntryNode(10, &Node{symbol: repeatSym, startByte: 0, endByte: 100})
+	node := coalesceForestWithMetadata(&idx, slab, meta, 10, 100, closeCapablePrev, wide, 0, 0)
+
+	if len(node.links) != forestMaxLinksPerNode {
+		t.Fatalf("links = %d, want capped %d", len(node.links), forestMaxLinksPerNode)
+	}
+	for _, link := range node.links {
+		if link.prev == closeCapablePrev {
+			return
+		}
+	}
+	t.Fatalf("wide generated-repeat aux link was dropped: links=%+v", node.links)
+}
+
+func TestForestCoalescePreCapKeepsGeneratedRepeatAuxCandidate(t *testing.T) {
+	const repeatSym Symbol = 3
+	meta := []SymbolMetadata{
+		{Name: "end"},
+		{Name: "close", Visible: true},
+		{Name: "wrapper", Visible: true, Named: true},
+		{Name: "wrapper_repeat1", GeneratedRepeatAux: true},
+	}
+	idx := newGSSForestIndex(0)
+	slab := &gssForestNodeSlab{}
+	for i := 0; i < forestMaxLinksPerNode; i++ {
+		prev := &gssForestNode{state: StateID(20 + i), byteOffset: uint32(90 + i)}
+		entry := newStackEntryNode(10, &Node{symbol: repeatSym, startByte: uint32(90 + i), endByte: 100})
+		coalesceForestWithMetadata(&idx, slab, meta, 10, 100, prev, entry, 0, 0)
+	}
+
+	if forestCoalesceWouldDropForCap(&idx, meta, repeatSym, 10, 100, 0, 0) {
+		t.Fatal("generated repeat aux candidate was pre-dropped before retention could compare span width")
+	}
+	if !forestCoalesceWouldDropForCap(&idx, meta, 2, 10, 100, 0, 0) {
+		t.Fatal("ordinary equal-score candidate was not pre-dropped")
+	}
+}
+
 func TestGSSForestIndexLookupCacheClearsOnReset(t *testing.T) {
 	idx := newGSSForestIndex(0)
 	key := gssForestKey{state: 7, byteOffset: 11}

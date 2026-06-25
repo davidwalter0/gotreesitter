@@ -457,6 +457,7 @@ func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Languag
 	repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName, &lang)
 	repairDartCollapsedLeafTokenSymbols(blobName, &lang)
 	repairDhallUnicodeAnonymousSymbolNames(blobName, &lang)
+	gotreesitter.InferGeneratedRepeatAuxMetadata(&lang)
 	attachReduceChainHints(blobName, &lang)
 
 	return &lang, nil
