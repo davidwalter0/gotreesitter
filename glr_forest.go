@@ -65,6 +65,7 @@ type glrForestTraceWindowConfig struct {
 
 var glrForestTraceWindow = parseGLRForestTraceWindow(os.Getenv("GOT_GLR_FOREST_TRACE_WINDOW"))
 var glrForestTraceTransitions = os.Getenv("GOT_GLR_FOREST_TRACE_TRANSITIONS") == "1"
+var glrForestTraceExternal = os.Getenv("GOT_GLR_FOREST_TRACE_EXTERNAL") == "1"
 
 func parseGLRForestTraceWindow(raw string) glrForestTraceWindowConfig {
 	if raw == "" {
@@ -105,6 +106,10 @@ func forestTraceRangeInWindow(start, end uint32) bool {
 
 func forestTraceTransitionEnabled() bool {
 	return glrForestTraceTransitions && glrForestTraceWindow.enabled
+}
+
+func forestTraceExternalEnabled() bool {
+	return glrForestTraceExternal && glrForestTraceWindow.enabled
 }
 
 // languageWantsForestRecover reports whether a forest-dispatched language enables

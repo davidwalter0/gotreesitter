@@ -2067,6 +2067,7 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 					}
 				}
 				if !anyValid {
+					d.traceSingleStateExternalProbe(states, row, "no-valid-row")
 					return Token{}, false
 				}
 				valid = row
@@ -2137,6 +2138,7 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			}
 		}
 		if !anyValid {
+			d.traceSingleStateExternalProbe(states, valid, "no-valid-union")
 			return Token{}, false
 		}
 	}
@@ -2165,12 +2167,15 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			}
 		}
 		if !anyValid {
+			d.traceSingleStateExternalProbe(states, valid, "zero-width-masked-empty")
 			return Token{}, false
 		}
 	}
 	if d.shouldDeferFortranExternalEndOfStatementToDFA(valid, states) {
+		d.traceSingleStateExternalProbe(states, valid, "defer-to-dfa")
 		return Token{}, false
 	}
+	d.traceSingleStateExternalProbe(states, valid, "before-scan")
 	if DebugDFA.Load() {
 		fmt.Printf("  EXT valid pos=%d state=%d glr=%v els=%s valid=%s\n",
 			d.lexer.pos, d.state, states, d.debugExternalLexStateIDs(states), d.debugExternalValidNames(valid))
@@ -2675,6 +2680,77 @@ func (d *dfaTokenSource) debugExternalValidNames(valid []bool) string {
 		names = append(names, fmt.Sprintf("%d:%s", i, name))
 	}
 	return strings.Join(names, ",")
+}
+
+func (d *dfaTokenSource) traceSingleStateExternalProbe(states []StateID, valid []bool, note string) {
+	if d == nil || d.lexer == nil || d.language == nil || !forestTraceExternalEnabled() {
+		return
+	}
+	if len(states) != 1 || !forestTraceByteInWindow(uint32(d.lexer.pos)) {
+		return
+	}
+	st := states[0]
+	elsID := -1
+	if int(st) < len(d.language.LexModes) {
+		elsID = int(d.language.LexModes[st].ExternalLexState)
+	}
+	fmt.Printf("FOREST-EXT probe note=%s pos=%d state=%d els=%d valid=%s scanner=%s\n",
+		note, d.lexer.pos, st, elsID, d.debugExternalValidNames(valid), d.traceExternalScanResult(valid))
+
+	for i, sym := range d.language.ExternalSymbols {
+		if i >= len(valid) || !valid[i] {
+			continue
+		}
+		one := make([]bool, len(valid))
+		one[i] = true
+		fmt.Printf("FOREST-EXT candidate ext=%d sym=%d(%s) actions=%s scanner=%s\n",
+			i, sym, d.symbolName(sym), d.traceExternalActions(states, sym), d.traceExternalScanResult(one))
+	}
+}
+
+func (d *dfaTokenSource) traceExternalActions(states []StateID, sym Symbol) string {
+	if d == nil || d.language == nil || d.lookupActionIndex == nil {
+		return "none"
+	}
+	parts := make([]string, 0, len(states))
+	for _, st := range states {
+		idx := d.lookupActionIndex(st, sym)
+		if idx == 0 || int(idx) >= len(d.language.ParseActions) {
+			parts = append(parts, fmt.Sprintf("state=%d:none", st))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("state=%d:%s", st, forestTraceActions(d.language, d.language.ParseActions[idx].Actions)))
+	}
+	return strings.Join(parts, ";")
+}
+
+func (d *dfaTokenSource) traceExternalScanResult(valid []bool) string {
+	if d == nil || d.lexer == nil || d.language == nil || len(valid) == 0 {
+		return "none"
+	}
+	snapshot := d.snapshotRelexState()
+	defer snapshot.restore(d)
+
+	if d.language.ExternalScanner == nil {
+		tok, ok := d.syntheticExternalToken(valid)
+		if !ok {
+			return "synthetic-miss"
+		}
+		return forestTraceToken(d.language, tok)
+	}
+
+	el := &d.externalLexer
+	el.reset(d.lexer.source, d.lexer.pos, d.lexer.row, d.lexer.col)
+	if !d.runExternalScannerWithRetry(el, valid) {
+		return "scanner-miss"
+	}
+	tok, ok := el.token()
+	if !ok {
+		return "scanner-no-token"
+	}
+	tok.ExternalScannerToken = true
+	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
+	return forestTraceToken(d.language, tok)
 }
 
 func (d *dfaTokenSource) runExternalScannerWithRetry(el *ExternalLexer, valid []bool) bool {

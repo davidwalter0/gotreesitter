@@ -413,3 +413,73 @@ frontier. Gate it by parse-action usability and byte progress, then verify the
 `GenerateFunctionConverters.scala` witness, `AutomaticModuleName.scala`, and one
 non-Scala external-scanner forest canary. Do not add Scala-specific behavior or
 edit `parser_result_scala_compilation.go`.
+
+## Single-State External Boundary Probe
+
+Command:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-forest-external-boundary-4970-5040 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && GOT_GLR_FOREST_TRACE_WINDOW=4970:5040 GOT_GLR_FOREST_TRACE_TRANSITIONS=1 GOT_GLR_FOREST_TRACE_EXTERNAL=1 REPRO_LANG=scala REPRO_DIR=/workspace/corpus_sources REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_FOREST=1 REPRO_N=1 REPRO_ROUNDS=1 REPRO_PROGRESS=1 REPRO_SIGNATURES=1 go test . -tags treesitter_c_parity -run '^TestMeasureDtierVsC$' -count=1 -v -timeout=60s"
+```
+
+Artifact:
+`harness_out/docker/20260625T153346Z-scala-gfc-forest-external-boundary-4970-5040`
+
+Result: no movement. The witness still returned
+`forestDeclineReason=no-shift-death`:
+
+```text
+MEASURE-DTIER scala mode=forest files=1 medianRatio=0.54x aggRatio=0.54x parityMatch=0/1(0%) diverge=0 trunc=1 errTree=0 panics=0 goNS=6017787 cNS=11083772
+```
+
+The diagnostic disproves the narrow single-state external-boundary hypothesis
+at the first recovery point. Immediately before shifting `pre`, state `4495`
+has an external row, but it contains string/identifier externals only; none
+scan at byte `5025`:
+
+```text
+FOREST-EXT probe note=before-scan pos=5025 state=4495 els=2 valid=3:_simple_string_start,5:_simple_multiline_string_start,8:identifier scanner=scanner-miss
+FOREST-EXT candidate ext=3 sym=107(_simple_string_start) actions=state=4495:[reduce(sym=281(identifier) cc=1 dyn=0 prod=0)] scanner=scanner-miss
+FOREST-EXT candidate ext=5 sym=109(_simple_multiline_string_start) actions=state=4495:[reduce(sym=281(identifier) cc=1 dyn=0 prod=0)] scanner=scanner-miss
+FOREST-EXT candidate ext=8 sym=112(identifier) actions=state=4495:[reduce(sym=281(identifier) cc=1 dyn=0 prod=0)] scanner=scanner-miss
+```
+
+After the ordinary shift into state `8336`, the decisive single-state frontier
+has external lex-state `0`, an empty valid-external row, and no scanner result
+before the token source falls through to the DFA `}` token:
+
+```text
+FOREST-X shift step=1225 from_state=716 from_byte=5025 shift_base_state=716 shift_base_byte=5025 tok=sym=1(_alpha_identifier) 5026..5029 text="pre" act=shift(state=8336) target=8336 target_byte=5029 target_lex=(70,0 active=70) new_frontier=true links=1
+FOREST-EXT probe note=no-valid-union pos=5029 state=8336 els=0 valid= scanner=scanner-miss
+FOREST-TRACE step=1226 lexer_start=5029 lexer_end=5037 selected_state=8336 glr=[8336] tok=sym=5(}) 5036..5037 text="}"
+FOREST-EXT probe note=no-valid-union pos=5037 state=8336 els=0 valid= scanner=scanner-miss
+```
+
+There is therefore no parse-action-usable automatic semicolon, newline, or
+other external boundary token available from the current single-state frontier
+before `}`. A bounded alternate external-boundary probe before recovery is not
+justified by this witness.
+
+Canaries with the external trace gate enabled stayed clean:
+
+```text
+artifact: harness_out/docker/20260625T153434Z-scala-automatic-module-name-forest-external-trace-canary
+MEASURE-DTIER scala mode=forest files=1 medianRatio=11.04x aggRatio=11.04x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=4868639 cNS=441087
+
+artifact: harness_out/docker/20260625T153455Z-css-style-forest-external-trace-canary
+MEASURE-DTIER css mode=forest files=1 medianRatio=3.34x aggRatio=3.34x parityMatch=1/1(100%) diverge=0 trunc=0 errTree=0 panics=0 goNS=1276612 cNS=381706
+```
+
+## Revised Next Generalized Experiment
+
+Trace why the C-equivalent tree can close the `val pre = ... else pre`
+definition after shifting `pre` while the forest frontier is in state `8336`
+with external lex-state `0` and no action for `}`. The next generalized probe
+should compare the production GLR stack and forest GSS stack at byte `5029`:
+stack path, pending reductions, recover-action table lookup for `}`, and any
+default/fragile reduction behavior that can leave state `8336` before lexing
+the closing brace. Keep the experiment in generic parser/forest frontier
+machinery; do not add Scala-specific token policy or result normalization.
