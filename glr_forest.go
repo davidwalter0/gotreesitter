@@ -761,6 +761,18 @@ func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
 	idx.lastValid = true
 }
 
+func appendForestIndexNodes(dst []*gssForestNode, idx *gssForestIndex) []*gssForestNode {
+	if idx == nil {
+		return dst
+	}
+	for _, key := range idx.keys {
+		if n := idx.nodes[key]; n != nil {
+			dst = append(dst, n)
+		}
+	}
+	return dst
+}
+
 func forestLookupCacheSlot(key gssForestKey) uint32 {
 	return (uint32(key.state)*16777619 ^ key.byteOffset ^ (key.byteOffset >> 8)) & (gssForestLookupCacheSize - 1)
 }
@@ -1099,6 +1111,14 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 		}
 
 		if eof {
+			if tok.NoLookahead {
+				frontier = appendForestIndexNodes(frontier[:0], &curIndex)
+				if len(frontier) == 0 {
+					forestLastDeclineReason = "no-lookahead-no-frontier"
+					return nil, false
+				}
+				continue
+			}
 			root, extras := collectForestRootAndExtras(accepted)
 			if root == nil {
 				if recoverActive {

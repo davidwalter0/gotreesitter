@@ -202,9 +202,12 @@ Scala frame 1 follow-up:
 Forest root-selection falsification:
 `docs/reports/scala-forest-root-selection-falsification-20260625.md`
 
+Forest frontier before-finalization follow-up:
+`docs/reports/scala-forest-frontier-before-finalization-20260625.md`
+
 | Grammar/file | Current frame | Variant evidence | Classified next lane |
 | --- | --- | --- | --- |
-| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; `forest` removes runtime `iteration_limit` telemetry and advances Go span to `0:395` but remains non-parity and short of EOF; root-candidate tracing falsifies a final `bestLink` same-score shorter-root choice because the recovery frontier has only two byte-`395` candidates, each with one score-`0` link ending at `395` | `forest/materialization`, refined to `forest/recovery-frontier-before-finalization` |
+| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; `16120` repeats a `namespace_wildcard` reduce whose goto from `16120` misses | `forest/materialization`, refined to `forest/zero-width-successor-frontier-after-no-lookahead` |
 
 Scala remains a true-coding runtime-frontier witness under production settings,
 but the next useful machinery lane is forest/materialization rather than node
@@ -217,6 +220,16 @@ The `bestLink`/final-root-ranking hypothesis is not supported for this frame:
 the forest variant's short root is already bounded by the surviving recovery
 frontier at byte `395`; no full-span or longer same-score root alternative was
 present at finalization.
+
+The before-finalization follow-up found a generic forest bug: no-lookahead EOF
+tokens were treated as real EOF and finalized too early. The parser now carries
+the reduced forest frontier forward and re-lexes, matching production's
+no-lookahead behavior. This removes the false byte-`395` recovery root but does
+not make Scala frame 1 parity-clean. The next loss is the real zero-width
+successor token after the block comment: `_automatic_semicolon` at byte `396`
+has no shift from the surviving frontier, and the repeated
+`namespace_wildcard` reduction has no goto from state `16120`. The object
+definition path is still absent before EOF.
 
 ## F# State
 

@@ -42,6 +42,89 @@ func TestReduceOverForestLinearChain(t *testing.T) {
 	}
 }
 
+func TestParseForestNoLookaheadReductionContinuesToRealToken(t *testing.T) {
+	lang := &Language{
+		Name:               "forest_no_lookahead",
+		SymbolCount:        5,
+		TokenCount:         3,
+		StateCount:         6,
+		LargeStateCount:    6,
+		InitialState:       1,
+		ProductionIDCount:  2,
+		ExternalTokenCount: 0,
+		SymbolNames:        []string{"end", "a", "b", "source_file", "prefix"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: "a", Visible: true, Named: false},
+			{Name: "b", Visible: true, Named: false},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "prefix", Visible: true, Named: true},
+		},
+		FieldNames: []string{""},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 0}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, ProductionID: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0, 0, 0},
+			{0, 1, 0, 5, 3},
+			{2, 0, 0, 0, 0},
+			{0, 0, 3, 0, 0},
+			{4, 0, 0, 0, 0},
+			{5, 0, 0, 0, 0},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 0},
+			{LexStateID: noLookaheadLexState},
+			{LexState: 0},
+			{LexState: 0},
+			{LexState: 0},
+		},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'a', Hi: 'a', NextState: 1},
+					{Lo: 'b', Hi: 'b', NextState: 2},
+				},
+			},
+			{AcceptToken: 1, Default: -1, EOF: -1},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+	}
+
+	tree, ok := NewParser(lang).ParseForestExperimental([]byte("ab"))
+	if !ok || tree == nil {
+		t.Fatal("ParseForestExperimental failed after no-lookahead reduction")
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("root is nil")
+	}
+	if got, want := root.Type(lang), "source_file"; got != want {
+		t.Fatalf("root type = %q, want %q", got, want)
+	}
+	if got, want := root.EndByte(), uint32(2); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got, want := root.Child(0).Type(lang), "prefix"; got != want {
+		t.Fatalf("first child type = %q, want %q", got, want)
+	}
+	if got, want := root.Child(1).Type(lang), "b"; got != want {
+		t.Fatalf("second child type = %q, want %q", got, want)
+	}
+}
+
 func TestReduceOverForestLinearChainWithExtra(t *testing.T) {
 	// n0 <-(a:10)- n1 <-(b:11)- n2 <-(extra:90)- n3 <-(c:12)- n4
 	extra := &Node{}
