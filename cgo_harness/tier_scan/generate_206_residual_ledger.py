@@ -106,6 +106,26 @@ DOMAIN_MAP = {
 
 
 OVERLAY_STATUS = {
+    "fennel": (
+        "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as mixed runtime_frontier_stop plus recovery_error_cost: 15/40 parity, 25 diverge, 9 trunc, 18 errTree; not pure accepted materialization evidence",
+        "generalized_recovery_shape_and_cost",
+    ),
+    "fsharp": (
+        "coding-accepted-shape-n40-20260625 reclassifies stale pre-patch accepted-shape smoke row as terminal C-oracle timeout/fail evidence plus parser recovery_error_cost: 0/40 parity, 29 trunc, 12 errTree, terminal timeout:c_parse_start; timeout/fail is tracked separately from parser materialization",
+        "generalized_recovery_shape_and_cost",
+    ),
+    "perl": (
+        "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as mixed runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 7 trunc, 7 errTree; not pure accepted materialization evidence",
+        "generalized_recovery_shape_and_cost",
+    ),
+    "purescript": (
+        "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as runtime_frontier_stop: 1/40 parity, 39 diverge, 1 trunc, 0 errTree; not pure accepted materialization evidence",
+        "glr_frontier_survival_and_reuse_selection",
+    ),
+    "swift": (
+        "coding-accepted-shape-n40-20260625 reclassifies stale accepted-shape smoke row as mixed runtime_frontier_stop plus recovery_error_cost: 0/40 parity, 27 trunc, 9 errTree; not pure accepted materialization evidence",
+        "generalized_recovery_shape_and_cost",
+    ),
     "cpp": (
         "post-retry reports migrate C++ from runtime frontier to accepted/non-truncated recovery-shape evidence; parity still residual",
         "recovery_shape_and_materialization_after_generalized_retry",
