@@ -199,9 +199,12 @@ and does not support performance conclusions.
 Scala frame 1 follow-up:
 `docs/reports/scala-frontier-frame1-20260625.md`
 
+Forest root-selection falsification:
+`docs/reports/scala-forest-root-selection-falsification-20260625.md`
+
 | Grammar/file | Current frame | Variant evidence | Classified next lane |
 | --- | --- | --- | --- |
-| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; `forest` removes runtime `iteration_limit` telemetry and advances Go span to `0:395` but remains non-parity and short of EOF | `forest/materialization` |
+| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; `forest` removes runtime `iteration_limit` telemetry and advances Go span to `0:395` but remains non-parity and short of EOF; root-candidate tracing falsifies a final `bestLink` same-score shorter-root choice because the recovery frontier has only two byte-`395` candidates, each with one score-`0` link ending at `395` | `forest/materialization`, refined to `forest/recovery-frontier-before-finalization` |
 
 Scala remains a true-coding runtime-frontier witness under production settings,
 but the next useful machinery lane is forest/materialization rather than node
@@ -209,6 +212,11 @@ budget, stack/frontier cap, recovery-shape, or version/corpus. The first-diff
 shape is a block-comment materialization mismatch: C emits one `block_comment`
 root child, while Go materializes many `block_comment_repeat1` children and
 truncates inside the comment under production settings.
+
+The `bestLink`/final-root-ranking hypothesis is not supported for this frame:
+the forest variant's short root is already bounded by the surviving recovery
+frontier at byte `395`; no full-span or longer same-score root alternative was
+present at finalization.
 
 ## F# State
 
