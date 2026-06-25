@@ -936,7 +936,13 @@ func (d *dfaTokenSource) shouldPreferBaseLexStateToken(baseTok, afterTok Token) 
 	if baseTok.Symbol == 0 {
 		return false
 	}
+	if baseTok.Symbol == errorSymbol {
+		return false
+	}
 	if afterTok.Symbol == 0 {
+		return true
+	}
+	if afterTok.Symbol == errorSymbol {
 		return true
 	}
 	if d.hasZeroWidthTokens && d.shouldPreferZeroWidthBaseLexStateToken(baseTok, afterTok) {

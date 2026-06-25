@@ -183,3 +183,102 @@ func TestGoHexEscapeStringLiteralTreeShape(t *testing.T) {
 		t.Fatalf("SExpr = %s, want %s", got, want)
 	}
 }
+
+func TestRepeatedImmediateStringBodySwitchesFromFragmentToEscape(t *testing.T) {
+	g := NewGrammar("repeated_immediate_string_body")
+	g.Define("source_file", Sym("string_literal"))
+	g.Define("string_literal", Seq(
+		Str(`"""`),
+		Repeat(Choice(
+			Alias(
+				ImmToken(Prec(1, Pat(`[^\\"]+`))),
+				"multiline_string_fragment", true,
+			),
+			Sym("escape_sequence"),
+			Sym("string_interpolation"),
+		)),
+		ImmToken(Str(`"""`)),
+	))
+	g.Define("escape_sequence", ImmToken(Prec(1, Seq(
+		Str(`\`),
+		Choice(
+			Str(`\`),
+			Str(`"`),
+			Str(`n`),
+			Seq(Str(`u`), Pat(`[0-9a-fA-F]{4}`)),
+		),
+	))))
+	g.Define("string_interpolation", Seq(
+		ImmToken(Str(`\{`)),
+		Repeat(Pat(`[a-z]+`)),
+		Str(`}`),
+	))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte(`"""alpha\\{}beta\nomega"""`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	want := "(source_file (string_literal (multiline_string_fragment) (escape_sequence) (multiline_string_fragment) (escape_sequence) (multiline_string_fragment)))"
+	if got := tree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("SExpr = %s, want %s", got, want)
+	}
+}
+
+func TestRepeatedJavaLikeStringBodyAdmitsVisibleEscapeThroughHiddenWrapper(t *testing.T) {
+	g := NewGrammar("java_like_repeated_string_body")
+	g.Define("source_file", Sym("string_literal"))
+	g.Define("string_literal", Seq(
+		Str(`"""`),
+		Repeat(Choice(
+			Alias(Sym("_multiline_string_fragment"), "multiline_string_fragment", true),
+			Sym("_escape_sequence"),
+			Sym("string_interpolation"),
+		)),
+		Str(`"""`),
+	))
+	g.Define("_multiline_string_fragment", Choice(
+		Pat(`[^"\\]+`),
+		Pat(`"([^"\\]|\\")*`),
+	))
+	g.Define("_escape_sequence", Choice(
+		Prec(2, ImmToken(Seq(
+			Str(`\`),
+			Pat(`[^bfnrts'"\\]`),
+		))),
+		Prec(1, Sym("escape_sequence")),
+	))
+	g.Define("escape_sequence", ImmToken(Seq(
+		Str(`\`),
+		Choice(
+			Pat(`[^xu0-7]`),
+			Pat(`[0-7]{1,3}`),
+			Pat(`x[0-9a-fA-F]{2}`),
+			Pat(`u[0-9a-fA-F]{4}`),
+			Pat(`u\{[0-9a-fA-F]+\}`),
+		),
+	)))
+	g.Define("string_interpolation", Seq(
+		Str(`\{`),
+		Repeat(Pat(`[a-z]+`)),
+		Str(`}`),
+	))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("\"\"\"\n\\\\\n\"\"\""))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	want := "(source_file (string_literal (multiline_string_fragment) (escape_sequence) (multiline_string_fragment)))"
+	if got := tree.RootNode().SExpr(lang); got != want {
+		t.Fatalf("SExpr = %s, want %s", got, want)
+	}
+}

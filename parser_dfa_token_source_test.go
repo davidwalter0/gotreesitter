@@ -575,6 +575,51 @@ func TestNextDFATokenAfterWhitespacePrefersEarlierBaseLexStateToken(t *testing.T
 	}
 }
 
+func TestNextDFATokenAfterWhitespaceKeepsBaseTokenOverAfterWhitespaceError(t *testing.T) {
+	lang := &Language{
+		Name:        "test",
+		SymbolNames: []string{"end", "escape_sequence"},
+		LexStates: []LexState{
+			{
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '\\', Hi: '\\', NextState: 1}},
+			},
+			{
+				Default:     -1,
+				EOF:         -1,
+				Transitions: []LexTransition{{Lo: '\\', Hi: '\\', NextState: 2}},
+			},
+			{
+				AcceptToken: 1,
+				Default:     -1,
+				EOF:         -1,
+			},
+			{
+				Default: -1,
+				EOF:     -1,
+			},
+		},
+		LexModes: []LexMode{
+			{LexState: 3},
+			{LexState: 0, AfterWhitespaceLexState: 3},
+		},
+	}
+
+	lexer := NewLexer(lang.LexStates, []byte("\n\\\\"))
+	lexer.pos = 1
+	d := newDFATokenSourceDirect(lexer, lang, nil, nil, nil)
+	d.state = 1
+
+	tok := d.nextDFAToken()
+	if got, want := tok.Symbol, Symbol(1); got != want {
+		t.Fatalf("token symbol after real newline content = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
+	}
+	if got, want := tok.Text, "\\\\"; got != want {
+		t.Fatalf("token text = %q, want %q", got, want)
+	}
+}
+
 func TestNextDFATokenPrefersParserValidZeroWidthBaseToken(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"end", "text", "newline"},
