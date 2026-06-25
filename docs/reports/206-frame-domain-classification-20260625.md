@@ -167,6 +167,15 @@ frontier witnesses. Scala remains a distinct iteration-limit frontier control.
 The next coding-language target should be recovery-shape and materialization
 invariant work.
 
+Accepted-error pressure-floor follow-up:
+`docs/reports/accepted-error-crecovery-pressure-floor-20260625.md`
+falsified the pressure-floor admission hypothesis for CUDA frame 1. The frame
+was already admitted under default retry (`initial=8`, `maxStacks=24`,
+`admit=true`) and did not move by default, while forced `GOT_C_RECOVERY=all`
+lowered frame 1 to `1/2` errors/missing and kept frame 3 as a no-error control.
+Do not treat this as additional parity movement; the next machinery target is
+scoped-vs-forced C-recovery behavior, selection, and materialization.
+
 ## F# State
 
 Post-F# first N=40 artifact, built after the initial F# normalizer but before
