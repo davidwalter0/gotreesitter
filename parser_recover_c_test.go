@@ -136,6 +136,63 @@ func TestCBuildMergedGroupSummaryMatchesStackIterDelayedBranchOrder(t *testing.T
 	}
 }
 
+func TestCRecoverToStateEnumeratesMergedPopSlices(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"end", "prefix", "leaf"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: true, Named: true},
+			{Name: "prefix", Visible: true, Named: true},
+			{Name: "leaf", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	leaf := func(start, end uint32) *Node {
+		return newLeafNodeInArena(arena, 2, true, start, end, Point{Column: start}, Point{Column: end})
+	}
+
+	var scratch gssScratch
+	baseA := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	prefixA := scratch.allocNode(newStackEntryNode(10, leaf(0, 1)), baseA, 2)
+	head := scratch.allocNode(newStackEntryNode(30, leaf(10, 11)), prefixA, 3)
+
+	baseB := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	prefixB := scratch.allocNode(newStackEntryNode(10, leaf(2, 3)), baseB, 2)
+	head.extraLinks = append(head.extraLinks, gssMainLink{
+		prev:  prefixB,
+		entry: newStackEntryNode(30, leaf(20, 21)),
+	})
+
+	stack := glrStack{gss: gssStack{head: head}, byteOffset: 21}
+	forks := parser.cRecoverToStateForks(&stack, 1, 10, 4, arena, nil, &scratch, nil)
+	if len(forks) != 2 {
+		t.Fatalf("fork count = %d, want 2", len(forks))
+	}
+	wantStarts := []uint32{10, 20}
+	wantEnds := []uint32{11, 21}
+	for i := range forks {
+		top := stackEntryNode(forks[i].top())
+		if top == nil {
+			t.Fatalf("fork %d top = nil", i)
+		}
+		if top.symbol != errorSymbol || !top.isExtra() || !top.hasError() {
+			t.Fatalf("fork %d top = symbol %d extra=%t has_error=%t, want extra ERROR",
+				i, top.symbol, top.isExtra(), top.hasError())
+		}
+		if forks[i].top().state != 10 || top.preGotoState != 10 || top.parseState != 10 {
+			t.Fatalf("fork %d state/pre-goto/parse = %d/%d/%d, want 10/10/10",
+				i, forks[i].top().state, top.preGotoState, top.parseState)
+		}
+		if top.startByte != wantStarts[i] || top.endByte != wantEnds[i] {
+			t.Fatalf("fork %d error span = %d:%d, want %d:%d",
+				i, top.startByte, top.endByte, wantStarts[i], wantEnds[i])
+		}
+	}
+}
+
 func TestCRecoverGroupMemberIndexSurvivesStackReorder(t *testing.T) {
 	group := &cRecGroup{}
 	stacks := []glrStack{

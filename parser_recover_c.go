@@ -954,6 +954,11 @@ type cMergedSummaryLink struct {
 	node    *cMergedSummaryNode
 }
 
+type cRecoverPopSlice struct {
+	popTo  *gssNode
+	window []stackEntry
+}
+
 func (p *Parser) cSummaryPath(entries []stackEntry, memberID int) []cSummaryPathEntry {
 	path := make([]cSummaryPathEntry, len(entries))
 	var posBytes uint32
@@ -1650,11 +1655,13 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 		if !currentHasAction {
 			continue
 		}
-		if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
-			fork.branchOrder = (*stacks)[mi].branchOrder
-			*stacks = append(*stacks, fork)
+		if forks := p.cRecoverToStateForks(&(*stacks)[mi], depth, entry.state, cRecoverMaxVersionCount, arena, entryScratch, gssScratch, trackChildErrors); len(forks) > 0 {
+			for i := range forks {
+				forks[i].branchOrder = (*stacks)[mi].branchOrder
+				*stacks = append(*stacks, forks[i])
+			}
 			if nodeCount != nil {
-				*nodeCount = *nodeCount + 1
+				*nodeCount = *nodeCount + len(forks)
 			}
 			if p.glrTrace {
 				traceCRecoverToState(entry.state, depth)
@@ -1766,46 +1773,118 @@ func cSetNodeSpan(n *Node, startByte, endByte uint32, startPoint, endPoint Point
 	n.endPoint = endPoint
 }
 
+func (p *Parser) cRecoverPopSlices(v *glrStack, depth int, goal StateID, maxSlices int, gssScratch *gssScratch) []cRecoverPopSlice {
+	if v == nil || depth < 0 || maxSlices <= 0 {
+		return nil
+	}
+	v.ensureGSS(gssScratch)
+	if v.gss.head == nil {
+		return nil
+	}
+
+	type iterator struct {
+		node    *gssNode
+		pathRev []stackEntry
+		count   int
+	}
+	iters := []iterator{{node: v.gss.head}}
+	var out []cRecoverPopSlice
+	seen := make(map[*gssNode]bool, 4)
+
+	for len(iters) > 0 && len(out) < maxSlices {
+		for i, size := 0, len(iters); i < size && len(out) < maxSlices; i++ {
+			it := iters[i]
+			n := it.node
+			if n == nil {
+				iters = append(iters[:i], iters[i+1:]...)
+				i--
+				size--
+				continue
+			}
+			if it.count == depth {
+				if n.entry.state == goal && !seen[n] {
+					seen[n] = true
+					pathLen := len(it.pathRev)
+					window := make([]stackEntry, pathLen)
+					for j := 0; j < pathLen; j++ {
+						window[j] = it.pathRev[pathLen-1-j]
+					}
+					out = append(out, cRecoverPopSlice{popTo: n, window: window})
+				}
+				iters = append(iters[:i], iters[i+1:]...)
+				i--
+				size--
+				continue
+			}
+			if n.linkCount() == 0 {
+				iters = append(iters[:i], iters[i+1:]...)
+				i--
+				size--
+				continue
+			}
+			for j := 1; j <= n.linkCount(); j++ {
+				var prev *gssNode
+				var entry stackEntry
+				var next *iterator
+				if j == n.linkCount() {
+					prev, entry = n.link(0)
+					next = &iters[i]
+				} else {
+					prev, entry = n.link(j)
+					iters = append(iters, it)
+					next = &iters[len(iters)-1]
+				}
+				next.node = prev
+				next.pathRev = append(append([]stackEntry(nil), it.pathRev...), entry)
+				next.count = it.count
+				if cEntryCountsTowardDepth(entry) {
+					next.count++
+				}
+			}
+		}
+	}
+	return out
+}
+
 // cRecoverToState ports ts_parser__recover_to_state: pop `depth`
 // depth-counting links off a copy of v, splice in any open error region
 // children, wrap the popped subtrees (minus trailing extras) into an extra
 // ERROR node pushed at the goal state, and re-push the trailing extras.
 func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (glrStack, bool) {
-	entries := cStackEntriesTopFirst(v, gssScratch)
-	if len(entries) == 0 {
+	forks := p.cRecoverToStateForks(v, depth, goal, 1, arena, entryScratch, gssScratch, trackChildErrors)
+	if len(forks) == 0 {
 		return glrStack{}, false
 	}
-	// Find the cut index: cross `depth` depth-counting links from the top.
-	crossed := 0
-	cut := -1
-	for i := 0; i < len(entries); i++ {
-		if crossed == depth {
-			cut = i
-			break
-		}
-		if cEntryCountsTowardDepth(entries[i]) {
-			crossed++
+	return forks[0], true
+}
+
+func (p *Parser) cRecoverToStateForks(v *glrStack, depth int, goal StateID, maxForks int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) []glrStack {
+	slices := p.cRecoverPopSlices(v, depth, goal, maxForks, gssScratch)
+	if len(slices) == 0 {
+		return nil
+	}
+	forks := make([]glrStack, 0, len(slices))
+	for _, slice := range slices {
+		fork, ok := p.cRecoverToStateSlice(v, depth, goal, slice, arena, entryScratch, gssScratch, trackChildErrors)
+		if ok {
+			forks = append(forks, fork)
 		}
 	}
-	if cut < 0 {
-		if crossed == depth {
-			cut = len(entries)
-		} else {
-			return glrStack{}, false
-		}
-	}
-	if cut >= len(entries) || entries[cut].state != goal {
+	return forks
+}
+
+func (p *Parser) cRecoverToStateSlice(v *glrStack, depth int, goal StateID, slice cRecoverPopSlice, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (glrStack, bool) {
+	if v == nil || slice.popTo == nil || slice.popTo.entry.state != goal {
 		return glrStack{}, false
 	}
 
 	// Materialize popped payloads in stack order (base-most first).
-	popped := entries[:cut]
-	nodes := make([]*Node, 0, len(popped))
-	for i := len(popped) - 1; i >= 0; i-- {
-		if !stackEntryHasNode(popped[i]) {
+	nodes := make([]*Node, 0, len(slice.window))
+	for i := range slice.window {
+		if !stackEntryHasNode(slice.window[i]) {
 			continue // the error discontinuity
 		}
-		n, _ := materializeStackEntryPayloadEntryWithParser(p, arena, popped[i], materializeForRecovery, materializeForRecovery)
+		n, _ := materializeStackEntryPayloadEntryWithParser(p, arena, slice.window[i], materializeForRecovery, materializeForRecovery)
 		if n == nil {
 			return glrStack{}, false
 		}
@@ -1848,8 +1927,10 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 	fork.cRec = nil
 	fork.dead = false
 	fork.shifted = false
-	keepDepth := len(entries) - cut
-	if !fork.truncate(keepDepth) {
+	fork.gss.head = slice.popTo
+	fork.entries = nil
+	fork.byteOffset = fork.gss.byteOffset()
+	if fork.gss.head == nil {
 		return glrStack{}, false
 	}
 	// C also pops a directly-preceding closed ERROR subtree and splices its
