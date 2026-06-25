@@ -183,6 +183,19 @@ by scheduling one scoped C-recovery retry before merge/widening retries for
 accepted full-EOF error trees. CUDA frame 3 remained the `0/0` no-error control.
 The frame 1 domain is still recovery tree shape/materialization, not admission.
 
+Scoped-first CUDA N=40 classification:
+`docs/reports/scoped-first-cuda-n40-20260625.md`
+
+| Sweep | Parity | Trunc | Clean | Recovery error shape | Version or corpus | Terminal failures | OOM |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| CUDA post-retry controls | 21/40 | 0 | 21 | 7 | 12 | 0 | false |
+| CUDA scoped-first | 21/40 | 0 | 21 | 6 | 13 | 0 | false |
+
+The scoped-first CUDA N=40 sweep completed cleanly under Docker. The
+`recovery_error_shape` family remains present beyond frame 1, with frames
+1, 7, 10, 11, 12, and 34 in that family. This is a classification update only
+and does not support performance conclusions.
+
 ## F# State
 
 Post-F# first N=40 artifact, built after the initial F# normalizer but before
