@@ -2294,8 +2294,27 @@ func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
 // lex state. It scans strictly so ordinary unrecognized bytes are not treated
 // as padding.
 func (p *Parser) gapIsCoveredByGrammarExtras(source []byte, start, end uint32) bool {
-	_, ok := p.materializableGrammarExtraGapTokens(source, start, end)
-	return ok
+	if p == nil || p.language == nil || start >= end || int(end) > len(source) {
+		return false
+	}
+	if len(p.language.LexStates) == 0 || len(p.language.LexModes) == 0 {
+		return false
+	}
+	broadLS := p.language.LexModes[0].LexStateIndex()
+	if broadLS == noLookaheadLexState {
+		return false
+	}
+	gapSource := source[start:end]
+	lexer := NewLexer(p.language.LexStates, gapSource)
+	lexer.asciiTable = p.language.LexAsciiTable()
+	for lexer.pos < len(gapSource) {
+		pos := lexer.pos
+		tok, ok := lexer.scan(broadLS, pos, lexer.row, lexer.col)
+		if !ok || tok.Symbol != 0 || lexer.pos <= pos {
+			return false
+		}
+	}
+	return lexer.pos == len(gapSource)
 }
 
 // materializableGrammarExtraGapTokens returns the grammar-defined extra tokens
