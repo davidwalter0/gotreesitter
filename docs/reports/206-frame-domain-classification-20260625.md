@@ -18,6 +18,9 @@ Evidence sources:
   `harness_out/docker/20260625T081254Z-fsharp-post-hardening-witness-20260625`
 - Scala forest N=40 post-repeat-aux artifact:
   `harness_out/docker/20260625T141622Z-scala-forest-n40-post-repeat-aux-20260625`
+- Scala `GenerateFunctionConverters.scala` forest no-shift report updated by
+  commit `c0c7ab69`:
+  `docs/reports/scala-forest-generate-function-converters-no-shift-20260625.md`
 
 ## Methodology
 
@@ -237,14 +240,19 @@ Forest frontier before-finalization follow-up:
 
 | Grammar/file | Current frame | Variant evidence | Classified next lane |
 | --- | --- | --- | --- |
-| scala `AutomaticModuleName.scala` | production smoke remains `iteration_limit`, `truncated`, parity `0/1`; forest follow-ups first advanced from `go_no_tree` to full-span root divergence and later cleared this single frame witness | `stack2`, `stack8`, and `node3` do not change production stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; after the zero-width external retry fix, forest masks that unusable external marker and advances through `object AutomaticModuleName`, but still reports `go_no_tree`; the generic forest block-comment repeat conflict choice and generated repeat auxiliary retention clear the frame witness under forest, while forest N=40 remains residual | `forest/materialization`, refined to forest materialization/comparison residuals |
+| scala `AutomaticModuleName.scala` / `GenerateFunctionConverters.scala` | production smoke remains `iteration_limit`, `truncated`, parity `0/1`; forest follow-ups first advanced from `go_no_tree` to full-span root divergence and later cleared the `AutomaticModuleName.scala` frame witness; forest N=40 still contains `GenerateFunctionConverters.scala` as a `go_no_tree` comparison residual | `stack2`, `stack8`, and `node3` do not change production stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; after the zero-width external retry fix, forest masks that unusable external marker and advances through `object AutomaticModuleName`, but still reports `go_no_tree`; the generic forest block-comment repeat conflict choice and generated repeat auxiliary retention clear the frame witness under forest; latest `GenerateFunctionConverters.scala` evidence shows a generalized forest C-recovery gap: production and forest both shift `pre` to state `8336`, production uses C recovery potential reductions, recover-to-state `138`, and same-token redispatch to continue, while forest absorbs `}` in state `8336` and later declines; the rejected local recover-to-state probe moved past byte `5029` but became `reduce-cap` | faithful forest C-recovery summary/election/error-cost preservation |
 
-Scala remains a true-coding runtime-frontier witness under production settings,
-but the next useful machinery lane is forest/materialization rather than node
-budget, stack/frontier cap, recovery-shape, or version/corpus. The first-diff
-shape is a block-comment materialization mismatch: C emits one `block_comment`
-root child, while Go materializes many `block_comment_repeat1` children and
-truncates inside the comment under production settings.
+Scala remains a true-coding runtime-frontier witness under production settings.
+Forest cleared the original frame witness, but the latest N=40 evidence now
+separates two forest lanes: residual materialization/comparison debt and a
+generalized forest C-recovery gap. The next useful machinery lane for the
+`GenerateFunctionConverters.scala` `go_no_tree` witness is faithful forest
+C-recovery summary/election/error-cost preservation, not node budget,
+stack/frontier cap, local token-source policy, or result normalization. The
+original first-diff shape remains a block-comment materialization mismatch: C
+emits one `block_comment` root child, while Go materializes many
+`block_comment_repeat1` children and truncates inside the comment under
+production settings.
 
 The `bestLink`/final-root-ranking hypothesis is not supported for this frame:
 the forest variant's short root is already bounded by the surviving recovery
@@ -304,8 +312,21 @@ during comparison reparse, six show accepted/no-error span divergence, and two
 show accepted/no-error root child-count divergence. Scala therefore remains in
 the residual queue and is not default-promoted. Production/default mode still
 needs separate evidence and likely remains the truncating Tier IV surface.
-The next generalized target is forest materialization/comparison machinery,
-not a per-grammar normalizer.
+The case-clause span residual remains normalizer debt and is excluded from
+implementation targeting under the generalized-machinery-only policy.
+
+Latest `GenerateFunctionConverters.scala` follow-up:
+`docs/reports/scala-forest-generate-function-converters-no-shift-20260625.md`
+
+This classifies one of the three forest N=40 `go_no_tree` comparison residuals
+as a generalized forest C-recovery gap. Both production and forest shift `pre`
+to state `8336`; production then uses C recovery potential reductions,
+recover-to-state `138`, and same-token redispatch to continue. Forest instead
+absorbs `}` in state `8336` and later declines. A local recover-to-state probe
+moved past byte `5029`, but changed the witness to `forestDeclineReason=reduce-cap`,
+so it was rejected. The next generalized target is faithful forest C-recovery
+summary/election/error-cost preservation, not local token-source behavior,
+per-grammar normalizers, or language-name parser policy.
 
 ## F# State
 

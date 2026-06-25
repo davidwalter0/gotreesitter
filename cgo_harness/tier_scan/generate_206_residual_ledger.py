@@ -119,8 +119,8 @@ OVERLAY_STATUS = {
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
     "scala": (
-        "frame witness cleared under forest; forest N=40 remains residual at 29/40 parity with 3 comparison go_no_tree cases, 6 accepted/no-error span divergences, and 2 accepted/no-error root child-count divergences; case-clause span residual is attributed to existing Scala result-normalizer behavior and excluded as an implementation target under the generalized-machinery-only policy",
-        "forest_materialization_and_comparison_residuals",
+        "frame witness cleared under forest; forest N=40 remains residual at 29/40 parity with 3 comparison go_no_tree cases, 6 accepted/no-error span divergences, and 2 accepted/no-error root child-count divergences; one GenerateFunctionConverters.scala go_no_tree witness is now classified as a generalized forest C-recovery gap: production and forest both shift pre to state 8336, production uses C recovery potential reductions, recover-to-state 138, and same-token redispatch to continue, while forest absorbs } in state 8336 and later declines; the rejected local recover-to-state probe moved past byte 5029 but became reduce-cap; case-clause span residual is attributed to existing Scala result-normalizer behavior and excluded as an implementation target under the generalized-machinery-only policy",
+        "faithful_forest_c_recovery_summary_election_error_cost_preservation",
     ),
 }
 
