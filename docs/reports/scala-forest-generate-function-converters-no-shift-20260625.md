@@ -483,3 +483,142 @@ stack path, pending reductions, recover-action table lookup for `}`, and any
 default/fragile reduction behavior that can leave state `8336` before lexing
 the closing brace. Keep the experiment in generic parser/forest frontier
 machinery; do not add Scala-specific token policy or result normalization.
+
+## Production GLR vs Forest GSS Comparison
+
+Command:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label scala-gfc-production-glr-trace-4970-5040 \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  -- "cd /workspace/cgo_harness && REPRO_LANG=scala REPRO_FILE=/workspace/corpus_sources/scala/project/GenerateFunctionConverters.scala REPRO_GLR_TRACE=1 go test . -tags treesitter_c_parity -run '^TestFirstDiffDiag$' -count=1 -v -timeout=60s"
+```
+
+Artifact:
+`harness_out/docker/20260625T153917Z-scala-gfc-production-glr-trace-4970-5040`
+
+Result: production GLR accepts a tree, but the accepted tree is already
+error-bearing and differs from C at the root:
+
+```text
+go stopReason=accepted runtime=... rootHasError=true cRootHasError=false
+FIRST-DIFF @root
+  go.child[0]: type="ERROR" [0:18633]
+  c.child[0]: kind="block_comment" [0:297]
+```
+
+The useful comparison is therefore not "production cleanly parses where forest
+does not". It is: production has a generalized recovery path that keeps parsing
+after byte `5029`, while forest recovery currently stays in state `8336` and
+eventually declines.
+
+At the same local source window, both paths shift `pre` from state `716` to
+state `8336`:
+
+```text
+[GLR] iter=31160 tok=_alpha_identifier(1)[5026-5029] stacks=1 needTok=true
+  s[0]: st=4495 ... byte=5025
+  stack[0] state=4495 ... reduce(identifier)
+[GLR] iter=31161 tok=_alpha_identifier(1)[5026-5029] stacks=1 needTok=false
+  s[0]: st=716 ... byte=5025
+  stack[0] state=716 ... shift(state=8336)
+```
+
+Forest is identical through that handoff:
+
+```text
+FOREST-X shift step=1225 from_state=716 from_byte=5025 ... tok=sym=1(_alpha_identifier) 5026..5029 text="pre" act=shift(state=8336) target=8336 target_byte=5029 target_lex=(70,0 active=70)
+```
+
+The paths diverge on the closing brace. Forest has a single frontier state,
+finds no parse action for `}`, and falls into token absorption at state `8336`:
+
+```text
+FOREST-TRACE step=1226 lexer_start=5029 lexer_end=5037 selected_state=8336 glr=[8336] tok=sym=5(}) 5036..5037 text="}"
+  state=8336 ... actions=none
+FOREST-X recover step=1226 from_state=8336 from_byte=5029 tok=sym=5(}) 5036..5037 text="}" recover_state=8336 target_byte=5037 ... error_cost=1
+```
+
+Production's C-recovery-enabled pass also finds no direct action for `}` in
+state `8336`, but it pauses the stack and runs the generic C recovery sequence:
+
+```text
+[GLR] iter=31162 tok=}(5)[5036-5037] stacks=1 needTok=true
+  s[0]: st=8336 ... byte=5029
+  stack[0] state=8336 actionIdx=0 actions=0
+  stack[0] C-PAUSED: no action for sym=5 in state=8336
+      -> C-RESUME stack=0 state=8336 byte=5029
+    APPLY reduce(identifier)
+    APPLY reduce(_simple_expression)
+    APPLY reduce(_if_condition)
+    APPLY reduce(expression)
+    APPLY reduce(_postfix_expression)
+    APPLY reduce(_indented_block)
+      -> C-RECOVER-TO-STATE state=138 depth=7
+[GLR] iter=31163 tok=}(5)[5036-5037] stacks=2 needTok=false
+  s[0]: st=138 ... byte=5029
+  stack[0] state=138 ... shift(state=8568)
+```
+
+No production `recoverActionForState(8336, })` table hit explains the movement.
+The difference is the broader C `handle_error` flow: close in-progress
+productions with potential reductions, enter the error-state summary, recover to
+an earlier stack state with an action for the current lookahead, then retry the
+same `}` token from that recovered state.
+
+## Rejected Generalized Probe
+
+A prototype forest recover-to-state path was tried and then reverted. It was
+generic: on forest no-shift recovery, scan bounded GSS ancestors, wrap the
+popped segment in an extra `ERROR`, coalesce at an ancestor state that has a
+shift action for the current lookahead, and shift that lookahead. No Scala
+policy or result normalization was involved.
+
+Artifacts:
+
+```text
+harness_out/docker/20260625T154301Z-scala-gfc-forest-recover-to-state-probe-4970-5040
+harness_out/docker/20260625T154428Z-scala-gfc-forest-recover-to-state-errorcost
+```
+
+The probe proved the local mechanism: forest moved past byte `5029` by
+recovering to state `138` and shifting `}`:
+
+```text
+FOREST-X recover-to-state step=1226 from_state=8336 from_byte=5029 goal_state=138 goal_byte=4795 depth=8 tok=sym=5(}) ... actions=[shift(state=8568)]
+FOREST-X recover-shift step=1226 from_state=138 from_byte=5029 tok=sym=5(}) ... target=8568 target_byte=5037
+```
+
+But it was not safe enough to keep. The witness changed from millisecond-scale
+`forestDeclineReason=no-shift-death` to multi-second
+`forestDeclineReason=reduce-cap`:
+
+```text
+artifact: harness_out/docker/20260625T154301Z-scala-gfc-forest-recover-to-state-probe-4970-5040
+MEASURE-DTIER scala mode=forest ... trunc=1 ... goNS=9184019473 ... runtime="nil_tree forestDeclineReason=reduce-cap"
+
+artifact: harness_out/docker/20260625T154428Z-scala-gfc-forest-recover-to-state-errorcost
+MEASURE-DTIER scala mode=forest ... trunc=1 ... goNS=4990500649 ... runtime="nil_tree forestDeclineReason=reduce-cap"
+```
+
+The behavior fix was reverted. No parser behavior change is included.
+
+## Updated Next Generalized Experiment
+
+The comparison proves a real generalized gap, but not a safe patch. The next
+experiment should port the C recovery shape more faithfully into forest instead
+of adding a local ancestor-shift shortcut:
+
+1. Model the C `handle_error` phases in the forest path: potential reductions on
+   any symbol, error-state discontinuity/summary, recover-to-state election, and
+   same-token redispatch.
+2. Preserve accumulated `errorCost` through forest reductions; the rejected
+   probe showed recovered paths can become effectively zero-cost after the next
+   reduce.
+3. Add bounded diagnostics for forest recovery summaries: candidate ancestor
+   state, depth, position, lookahead action, whether it would merge, and chosen
+   recovery target.
+4. Verify first on the `GenerateFunctionConverters.scala` witness, then
+   `AutomaticModuleName.scala`, then one non-Scala external-scanner forest
+   canary. Keep correctness gating separate from performance gating.
