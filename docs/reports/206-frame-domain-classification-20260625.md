@@ -76,11 +76,15 @@ pure materialization cases.
 
 ## Coding-Language Priority Queue
 
-Accepted/materialization seed: fsharp, fennel, perl, purescript, swift.
+Accepted/materialization-invariant seed: fsharp, fennel, perl, purescript,
+swift.
 
 - All accepted/materialization seeds are mixed.
-- PureScript is the cleanest next materialization target because its N=40 row
-  has 1 truncation, 0 error trees, and no failed files.
+- Accepted/no-error divergence should be used as a generalized
+  materialization-invariant probe, not as a trigger for per-language
+  normalizer patches.
+- PureScript and F# are retained as evidence-bearing probes only; they are not
+  per-language materialization targets.
 - F# had a real accepted-shape frame available, but later evidence shows its
   residual state is no longer primarily a pure materialization problem.
 
@@ -99,6 +103,34 @@ prose/docs, query/policy, data/grammar.
 These lower-priority groups are still important for the 206 goal, but they
 should not displace coding-language fixes while the accepted-shape,
 runtime-frontier, and recovery queues still have coding-first candidates.
+
+## Generalized Machinery Witness Set
+
+The first machinery experiment should prefer `runtime_frontier_stop` and
+frontier survival over accepted-shape normalization.
+
+Representative witnesses:
+
+| Grammar/file | Evidence | Raw log |
+| --- | --- | --- |
+| cpp `args.h` | `stopReason=no_stacks_alive`, `trunc=true`, errors `go=2 c=10`, nodes `132/373984`, `maxStacks=3`, root `ERROR->translation_unit`, diff type | `cgo_harness/harness_out/tier_scan_parallel/current-206-smoke-20260625/workers/shard-000/measure-cpp-external-frame-0001.log` |
+| cuda `UnifiedMemoryStreams.cu` | `stopReason=no_stacks_alive`, `trunc=true`, errors `0/0`, nodes `17793/637208`, `maxStacks=24`, root `translation_unit->translation_unit`, diff span | `cgo_harness/harness_out/tier_scan_parallel/current-206-smoke-20260625/workers/shard-004/measure-cuda-external-frame-0001.log` |
+| scala `AutomaticModuleName.scala` | `stopReason=iteration_limit`, `trunc=true`, errors `0/0`, nodes `39065/300000`, `maxStacks=3`, root `compilation_unit->compilation_unit`, diff span | `cgo_harness/harness_out/tier_scan_parallel/current-206-smoke-20260625/workers/shard-006/measure-scala-external-frame-0001.log` |
+| glsl `100.frag` | `stopReason=no_stacks_alive`, `trunc=true`, errors `go=1 c=5`, nodes `26642/300000`, `maxStacks=72`, root `ERROR->translation_unit`, diff type | `cgo_harness/harness_out/tier_scan_parallel/current-206-smoke-20260625/workers/shard-016/measure-glsl-external-frame-0001.log` |
+| fsharp `DesignTimeBuild.fs` | Accepted/no-error control only: `stopReason=accepted`, `trunc=false`, errors `0/0`, nodes `507228/600000`, `maxStacks=24`, root `file->file`, first diff `value_declaration_left->function_declaration_left`, diff type | `cgo_harness/harness_out/tier_scan_parallel/current-206-smoke-20260625/workers/shard-008/measure-fsharp-external-frame-0001.log` |
+
+Generic hypothesis: viable GLR frontiers are being culled, merged incorrectly,
+or cost-ranked behind recovery paths before EOF. The accepted/no-error control
+probes the generalized materialization invariant only.
+
+Falsification criteria:
+
+- No improvement in token progress, stop reason, root pair, or parity.
+- No viable frontier is observed near the failure.
+- Only one grammar improves while the others remain unchanged or regress.
+
+Do not add per-grammar normalizers or language-name policies for these
+witnesses.
 
 ## F# State
 
@@ -130,13 +162,16 @@ Post-hardening witness artifact:
 - F# `DesignTimeBuild.fs` first-diff witness passed with
   `(no structural divergence)`.
 
-The witness confirms the targeted F# normalization behavior, but it does not
+The witness captured the targeted F# normalization behavior from the discarded
+patch, but it does not justify banking grammar-specific normalizer code or
 replace a full post-hardening N=40 classification row.
 
 ## Next Steps
 
-1. Bank the F# normalizer patch.
-2. Use PureScript for the next materialization proof.
+1. Treat accepted/no-error divergence as a generalized
+   materialization-invariant probe.
+2. Fix shared parser materialization machinery only; do not introduce
+   language-specific compatibility behavior for this 206 effort.
 3. Create a generated/domain-tagged classification artifact, or update
    `tier_classification.tsv`, as a separate step.
 4. Defer performance work until classification and parity are stable.
