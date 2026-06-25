@@ -196,6 +196,20 @@ The scoped-first CUDA N=40 sweep completed cleanly under Docker. The
 1, 7, 10, 11, 12, and 34 in that family. This is a classification update only
 and does not support performance conclusions.
 
+Scala frame 1 follow-up:
+`docs/reports/scala-frontier-frame1-20260625.md`
+
+| Grammar/file | Current frame | Variant evidence | Classified next lane |
+| --- | --- | --- | --- |
+| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; `forest` removes runtime `iteration_limit` telemetry and advances Go span to `0:395` but remains non-parity and short of EOF | `forest/materialization` |
+
+Scala remains a true-coding runtime-frontier witness under production settings,
+but the next useful machinery lane is forest/materialization rather than node
+budget, stack/frontier cap, recovery-shape, or version/corpus. The first-diff
+shape is a block-comment materialization mismatch: C emits one `block_comment`
+root child, while Go materializes many `block_comment_repeat1` children and
+truncates inside the comment under production settings.
+
 ## F# State
 
 Post-F# first N=40 artifact, built after the initial F# normalizer but before
