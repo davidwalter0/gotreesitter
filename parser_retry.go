@@ -38,8 +38,8 @@ type resettableTokenSource interface {
 
 type fullParseRetryRunner func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree
 
-func shouldRetryFullParseWithCRecovery(tree *Tree, sourceLen int) bool {
-	if tree == nil || treeParseClean(tree) {
+func shouldRetryFullParseWithCRecovery(tree *Tree, sourceLen int, initialMaxStacks int) bool {
+	if tree == nil {
 		return false
 	}
 	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
@@ -51,6 +51,21 @@ func shouldRetryFullParseWithCRecovery(tree *Tree, sourceLen int) bool {
 		return rt.Truncated || retryTreeEndByte(tree) < rt.ExpectedEOFByte
 	case ParseStopNodeLimit:
 		return true
+	case ParseStopAccepted:
+		if rt.Truncated || rt.TokenSourceEOFEarly || !rt.LastTokenWasEOF {
+			return false
+		}
+		root := rawRootOrNil(tree)
+		if root == nil || !retryNodeHasErrorDeep(root) {
+			return false
+		}
+		if retryTreeEndByte(tree) < rt.ExpectedEOFByte {
+			return false
+		}
+		if initialMaxStacks <= 0 {
+			initialMaxStacks = maxGLRStacks
+		}
+		return rt.MaxStacksSeen >= initialMaxStacks
 	default:
 		return false
 	}
@@ -180,6 +195,21 @@ func retryTreeHasError(tree *Tree) bool {
 		return true
 	}
 	return root.HasError()
+}
+
+func retryNodeHasErrorDeep(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	if node.HasError() || node.IsError() || node.IsMissing() {
+		return true
+	}
+	for i := 0; i < resultChildCount(node); i++ {
+		if retryNodeHasErrorDeep(resultChildAt(node, i)) {
+			return true
+		}
+	}
+	return false
 }
 
 func retryStopRank(rt ParseRuntime) int {
@@ -925,7 +955,7 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
 func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree, runRetry fullParseRetryRunner) *Tree {
 	maxStacksOverride := fullParseRetryMaxStacksOverride(tree, len(source), initialMaxStacks)
 	maxNodesOverride := fullParseRetryNodeLimitOverride(tree, len(source))
-	runCRecoveryRetry := p != nil && !p.errorCostCompetition && shouldRetryFullParseWithCRecovery(tree, len(source))
+	runCRecoveryRetry := p != nil && !p.errorCostCompetition && shouldRetryFullParseWithCRecovery(tree, len(source), initialMaxStacks)
 	retryMaxStacks := initialMaxStacks
 	if maxStacksOverride > 0 {
 		retryMaxStacks = maxStacksOverride

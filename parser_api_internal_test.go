@@ -946,47 +946,117 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 	}
 }
 
-func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
+func TestCRecoveryRetryAdmitsAcceptedErrorUnderStackPressure(t *testing.T) {
 	tree := &Tree{
-		language: &Language{Name: "cpp"},
 		root: &Node{
 			endByte: 128,
-			flags:   nodeFlagHasError,
+			children: []*Node{
+				{startByte: 64, endByte: 96, symbol: errorSymbol, flags: nodeFlagHasError},
+			},
 		},
 		parseRuntime: ParseRuntime{
-			StopReason:      ParseStopAccepted,
-			ExpectedEOFByte: 128,
-			RootEndByte:     128,
-			MaxStacksSeen:   18,
+			StopReason:       ParseStopAccepted,
+			ExpectedEOFByte:  128,
+			RootEndByte:      128,
+			LastTokenEndByte: 128,
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    18,
 		},
 	}
 
-	if shouldRetryAcceptedErrorParse(tree, 128, 18) {
-		t.Fatal("shouldRetryAcceptedErrorParse(cpp complete accepted error) = true, want false")
-	}
-	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != 0 {
-		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want 0", got)
+	if !shouldRetryFullParseWithCRecovery(tree, 128, 18) {
+		t.Fatal("shouldRetryFullParseWithCRecovery(accepted error under pressure) = false, want true")
 	}
 }
 
-func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
+func TestCRecoveryRetryRejectsCleanAcceptedTree(t *testing.T) {
 	tree := &Tree{
-		language: &Language{Name: "cpp"},
-		root: &Node{
-			endByte: 96,
-			flags:   nodeFlagHasError,
-		},
+		root: &Node{endByte: 128},
 		parseRuntime: ParseRuntime{
-			StopReason:      ParseStopAccepted,
-			ExpectedEOFByte: 128,
-			RootEndByte:     96,
-			Truncated:       true,
-			MaxStacksSeen:   18,
+			StopReason:       ParseStopAccepted,
+			ExpectedEOFByte:  128,
+			RootEndByte:      128,
+			LastTokenEndByte: 128,
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    18,
 		},
 	}
 
-	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != fullParseRetryMaxMergePerKey {
-		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp truncated accepted error) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	if shouldRetryFullParseWithCRecovery(tree, 128, 18) {
+		t.Fatal("shouldRetryFullParseWithCRecovery(clean accepted tree) = true, want false")
+	}
+}
+
+func TestCRecoveryRetryRejectsAcceptedErrorWithoutStackPressure(t *testing.T) {
+	tree := &Tree{
+		root: &Node{endByte: 128, flags: nodeFlagHasError},
+		parseRuntime: ParseRuntime{
+			StopReason:       ParseStopAccepted,
+			ExpectedEOFByte:  128,
+			RootEndByte:      128,
+			LastTokenEndByte: 128,
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    17,
+		},
+	}
+
+	if shouldRetryFullParseWithCRecovery(tree, 128, 18) {
+		t.Fatal("shouldRetryFullParseWithCRecovery(accepted error below pressure) = true, want false")
+	}
+}
+
+func TestCRecoveryRetryRejectsAcceptedErrorWithoutFullEOF(t *testing.T) {
+	makeTree := func() *Tree {
+		return &Tree{
+			root: &Node{endByte: 128, flags: nodeFlagHasError},
+			parseRuntime: ParseRuntime{
+				StopReason:       ParseStopAccepted,
+				ExpectedEOFByte:  128,
+				RootEndByte:      128,
+				LastTokenEndByte: 128,
+				LastTokenWasEOF:  true,
+				MaxStacksSeen:    18,
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Tree)
+	}{
+		{
+			name: "token source EOF early",
+			mutate: func(tree *Tree) {
+				tree.parseRuntime.TokenSourceEOFEarly = true
+			},
+		},
+		{
+			name: "truncated",
+			mutate: func(tree *Tree) {
+				tree.parseRuntime.Truncated = true
+			},
+		},
+		{
+			name: "missing EOF token",
+			mutate: func(tree *Tree) {
+				tree.parseRuntime.LastTokenWasEOF = false
+			},
+		},
+		{
+			name: "root short of expected EOF",
+			mutate: func(tree *Tree) {
+				tree.root.endByte = 127
+				tree.parseRuntime.RootEndByte = 127
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := makeTree()
+			tc.mutate(tree)
+			if shouldRetryFullParseWithCRecovery(tree, 128, 18) {
+				t.Fatal("shouldRetryFullParseWithCRecovery = true, want false")
+			}
+		})
 	}
 }
 
