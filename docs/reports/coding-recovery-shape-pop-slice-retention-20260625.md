@@ -195,17 +195,23 @@ The repair stays local to the generalized C-recovery machinery:
   collapses same-pop candidates action-locally, then performs generic
   header-equivalence merge;
 - same-pop collapse identifies the reduced parent by walking past replayed
-  trailing extras and compares the original pop target;
+  trailing extras and compares the original pop target, not the final pushed
+  stack header or byte offset;
 - the parent survivor is selected by parent subtree error cost, positive-error
-  replacement behavior, then recursive node order. This baseline's `Node` model
-  does not retain subtree dynamic precedence, so that C tie-break is not
-  separately represented here.
+  replacement behavior, then recursive symbol/child-count node order. Flags are
+  intentionally excluded to match C's `ts_subtree_compare`. This baseline's
+  `Node` model does not retain subtree dynamic precedence, so that C tie-break
+  remains a documented C-fidelity residual rather than a broad layout change in
+  this repair.
 
 Focused coverage was added for:
 
 - same-pop child-array survivor selection;
+- same-pop alternatives with different selected child spans/final byte offsets
+  collapsing by original pop target;
 - trailing-extra same-pop collapse and selected-extra replay;
-- collapse-before-older-merge ordering.
+- collapse-before-older-merge ordering;
+- flag-only subtree differences not affecting survivor selection.
 
 Host verification:
 

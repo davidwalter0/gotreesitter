@@ -1374,9 +1374,6 @@ func (p *Parser) cTryCollapseSamePopReductionVersion(target, candidate *glrStack
 	if targetPopTo != candidatePopTo {
 		return false
 	}
-	if targetPopTo == nil || !stacksHeaderEquivalent(*target, *candidate) {
-		return false
-	}
 	if p.cSelectReplacementParentNode(stackEntryNode(targetParent.entry), stackEntryNode(candidateParent.entry)) {
 		*target = *candidate
 	}
@@ -1444,12 +1441,6 @@ func cCompareNodesForSelection(a, b *Node) int {
 	}
 	if len(a.children) != len(b.children) {
 		if len(a.children) < len(b.children) {
-			return -1
-		}
-		return 1
-	}
-	if a.flags != b.flags {
-		if a.flags < b.flags {
 			return -1
 		}
 		return 1

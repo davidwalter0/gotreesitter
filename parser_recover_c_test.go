@@ -117,6 +117,52 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlices(t *testing.T) {
 	}
 }
 
+func TestCDoAllPotentialReductionsCollapsesSamePopDifferentFinalOffsets(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = true
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	parser := newCRecoverySyntheticReduceParser()
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch gssScratch
+	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	selectedRight := newLeafNodeInArena(arena, 1, true, 1, 4, Point{Column: 1}, Point{Column: 4})
+	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
+	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
+	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+		prev:  leftNode,
+		entry: newStackEntryNode(3, selectedRight),
+	})
+	start := glrStack{gss: gssStack{head: rightNode}, byteOffset: 2}
+
+	nodeCount := 0
+	versions, canShift := parser.cDoAllPotentialReductions(start, 0, Token{}, &nodeCount, arena, nil, &scratch, nil)
+	if canShift {
+		t.Fatal("canShift = true, want false")
+	}
+	if len(versions) != 1 {
+		t.Fatalf("version count = %d, want different final offsets collapsed by original pop target", len(versions))
+	}
+	if versions[0].byteOffset != 4 {
+		t.Fatalf("surviving version byte offset = %d, want selected child end byte 4", versions[0].byteOffset)
+	}
+	top := stackEntryNode(versions[0].top())
+	if top == nil || top.symbol != 4 {
+		t.Fatalf("current version top = %+v, want reduced parent symbol 4", top)
+	}
+	if got := versions[0].gss.head.linkCount(); got != 1 {
+		t.Fatalf("reduced top link count = %d, want same-pop children collapsed to one alternative", got)
+	}
+	if len(top.children) != 2 || top.children[1] != selectedRight {
+		t.Fatal("same-pop collapse did not keep the C-selected child array across final byte offsets")
+	}
+}
+
 func TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
@@ -325,6 +371,22 @@ func TestCAppendActionReductionsCollapseSamePopBeforeOlderMerge(t *testing.T) {
 	_, mergedEntry := versions[0].gss.head.link(1)
 	if stackEntryNode(mergedEntry) != selectedParent {
 		t.Fatal("older header-equivalent merge received the unselected same-pop parent")
+	}
+}
+
+func TestCSelectReplacementParentNodeIgnoresFlagsWhenSubtreeOrderTies(t *testing.T) {
+	parser := &Parser{}
+
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	existingChild := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	candidateChild := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	existing := newParentNodeInArena(arena, 4, true, []*Node{existingChild}, nil, 0)
+	candidate := newParentNodeInArena(arena, 4, false, []*Node{candidateChild}, nil, 0)
+
+	if parser.cSelectReplacementParentNode(existing, candidate) {
+		t.Fatal("flags-only subtree difference selected replacement; C compares symbol and child count recursively")
 	}
 }
 
