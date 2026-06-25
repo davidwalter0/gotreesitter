@@ -742,6 +742,56 @@ func TestCollapsibleRawUnarySelfReductionRejectsInvisibleChild(t *testing.T) {
 	}
 }
 
+func TestCollapsibleRawUnarySelfReductionKeepsAliasTargetChild(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_items", "item", "items"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_items", Visible: false, Named: false},
+			{Name: "item", Visible: true, Named: true},
+			{Name: "items", Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{
+			nil,
+			{2},
+		},
+	}
+	p := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 2, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	entries := []stackEntry{newStackEntryNode(0, child)}
+	act := ParseAction{Symbol: 1, ChildCount: 1}
+
+	if got := p.collapsibleRawUnarySelfReduction(act, Token{}, arena, entries, 0, 1); got != nil {
+		t.Fatalf("expected alias-target child to preserve invisible wrapper, got node %q", got.Type(lang))
+	}
+}
+
+func TestCollapsibleRawUnarySelfReductionEntryKeepsAliasTargetCompactLeaf(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_items", "item", "items"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "_items", Visible: false, Named: false},
+			{Name: "item", Visible: true, Named: true},
+			{Name: "items", Visible: true, Named: true},
+		},
+		AliasSequences: [][]Symbol{
+			nil,
+			{2},
+		},
+	}
+	p := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	leaf := newCompactFullLeafInArena(arena, 2, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	entries := []stackEntry{newStackEntryCompactFullLeaf(0, leaf)}
+	act := ParseAction{Symbol: 1, ChildCount: 1}
+
+	if got, ok := p.collapsibleRawUnarySelfReductionEntry(act, Token{}, arena, entries, 0, 1); ok {
+		t.Fatalf("expected alias-target compact leaf to preserve invisible wrapper, got entry state=%d", got.state)
+	}
+}
+
 func TestReduceProductionHasEffectiveFieldsIgnoresConflictedZeroFields(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{

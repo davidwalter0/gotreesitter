@@ -5965,7 +5965,7 @@ func (p *Parser) collapseUnaryPendingParentRule(act ParseAction, parent *pending
 		return collapseUnaryRuleNone
 	}
 	if parent.symbol != act.Symbol {
-		if p.canCollapseInvisibleUnaryWrapperSymbol(act.Symbol) {
+		if p.canCollapseInvisibleUnaryWrapperSymbolForChild(act.Symbol, parent.symbol) {
 			return collapseUnaryRuleInvisibleWrapper
 		}
 		return collapseUnaryRuleNone
@@ -5975,7 +5975,7 @@ func (p *Parser) collapseUnaryPendingParentRule(act ParseAction, parent *pending
 
 func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collapseUnaryRule {
 	if childSym != act.Symbol {
-		if p.canCollapseInvisibleUnaryWrapperSymbol(act.Symbol) {
+		if p.canCollapseInvisibleUnaryWrapperSymbolForChild(act.Symbol, childSym) {
 			return collapseUnaryRuleInvisibleWrapper
 		}
 		if !p.canCollapseNamedLeafWrapper(act.Symbol, childSym) {
@@ -6005,6 +6005,10 @@ func (p *Parser) collapseUnaryLeafRule(act ParseAction, childSym Symbol) collaps
 }
 
 func (p *Parser) canCollapseInvisibleUnaryWrapperSymbol(parentSym Symbol) bool {
+	return p.canCollapseInvisibleUnaryWrapperSymbolForChild(parentSym, 0)
+}
+
+func (p *Parser) canCollapseInvisibleUnaryWrapperSymbolForChild(parentSym, childSym Symbol) bool {
 	if p == nil || p.language == nil {
 		return false
 	}
@@ -6013,6 +6017,9 @@ func (p *Parser) canCollapseInvisibleUnaryWrapperSymbol(parentSym Symbol) bool {
 		return false
 	}
 	if symbolMarked(p.aliasPreservedWrapperSymbols, parentSym) {
+		return false
+	}
+	if childSym != 0 && p.isAliasTargetSymbol(childSym) {
 		return false
 	}
 	return invisibleUnaryWrapperCollapsible(meta[parentSym])
@@ -6206,6 +6213,9 @@ func (p *Parser) canCollapseInvisibleUnaryWrapper(parentSym Symbol, child *Node)
 		return false
 	}
 	if symbolMarked(p.aliasPreservedWrapperSymbols, parentSym) {
+		return false
+	}
+	if p.isAliasTargetSymbol(child.symbol) {
 		return false
 	}
 	return invisibleUnaryWrapperCollapsible(meta[parentSym])
