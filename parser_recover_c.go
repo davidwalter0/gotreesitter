@@ -425,6 +425,11 @@ type cStackSummaryEntry struct {
 	posRow   uint32
 }
 
+type cGroupSummaryEntry struct {
+	cStackSummaryEntry
+	member int
+}
+
 // cRecGroup coordinates the absorbing stacks that map to C's ONE merged
 // error-state version. C ts_parser__handle_error pushes the NULL discontinuity
 // onto every do_all_potential_reductions result and merges them into a single
@@ -438,6 +443,7 @@ type cRecGroup struct {
 	electionTokenStart  uint32
 	electionTokenSymbol Symbol
 	electionDone        bool
+	mergedSummary       []cGroupSummaryEntry
 }
 
 // cRecoverState marks a glrStack as being in the C error state (head at
@@ -923,6 +929,228 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 	return summary
 }
 
+type cSummaryPathEntry struct {
+	entry     stackEntry
+	posBytes  uint32
+	posRow    uint32
+	errorCost uint32
+	member    int
+}
+
+type cMergedSummaryNode struct {
+	entry     cSummaryPathEntry
+	links     []cMergedSummaryLink
+	member    int
+	posBytes  uint32
+	posRow    uint32
+	errorCost uint32
+}
+
+type cMergedSummaryLink struct {
+	payload cSummaryPathEntry
+	node    *cMergedSummaryNode
+}
+
+func (p *Parser) cSummaryPath(entries []stackEntry, member int) []cSummaryPathEntry {
+	path := make([]cSummaryPathEntry, len(entries))
+	var posBytes uint32
+	var posRow uint32
+	var errorCost uint32
+	for i := len(entries) - 1; i >= 0; i-- {
+		if n := stackEntryNode(entries[i]); n != nil {
+			errorCost += p.cNodeErrorCost(n)
+			posBytes = n.endByte
+			posRow = n.endPoint.Row
+		}
+		path[i] = cSummaryPathEntry{
+			entry:     entries[i],
+			posBytes:  posBytes,
+			posRow:    posRow,
+			errorCost: errorCost,
+			member:    member,
+		}
+	}
+	return path
+}
+
+func cSummaryNodeFromPath(path []cSummaryPathEntry, idx int) *cMergedSummaryNode {
+	if idx >= len(path) {
+		return nil
+	}
+	n := &cMergedSummaryNode{
+		entry:     path[idx],
+		member:    path[idx].member,
+		posBytes:  path[idx].posBytes,
+		posRow:    path[idx].posRow,
+		errorCost: path[idx].errorCost,
+	}
+	if child := cSummaryNodeFromPath(path, idx+1); child != nil {
+		n.links = append(n.links, cMergedSummaryLink{payload: path[idx], node: child})
+	}
+	return n
+}
+
+func (p *Parser) cSummaryPayloadEquivalent(a, b stackEntry) bool {
+	an := stackEntryNode(a)
+	bn := stackEntryNode(b)
+	if an == nil || bn == nil {
+		if !stackEntryHasNode(a) || !stackEntryHasNode(b) {
+			return !stackEntryHasNode(a) && !stackEntryHasNode(b)
+		}
+		lang := (*Language)(nil)
+		if p != nil {
+			lang = p.language
+		}
+		return stackEntryPayloadsEquivalentForLanguageWithScratch(nil, lang, a, b)
+	}
+	if an == bn {
+		return true
+	}
+	if an.symbol != bn.symbol {
+		return false
+	}
+	if p.cNodeErrorCost(an) > 0 && p.cNodeErrorCost(bn) > 0 {
+		return true
+	}
+	sizeA := uint32(0)
+	if an.endByte > an.startByte {
+		sizeA = an.endByte - an.startByte
+	}
+	sizeB := uint32(0)
+	if bn.endByte > bn.startByte {
+		sizeB = bn.endByte - bn.startByte
+	}
+	return sizeA == sizeB &&
+		len(an.children) == len(bn.children) &&
+		an.isExtra() == bn.isExtra()
+}
+
+func cMergedSummaryNodeCanMerge(a, b *cMergedSummaryNode) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.entry.entry.state == b.entry.entry.state &&
+		a.posBytes == b.posBytes &&
+		a.errorCost == b.errorCost
+}
+
+func (p *Parser) cMergedSummaryAddLink(n *cMergedSummaryNode, link cMergedSummaryLink) {
+	if n == nil || link.node == n {
+		return
+	}
+	for i := range n.links {
+		existing := &n.links[i]
+		if !p.cSummaryPayloadEquivalent(existing.payload.entry, link.payload.entry) {
+			continue
+		}
+		if existing.node == link.node {
+			return
+		}
+		if cMergedSummaryNodeCanMerge(existing.node, link.node) {
+			for _, childLink := range link.node.links {
+				p.cMergedSummaryAddLink(existing.node, childLink)
+			}
+			return
+		}
+	}
+	n.links = append(n.links, link)
+}
+
+func (p *Parser) cBuildMergedGroupSummaryForPaths(paths [][]cSummaryPathEntry) []cGroupSummaryEntry {
+	var root *cMergedSummaryNode
+	for _, path := range paths {
+		if len(path) == 0 {
+			continue
+		}
+		if root == nil {
+			root = cSummaryNodeFromPath(path, 0)
+			continue
+		}
+		child := cSummaryNodeFromPath(path, 1)
+		if child == nil {
+			continue
+		}
+		p.cMergedSummaryAddLink(root, cMergedSummaryLink{payload: path[0], node: child})
+	}
+	if root == nil {
+		return nil
+	}
+
+	type iterator struct {
+		node  *cMergedSummaryNode
+		depth int
+	}
+	iterators := []iterator{{node: root}}
+	summary := make([]cGroupSummaryEntry, 0, 8)
+	record := func(n *cMergedSummaryNode, depth int) {
+		state := n.entry.entry.state
+		for i := len(summary) - 1; i >= 0; i-- {
+			entry := summary[i]
+			if entry.depth < depth {
+				break
+			}
+			if entry.depth == depth && entry.state == state {
+				return
+			}
+		}
+		summary = append(summary, cGroupSummaryEntry{
+			cStackSummaryEntry: cStackSummaryEntry{
+				depth:    depth,
+				state:    state,
+				posBytes: n.posBytes,
+				posRow:   n.posRow,
+			},
+			member: n.member,
+		})
+	}
+	for len(iterators) > 0 {
+		for i, size := 0, len(iterators); i < size; i++ {
+			it := iterators[i]
+			n := it.node
+			if n == nil || it.depth > cRecoverMaxSummaryDepth || len(n.links) == 0 {
+				if n != nil && it.depth <= cRecoverMaxSummaryDepth {
+					record(n, it.depth)
+				}
+				iterators = append(iterators[:i], iterators[i+1:]...)
+				i--
+				size--
+				continue
+			}
+			record(n, it.depth)
+			for j := 1; j <= len(n.links); j++ {
+				var link cMergedSummaryLink
+				var next *iterator
+				if j == len(n.links) {
+					link = n.links[0]
+					next = &iterators[i]
+				} else {
+					link = n.links[j]
+					iterators = append(iterators, it)
+					next = &iterators[len(iterators)-1]
+				}
+				next.node = link.node
+				next.depth = it.depth
+				if cEntryCountsTowardDepth(link.payload.entry) {
+					next.depth++
+				}
+			}
+		}
+	}
+	return summary
+}
+
+func (p *Parser) cBuildMergedGroupSummary(stacks []glrStack, members []int, gssScratch *gssScratch) []cGroupSummaryEntry {
+	paths := make([][]cSummaryPathEntry, 0, len(members))
+	for _, mi := range members {
+		if mi < 0 || mi >= len(stacks) || stacks[mi].dead || stacks[mi].cRec == nil {
+			continue
+		}
+		entries := cStackEntriesTopFirst(&stacks[mi], gssScratch)
+		paths = append(paths, p.cSummaryPath(entries, mi))
+	}
+	return p.cBuildMergedGroupSummaryForPaths(paths)
+}
+
 // ---------------------------------------------------------------------------
 // do_all_potential_reductions port
 // ---------------------------------------------------------------------------
@@ -1175,9 +1403,13 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 
 	// The original stack becomes the first absorbing version.
 	*s = versions[0]
+	groupMembers := []int{si}
+	oldLen := len(*stacks)
 	for vi := 1; vi < len(versions); vi++ {
 		*stacks = append(*stacks, versions[vi])
+		groupMembers = append(groupMembers, oldLen+vi-1)
 	}
+	group.mergedSummary = p.cBuildMergedGroupSummary(*stacks, groupMembers, gssScratch)
 
 	// 4. Run recover for the current lookahead across the absorbing group.
 	// Recover may fork one strategy-1 candidate (which must act on this
@@ -1360,66 +1592,64 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 		state StateID
 	}
 	seen := make(map[seenKey]bool, 16)
-	for d := 0; d <= cRecoverMaxSummaryDepth+1; d++ {
-		for _, mi := range members {
-			for _, entry := range (*stacks)[mi].cRec.summary {
-				if entry.depth != d {
-					continue
-				}
-				if entry.state == cErrorState {
-					continue
-				}
-				key := seenKey{depth: entry.depth, state: entry.state}
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				if entry.posBytes == pos {
-					continue
-				}
-				depth := entry.depth + depthBump
-				// Do not recover in ways that create redundant stack versions.
-				wouldMerge := false
-				for i := range *stacks {
-					if (*stacks)[i].dead || (*stacks)[i].accepted {
-						continue
-					}
-					if (*stacks)[i].top().state == entry.state && (*stacks)[i].byteOffset == pos {
-						wouldMerge = true
-						break
-					}
-				}
-				if wouldMerge {
-					continue
-				}
-				newCost := curCost +
-					uint32(entry.depth)*cErrCostPerSkippedTree +
-					(pos-entry.posBytes)*cErrCostPerSkippedChar +
-					(curRow-entry.posRow)*cErrCostPerSkippedLine
-				currentHasAction := p.lookupActionIndex(entry.state, tok.Symbol) != 0
-				rejected := p.cBetterVersionExists(*stacks, m0, false, newCost)
-				if cRecoveryTraceTokenInWindow(tok) || cRecoveryTraceByteInWindow(pos) || cRecoveryTraceByteInWindow(entry.posBytes) {
-					fmt.Printf("C-REC-TRACE cRecoverStrategy1Election pos=%d tok_sym=%d tok=%d:%d member=%d entry_state=%d entry_depth=%d entry_pos=%d recover_depth=%d current_has_action=%t better_version_reject=%t\n",
-						pos, tok.Symbol, tok.StartByte, tok.EndByte, mi, entry.state, entry.depth, entry.posBytes, depth, currentHasAction, rejected)
-				}
-				if rejected {
-					return false, false
-				}
-				if !currentHasAction {
-					continue
-				}
-				if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
-					fork.branchOrder = (*stacks)[mi].branchOrder
-					*stacks = append(*stacks, fork)
-					if nodeCount != nil {
-						*nodeCount = *nodeCount + 1
-					}
-					if p.glrTrace {
-						traceCRecoverToState(entry.state, depth)
-					}
-					return true, true
-				}
+	for _, merged := range group.mergedSummary {
+		entry := merged.cStackSummaryEntry
+		mi := merged.member
+		if mi < 0 || mi >= len(*stacks) || (*stacks)[mi].dead || (*stacks)[mi].cRec == nil || (*stacks)[mi].cRec.group != group {
+			continue
+		}
+		if entry.state == cErrorState {
+			continue
+		}
+		key := seenKey{depth: entry.depth, state: entry.state}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if entry.posBytes == pos {
+			continue
+		}
+		depth := entry.depth + depthBump
+		// Do not recover in ways that create redundant stack versions.
+		wouldMerge := false
+		for i := range *stacks {
+			if (*stacks)[i].dead || (*stacks)[i].accepted {
+				continue
 			}
+			if (*stacks)[i].top().state == entry.state && (*stacks)[i].byteOffset == pos {
+				wouldMerge = true
+				break
+			}
+		}
+		if wouldMerge {
+			continue
+		}
+		newCost := curCost +
+			uint32(entry.depth)*cErrCostPerSkippedTree +
+			(pos-entry.posBytes)*cErrCostPerSkippedChar +
+			(curRow-entry.posRow)*cErrCostPerSkippedLine
+		currentHasAction := p.lookupActionIndex(entry.state, tok.Symbol) != 0
+		rejected := p.cBetterVersionExists(*stacks, m0, false, newCost)
+		if cRecoveryTraceTokenInWindow(tok) || cRecoveryTraceByteInWindow(pos) || cRecoveryTraceByteInWindow(entry.posBytes) {
+			fmt.Printf("C-REC-TRACE cRecoverStrategy1Election pos=%d tok_sym=%d tok=%d:%d member=%d entry_state=%d entry_depth=%d entry_pos=%d recover_depth=%d current_has_action=%t better_version_reject=%t\n",
+				pos, tok.Symbol, tok.StartByte, tok.EndByte, mi, entry.state, entry.depth, entry.posBytes, depth, currentHasAction, rejected)
+		}
+		if rejected {
+			return false, false
+		}
+		if !currentHasAction {
+			continue
+		}
+		if fork, ok := p.cRecoverToState(&(*stacks)[mi], depth, entry.state, arena, entryScratch, gssScratch, trackChildErrors); ok {
+			fork.branchOrder = (*stacks)[mi].branchOrder
+			*stacks = append(*stacks, fork)
+			if nodeCount != nil {
+				*nodeCount = *nodeCount + 1
+			}
+			if p.glrTrace {
+				traceCRecoverToState(entry.state, depth)
+			}
+			return true, true
 		}
 	}
 	return false, false

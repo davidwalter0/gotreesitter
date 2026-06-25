@@ -114,6 +114,42 @@ func TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks(t *testing.T) {
 	}
 }
 
+func TestCBuildMergedGroupSummaryMatchesStackIterDelayedBranchOrder(t *testing.T) {
+	parser := &Parser{}
+
+	leaf := func(sym Symbol) *Node {
+		return NewLeafNode(sym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	}
+	path := func(member int, firstState, branchState StateID, sym Symbol) []cSummaryPathEntry {
+		return []cSummaryPathEntry{
+			{entry: stackEntry{state: cErrorState}, posBytes: 2, member: member},
+			{entry: newStackEntryNode(firstState, leaf(sym)), posBytes: 2, member: member},
+			{entry: stackEntry{state: branchState}, posBytes: 0, member: member},
+		}
+	}
+
+	// Paths 0 and 1 merge below the top ERROR link because that link is NULL
+	// and their child stack nodes share state/position/error-cost. Path 2
+	// stays a separate top link. C stack__iter therefore reaches depth 2 as:
+	// path 0, path 2, then the delayed path 1 clone.
+	got := parser.cBuildMergedGroupSummaryForPaths([][]cSummaryPathEntry{
+		path(0, 10, 20, 1),
+		path(1, 10, 21, 2),
+		path(2, 40, 50, 3),
+	})
+	wantStates := []StateID{cErrorState, 10, 40, 20, 50, 21}
+	wantMembers := []int{0, 0, 2, 0, 2, 1}
+	if len(got) != len(wantStates) {
+		t.Fatalf("summary length = %d, want %d: %+v", len(got), len(wantStates), got)
+	}
+	for i := range got {
+		if got[i].state != wantStates[i] || got[i].member != wantMembers[i] {
+			t.Fatalf("summary[%d] = state %d member %d, want state %d member %d; full=%+v",
+				i, got[i].state, got[i].member, wantStates[i], wantMembers[i], got)
+		}
+	}
+}
+
 func TestParseCRecoveryTraceWindow(t *testing.T) {
 	disabled := parseCRecoveryTraceWindow("")
 	if disabled.enabled {
