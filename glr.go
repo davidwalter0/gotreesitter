@@ -90,6 +90,7 @@ type glrMergeScratch struct {
 	largeSlots       []glrMergeLargeSlot
 	perKeyCap        int
 	language         *Language
+	arena            *nodeArena
 	deferExactDedupe bool
 	audit            *runtimeAudit
 	equivEpoch       uint32
@@ -1737,6 +1738,10 @@ func stackComparePtr(a, b *glrStack) int {
 }
 
 func stackCompareMerge(a, b *glrStack) int {
+	return stackCompareMergeWithArena(nil, a, b)
+}
+
+func stackCompareMergeWithArena(arena *nodeArena, a, b *glrStack) int {
 	if perfCountersEnabled {
 		perfRecordStackCompare()
 	}
@@ -1758,6 +1763,9 @@ func stackCompareMerge(a, b *glrStack) int {
 			return 1
 		}
 		return -1
+	}
+	if cmp := compareStackRecentCSubtreeOrder(arena, *a, *b); cmp != 0 {
+		return cmp
 	}
 	// See stackComparePtr: keep current-token work alive before preferring
 	// deeper stacks that already shifted the lookahead.
@@ -1788,6 +1796,54 @@ func stackCompareMerge(a, b *glrStack) int {
 		return -1
 	}
 	return 0
+}
+
+func stackCompareMergeForScratch(scratch *glrMergeScratch, a, b *glrStack) int {
+	if scratch == nil {
+		return stackCompareMerge(a, b)
+	}
+	return stackCompareMergeWithArena(scratch.arena, a, b)
+}
+
+func compareStackRecentCSubtreeOrder(arena *nodeArena, a, b glrStack) int {
+	const maxRecentEntries = 16
+	var aBuf, bBuf [maxRecentEntries]stackEntry
+	aEntries := stackRecentMaterializingEntries(a, aBuf[:0])
+	bEntries := stackRecentMaterializingEntries(b, bBuf[:0])
+	if len(aEntries) == 0 || len(bEntries) == 0 {
+		return 0
+	}
+	n := len(aEntries)
+	if len(bEntries) < n {
+		n = len(bEntries)
+	}
+	for i := 0; i < n; i++ {
+		if cmp := compareStackEntryCSubtreeOrder(arena, aEntries[i], bEntries[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func stackRecentMaterializingEntries(s glrStack, dst []stackEntry) []stackEntry {
+	if cap(dst) == 0 {
+		return dst[:0]
+	}
+	dst = dst[:0]
+	if len(s.entries) > 0 {
+		for i := len(s.entries) - 1; i >= 0 && len(dst) < cap(dst); i-- {
+			if stackEntryMaterializesForResult(s.entries[i]) {
+				dst = append(dst, s.entries[i])
+			}
+		}
+		return dst
+	}
+	for n := s.gss.head; n != nil && len(dst) < cap(dst); n = n.prev {
+		if stackEntryMaterializesForResult(n.entry) {
+			dst = append(dst, n.entry)
+		}
+	}
+	return dst
 }
 
 func stackCompareMergeSmallCapOne(a, b *glrStack) int {
@@ -1913,7 +1969,7 @@ func tryGSSMainMergeResult(result []glrStack, idx int, stack *glrStack) (merged 
 	return gssMainMerge(&result[idx], stack), true
 }
 
-func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glrStack, hash uint64) bool {
+func preserveCapOneStackInSlot(scratch *glrMergeScratch, result *[]glrStack, slot *glrMergeSlot, stack glrStack, hash uint64) bool {
 	if result == nil || slot == nil {
 		return false
 	}
@@ -1926,14 +1982,14 @@ func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glr
 	slot.hashes[slot.count] = hash
 	slot.hashMask |= mergeHashBit(hash)
 	slot.count++
-	if slot.worstIndex < 0 || stackCompareMerge(&(*result)[idx], &(*result)[slot.worstIndex]) < 0 {
+	if slot.worstIndex < 0 || stackCompareMergeForScratch(scratch, &(*result)[idx], &(*result)[slot.worstIndex]) < 0 {
 		slot.worstIndex = idx
 	}
 	return true
 }
 
-func preferOverflowCandidate(candidate, incumbent *glrStack, candidateHash, incumbentHash uint64) bool {
-	cmp := stackCompareMerge(candidate, incumbent)
+func preferOverflowCandidate(scratch *glrMergeScratch, candidate, incumbent *glrStack, candidateHash, incumbentHash uint64) bool {
+	cmp := stackCompareMergeForScratch(scratch, candidate, incumbent)
 	if cmp != 0 {
 		return cmp > 0
 	}
@@ -1993,7 +2049,7 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 		if mergedByGSS {
 			continue
 		}
-		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+		if stackCompareMergeForScratch(scratch, &stack, &result[duplicateIndex]) >= 0 {
 			result[duplicateIndex] = stack
 		}
 	}
@@ -2051,7 +2107,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 		if mergedByGSS {
 			continue
 		}
-		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+		if stackCompareMergeForScratch(scratch, &stack, &result[duplicateIndex]) >= 0 {
 			result[duplicateIndex] = stack
 		}
 	}
@@ -2166,7 +2222,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			}
 			if merged, attempted := tryGSSMainMergeResult(result, idx, &stack); attempted {
 				if !merged {
-					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+					_ = preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)
 				}
 				continue
 			}
@@ -2197,11 +2253,12 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			// post-reduce reprocessing can keep the branch that stayed viable.
 			if merged, attempted := tryGSSMainMergeResult(result, duplicateIndex, &stack); attempted {
 				if !merged {
-					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+					_ = preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)
 				}
 				continue
 			}
-			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+			cmp := stackCompareMergeForScratch(scratch, &stack, &result[duplicateIndex])
+			if cmp >= 0 {
 				result[duplicateIndex] = stack
 				for j := 0; j < slot.count; j++ {
 					if slot.indices[j] == duplicateIndex {
@@ -2210,7 +2267,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 					}
 				}
 				if slot.worstIndex == duplicateIndex {
-					slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+					slot.worstIndex = recomputeMergeSlotWorst(scratch, slot, result)
 				}
 			}
 			continue
@@ -2223,7 +2280,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			slot.hashes[slot.count] = hash
 			slot.hashMask |= mergeHashBit(hash)
 			slot.count++
-			if slot.worstIndex < 0 || stackCompareMerge(&result[idx], &result[slot.worstIndex]) < 0 {
+			if slot.worstIndex < 0 || stackCompareMergeForScratch(scratch, &result[idx], &result[slot.worstIndex]) < 0 {
 				slot.worstIndex = idx
 			}
 			continue
@@ -2245,7 +2302,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 					}
 				}
 			}
-			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
+			if merged || (attempted && preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)) {
 				continue
 			}
 		}
@@ -2264,7 +2321,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			if replacedSlot >= 0 {
 				incumbentHash = slot.hashes[replacedSlot]
 			}
-			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
+			if !preferOverflowCandidate(scratch, &stack, &result[slot.worstIndex], hash, incumbentHash) {
 				continue
 			}
 			if perfCountersEnabled {
@@ -2275,7 +2332,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeSlotHashMask(slot)
 			}
-			slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+			slot.worstIndex = recomputeMergeSlotWorst(scratch, slot, result)
 		}
 	}
 	if perfCountersEnabled {
@@ -2333,7 +2390,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			}
 			if merged, attempted := tryGSSMainMergeResult(result, idx, &stack); attempted {
 				if !merged {
-					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+					_ = preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)
 				}
 				continue
 			}
@@ -2361,11 +2418,12 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		if duplicateIndex >= 0 {
 			if merged, attempted := tryGSSMainMergeResult(result, duplicateIndex, &stack); attempted {
 				if !merged {
-					_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
+					_ = preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)
 				}
 				continue
 			}
-			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+			cmp := stackCompareMergeForScratch(scratch, &stack, &result[duplicateIndex])
+			if cmp >= 0 {
 				result[duplicateIndex] = stack
 				for j := 0; j < slot.count; j++ {
 					if slot.indices[j] == duplicateIndex {
@@ -2374,7 +2432,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 					}
 				}
 				if slot.worstIndex == duplicateIndex {
-					slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+					slot.worstIndex = recomputeMergeSlotWorst(scratch, slot, result)
 				}
 			}
 			continue
@@ -2387,7 +2445,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			slot.hashes[slot.count] = hash
 			slot.hashMask |= mergeHashBit(hash)
 			slot.count++
-			if slot.worstIndex < 0 || stackCompareMerge(&result[idx], &result[slot.worstIndex]) < 0 {
+			if slot.worstIndex < 0 || stackCompareMergeForScratch(scratch, &result[idx], &result[slot.worstIndex]) < 0 {
 				slot.worstIndex = idx
 			}
 			continue
@@ -2409,7 +2467,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 					}
 				}
 			}
-			if merged || (attempted && preserveCapOneStackInSlot(&result, slot, stack, hash)) {
+			if merged || (attempted && preserveCapOneStackInSlot(scratch, &result, slot, stack, hash)) {
 				continue
 			}
 		}
@@ -2426,7 +2484,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			if replacedSlot >= 0 {
 				incumbentHash = slot.hashes[replacedSlot]
 			}
-			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
+			if !preferOverflowCandidate(scratch, &stack, &result[slot.worstIndex], hash, incumbentHash) {
 				continue
 			}
 			if perfCountersEnabled {
@@ -2437,7 +2495,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeSlotHashMask(slot)
 			}
-			slot.worstIndex = recomputeMergeSlotWorst(slot, result)
+			slot.worstIndex = recomputeMergeSlotWorst(scratch, slot, result)
 		}
 	}
 	if perfCountersEnabled {
@@ -2500,7 +2558,8 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 			// Equal-ranked duplicates should not preserve the first-inserted
 			// branch by accident. Let later survivors replace ties so
 			// post-reduce reprocessing can keep the branch that stayed viable.
-			if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
+			cmp := stackCompareMergeForScratch(scratch, &stack, &result[duplicateIndex])
+			if cmp >= 0 {
 				result[duplicateIndex] = stack
 				for j := 0; j < slot.count; j++ {
 					if slot.indices[j] == duplicateIndex {
@@ -2509,7 +2568,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 					}
 				}
 				if slot.worstIndex == duplicateIndex {
-					slot.worstIndex = recomputeMergeLargeSlotWorst(slot, result)
+					slot.worstIndex = recomputeMergeLargeSlotWorst(scratch, slot, result)
 				}
 			}
 			continue
@@ -2522,7 +2581,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 			slot.hashes[slot.count] = hash
 			slot.hashMask |= mergeHashBit(hash)
 			slot.count++
-			if slot.worstIndex < 0 || stackCompareMerge(&result[idx], &result[slot.worstIndex]) < 0 {
+			if slot.worstIndex < 0 || stackCompareMergeForScratch(scratch, &result[idx], &result[slot.worstIndex]) < 0 {
 				slot.worstIndex = idx
 			}
 			continue
@@ -2545,7 +2604,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 			if replacedSlot >= 0 {
 				incumbentHash = slot.hashes[replacedSlot]
 			}
-			if !preferOverflowCandidate(&stack, &result[slot.worstIndex], hash, incumbentHash) {
+			if !preferOverflowCandidate(scratch, &stack, &result[slot.worstIndex], hash, incumbentHash) {
 				continue
 			}
 			if perfCountersEnabled {
@@ -2556,7 +2615,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				slot.hashes[replacedSlot] = hash
 				slot.hashMask = recomputeMergeLargeSlotHashMask(slot)
 			}
-			slot.worstIndex = recomputeMergeLargeSlotWorst(slot, result)
+			slot.worstIndex = recomputeMergeLargeSlotWorst(scratch, slot, result)
 		}
 	}
 	if perfCountersEnabled {
@@ -2570,28 +2629,28 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 	return result
 }
 
-func recomputeMergeSlotWorst(slot *glrMergeSlot, result []glrStack) int {
+func recomputeMergeSlotWorst(scratch *glrMergeScratch, slot *glrMergeSlot, result []glrStack) int {
 	if slot == nil || slot.count == 0 {
 		return -1
 	}
 	worst := slot.indices[0]
 	for j := 1; j < slot.count; j++ {
 		idx := slot.indices[j]
-		if stackCompareMerge(&result[idx], &result[worst]) < 0 {
+		if stackCompareMergeForScratch(scratch, &result[idx], &result[worst]) < 0 {
 			worst = idx
 		}
 	}
 	return worst
 }
 
-func recomputeMergeLargeSlotWorst(slot *glrMergeLargeSlot, result []glrStack) int {
+func recomputeMergeLargeSlotWorst(scratch *glrMergeScratch, slot *glrMergeLargeSlot, result []glrStack) int {
 	if slot == nil || slot.count == 0 {
 		return -1
 	}
 	worst := slot.indices[0]
 	for j := 1; j < slot.count; j++ {
 		idx := slot.indices[j]
-		if stackCompareMerge(&result[idx], &result[worst]) < 0 {
+		if stackCompareMergeForScratch(scratch, &result[idx], &result[worst]) < 0 {
 			worst = idx
 		}
 	}

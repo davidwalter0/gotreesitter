@@ -2979,6 +2979,75 @@ func TestGSSMainLinkExistsUsesFullStackEntryIdentity(t *testing.T) {
 	}
 }
 
+func makeRecentCSubtreeOrderTestStack(exprSym Symbol, exprStart uint32, fillerDepth int) glrStack {
+	s := newGLRStack(StateID(1))
+	for i := 0; i < fillerDepth; i++ {
+		start := uint32(100 + i)
+		s.push(StateID(20+i), NewLeafNode(Symbol(400+i), true, start, start+1, Point{Column: start}, Point{Column: start + 1}), nil, nil)
+	}
+	value := NewLeafNode(93, true, exprStart, 1506, Point{Column: exprStart}, Point{Column: 1506})
+	expr := NewParentNode(exprSym, true, []*Node{value}, nil, 0)
+	fn := NewParentNode(253, true, []*Node{
+		NewLeafNode(93, true, 1496, 1498, Point{Column: 1496}, Point{Column: 1498}),
+		NewLeafNode(32, false, 1499, 1500, Point{Column: 1499}, Point{Column: 1500}),
+		expr,
+	}, nil, 21)
+	s.push(StateID(7916), fn, nil, nil)
+	return s
+}
+
+func TestStackCompareMergePrefersRecentCSubtreeOrderBeforeDepth(t *testing.T) {
+	expName := makeRecentCSubtreeOrderTestStack(146, 1501, 1)
+	expApply := makeRecentCSubtreeOrderTestStack(305, 1501, 3)
+
+	if cmp := stackCompareMerge(&expName, &expApply); cmp <= 0 {
+		t.Fatalf("exp_name-shaped stack compare = %d, want preferred over deeper exp_apply", cmp)
+	}
+	if cmp := stackCompareMerge(&expApply, &expName); cmp >= 0 {
+		t.Fatalf("exp_apply-shaped stack compare = %d, want worse than exp_name", cmp)
+	}
+}
+
+func TestMergeStacksPerKeyOverflowUsesRecentCSubtreeOrder(t *testing.T) {
+	expApplyA := makeRecentCSubtreeOrderTestStack(305, 1501, 3)
+	expApplyB := makeRecentCSubtreeOrderTestStack(305, 1502, 2)
+	expName := makeRecentCSubtreeOrderTestStack(146, 1501, 1)
+
+	otherA := newGLRStack(StateID(2))
+	otherA.push(2, NewLeafNode(500, true, 0, 1, Point{}, Point{Column: 1}), nil, nil)
+	otherB := newGLRStack(StateID(3))
+	otherB.push(3, NewLeafNode(501, true, 1, 2, Point{Column: 1}, Point{Column: 2}), nil, nil)
+
+	var scratch glrMergeScratch
+	scratch.perKeyCap = 2
+	scratch.beginEquivEpoch()
+
+	result := mergeStacksWithScratch([]glrStack{expApplyA, expApplyB, expName, otherA, otherB}, &scratch)
+	foundExpName := false
+	foundExpApply := false
+	for i := range result {
+		if mergeKeyForStack(result[i]) != mergeKeyForStack(expName) {
+			continue
+		}
+		top := stackEntryNode(result[i].top())
+		if top == nil || len(top.children) < 3 {
+			continue
+		}
+		switch top.children[2].symbol {
+		case 146:
+			foundExpName = true
+		case 305:
+			foundExpApply = true
+		}
+	}
+	if !foundExpName {
+		t.Fatalf("exp_name-shaped stack was pruned by per-key overflow; result=%v", result)
+	}
+	if !foundExpApply {
+		t.Fatalf("expected one exp_apply-shaped alternative to remain for diversity; result=%v", result)
+	}
+}
+
 func TestStackComparePtrPrefersEarlierBranchOrderOnExactTie(t *testing.T) {
 	a := newGLRStack(StateID(5))
 	b := newGLRStack(StateID(5))
