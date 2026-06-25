@@ -783,6 +783,54 @@ func (p *Parser) tryRelexCurrentStateDFA(tok Token, parserState StateID, ts Toke
 	return tok2, true
 }
 
+func (p *Parser) tryRelexCurrentStateDFAFromByte(tok Token, parserState StateID, startByte uint32, ts TokenSource) (Token, bool) {
+	if p == nil || p.language == nil || ts == nil || tok.NoLookahead {
+		return Token{}, false
+	}
+	dts, ok := ts.(*dfaTokenSource)
+	if !ok || dts == nil || dts.lexer == nil || dts.language == nil {
+		return Token{}, false
+	}
+	if startByte >= tok.StartByte || int(startByte) >= len(dts.lexer.source) {
+		return Token{}, false
+	}
+	if int(parserState) >= len(p.language.LexModes) {
+		return Token{}, false
+	}
+	if dts.language.ExternalScanner != nil && dts.externalSymbolIndex(tok.Symbol) >= 0 &&
+		p.language.LexModes[parserState].ExternalLexState != 0 &&
+		!p.canRelexExternalTokenWithCurrentStateDFA(tok) {
+		return Token{}, false
+	}
+	savedPos, savedRow, savedCol := dts.lexer.pos, dts.lexer.row, dts.lexer.col
+	startPoint := advancePointByBytes(Point{}, dts.lexer.source[:startByte])
+	dts.lexer.pos = int(startByte)
+	dts.lexer.row = startPoint.Row
+	dts.lexer.col = startPoint.Column
+	tok2, endPos, endRow, endCol := dts.scanPreferredTokenForState(parserState)
+	if tok2.Symbol == 0 || tok2.StartByte != startByte {
+		dts.lexer.pos, dts.lexer.row, dts.lexer.col = savedPos, savedRow, savedCol
+		return Token{}, false
+	}
+	if tok2.Symbol == tok.Symbol && tok2.StartByte == tok.StartByte && tok2.EndByte == tok.EndByte {
+		dts.lexer.pos, dts.lexer.row, dts.lexer.col = savedPos, savedRow, savedCol
+		return Token{}, false
+	}
+	actionIdx := p.lookupActionIndex(parserState, tok2.Symbol)
+	if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) || len(p.language.ParseActions[actionIdx].Actions) == 0 {
+		dts.lexer.pos, dts.lexer.row, dts.lexer.col = savedPos, savedRow, savedCol
+		return Token{}, false
+	}
+	if p.glrTrace {
+		fmt.Printf("  RELEX-GAP: %s(%d)[%d-%d] -> %s(%d)[%d-%d] in state=%d\n",
+			p.language.SymbolNames[tok.Symbol], tok.Symbol, tok.StartByte, tok.EndByte,
+			p.language.SymbolNames[tok2.Symbol], tok2.Symbol, tok2.StartByte, tok2.EndByte,
+			parserState)
+	}
+	dts.lexer.pos, dts.lexer.row, dts.lexer.col = endPos, endRow, endCol
+	return tok2, true
+}
+
 func (p *Parser) canRelexExternalTokenWithCurrentStateDFA(tok Token) bool {
 	if p == nil || p.language == nil || int(tok.Symbol) >= len(p.language.SymbolNames) {
 		return false
@@ -2915,6 +2963,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 			}
 			p.traceStackActions(si, currentState, tok.Symbol, actions)
+			if tok.StartByte > s.byteOffset &&
+				!realTokenAttachmentGapIsParserPadding(source, s, tok) &&
+				!p.gapIsCoveredByGrammarExtras(source, s.byteOffset, tok.StartByte) &&
+				parseStacksShareState(stacks[:numStacks], currentState) {
+				if reTok, ok := p.tryRelexCurrentStateDFAFromByte(tok, currentState, s.byteOffset, ts); ok {
+					tok = reTok
+					needToken = false
+					goto retryAction
+				}
+			}
 			if p.ambiguityProfile != nil {
 				p.ambiguityProfile.record(currentState, tok.Symbol, actions, numStacks)
 			}
