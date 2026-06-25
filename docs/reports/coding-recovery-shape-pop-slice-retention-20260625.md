@@ -98,3 +98,47 @@ The suspected generalized C-fidelity mismatch was real and is fixed in the
 synthetic C-recovery frame. The CUDA witness remains unresolved, so the next
 frame should continue after retained pop-slice versions enter recovery summary
 and strategy-1 election.
+
+## Review repair
+
+The first repair over-retained same-pop-target sibling slices as independent
+local versions. Upstream C does not do that: `stack__add_slice` assigns slices
+that pop to the same stack node to the same stack version, and
+`ts_parser__reduce` merges reduced versions back into earlier equivalent
+headers before returning the first new version.
+
+The follow-up repair changes only C-recovery's local
+`cDoAllPotentialReductions` drain. Pending sibling reductions are now appended
+only when they survive same-pop-target/header-equivalence collapse as distinct
+C versions; same-pop-target duplicates collapse to one local version. The
+normal parser pending-fork drain/reject paths remain unchanged.
+
+Focused grammar-neutral coverage was split into:
+
+- same-pop-target duplicate pop slices collapse to one C version,
+- distinct pop-target sibling slices remain separate versions,
+- multiple reduce actions overwrite `reduction_version` with the last action's
+  first surviving new version.
+
+CUDA witness status: a bounded review-repair rerun still did not move the
+witness. `TestFirstDiffDiag` passed as a diagnostic and still reported the same
+root first diff at `UnifiedMemoryStreams.cu` `[8510:8797]`: Go has
+`ERROR [8510:8585]` plus `compound_statement [8586:8797]`, while C has
+`template_declaration [8510:8797]`.
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --repo-root /home/draco/work/gotreesitter-build-baseline \
+  --mount /home/draco/work/gotreesitter-corpora/corpus_sources:/workspace/corpus_sources:ro \
+  --label c-recovery-pop-slice-review-repair-cuda-20260625 \
+  --memory 8g --cpus 4 --no-build -- \
+  "set -o pipefail; cd /workspace/cgo_harness && timeout --kill-after=10s 90s env CGO_ENABLED=1 REPRO_LANG=cuda REPRO_FILE=/workspace/corpus_sources/cuda/cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu REPRO_DIR=/workspace/corpus_sources GOT_C_RECOVERY=all GOT_C_RECOVERY_TRACE_WINDOW=8480:8810 GOT_PARSE_PROGRESS=1 go test . -tags 'cgo treesitter_c_parity' -run '^TestFirstDiffDiag$' -count=1 -v"
+```
+
+```text
+--- PASS: TestFirstDiffDiag (2.83s)
+PASS
+ok  	github.com/odvcencio/gotreesitter/cgo_harness	5.301s
+artifacts: /home/draco/work/gotreesitter-build-baseline/harness_out/docker/20260625T222049Z-c-recovery-pop-slice-review-repair-cuda-20260625
+oom_killed: false
+```

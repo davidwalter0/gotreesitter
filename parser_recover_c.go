@@ -1256,21 +1256,26 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 			p.applyAction(&fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
 			reductionVersion := -1
 			if !fork.dead {
-				versions = append(versions, fork)
-				reductionVersion = len(versions) - 1
+				var appended bool
+				versions, appended = p.cAppendReductionVersion(versions, fork, v)
+				if appended {
+					reductionVersion = len(versions) - 1
+				}
 			}
 			// C's reduce over merged stack links creates stack versions for
-			// every viable pop slice. In this Go runtime, applyReduceActionForked
-			// leaves the sibling slices in pendingForkStacks; C recovery must
-			// drain those into the local do_all_potential_reductions version set
-			// instead of rejecting the active fork.
+			// distinct viable pop slices. In this Go runtime,
+			// applyReduceActionForked leaves sibling slices in pendingForkStacks;
+			// C recovery drains them into this local version set, while still
+			// collapsing same-pop-target slices and merging equivalent headers
+			// like stack__add_slice/ts_parser__reduce.
 			for pi := range p.pendingForkStacks {
 				pending := p.pendingForkStacks[pi]
 				if pending.dead {
 					continue
 				}
-				versions = append(versions, pending)
-				if reductionVersion < 0 {
+				var appended bool
+				versions, appended = p.cAppendReductionVersion(versions, pending, v)
+				if appended && reductionVersion < 0 {
 					reductionVersion = len(versions) - 1
 				}
 			}
@@ -1302,6 +1307,41 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 		}
 	}
 	return versions, canShift
+}
+
+func (p *Parser) cAppendReductionVersion(versions []glrStack, candidate glrStack, originalVersion int) ([]glrStack, bool) {
+	for i := range versions {
+		if i == originalVersion {
+			continue
+		}
+		if p.cTryMergeReductionVersion(&versions[i], &candidate) {
+			return versions, false
+		}
+	}
+	versions = append(versions, candidate)
+	return versions, true
+}
+
+func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {
+	if target == nil || candidate == nil || target.dead || candidate.dead || target.accepted || candidate.accepted {
+		return false
+	}
+	if target.gss.head == nil || candidate.gss.head == nil || target.entries != nil || candidate.entries != nil {
+		return false
+	}
+	if !stacksHeaderEquivalent(*target, *candidate) {
+		return false
+	}
+	if p.cStackErrorCost(target) != p.cStackErrorCost(candidate) {
+		return false
+	}
+	if !gssMainMerge(target, candidate) {
+		return false
+	}
+	if candidate.score > target.score {
+		target.score = candidate.score
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
