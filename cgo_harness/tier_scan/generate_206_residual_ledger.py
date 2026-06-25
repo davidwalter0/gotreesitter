@@ -119,8 +119,8 @@ OVERLAY_STATUS = {
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
     "scala": (
-        "a30545a9 fixes zero-width external token-source selection; Scala remains Tier IV; validation artifacts harness_out/docker/20260625T113614Z-forest-zero-width-external-unit-final-20260625 and harness_out/docker/20260625T113621Z-scala-zero-width-external-retry-final-20260625",
-        "forest/object-definition-frontier-after-zero-width-external-retry",
+        "generic forest block-comment repeat conflict choice advances Scala frame 1 from go_no_tree to full-span root child-count divergence; validation artifacts harness_out/docker/20260625T115517Z-forest-block-comment-repeat-unit-final-20260625 and harness_out/docker/20260625T115526Z-scala-block-comment-repeat-final-20260625",
+        "forest/root-extra-materialization-after-repetition-shift",
     ),
 }
 

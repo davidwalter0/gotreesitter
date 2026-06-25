@@ -4023,9 +4023,12 @@ func (p *Parser) actionsForParseState(state StateID, symbol Symbol, parseActions
 // we collapse the action set to the single C-preferred action so the forest
 // builds the matching shape. When no scoped rule applies, the full action set is
 // returned unchanged and the forest's normal multi-action handling proceeds.
-func (p *Parser) forestResolveConflict(actions []ParseAction) []ParseAction {
+func (p *Parser) forestResolveConflict(actions []ParseAction, tok Token) []ParseAction {
 	if p == nil || p.language == nil || len(actions) < 2 {
 		return actions
+	}
+	if chosen, ok := forestBlockCommentRepeatShiftConflictChoice(p.language, tok, actions); ok {
+		return p.forestSingletonActions(chosen)
 	}
 	switch p.language.Name {
 	case "erlang":
@@ -4038,6 +4041,30 @@ func (p *Parser) forestResolveConflict(actions []ParseAction) []ParseAction {
 		}
 	}
 	return actions
+}
+
+func forestBlockCommentRepeatShiftConflictChoice(lang *Language, tok Token, actions []ParseAction) (ParseAction, bool) {
+	if lang == nil || !symbolHasName(lang, tok.Symbol, "block_comment_token1") {
+		return ParseAction{}, false
+	}
+	chosen, ok := repetitionShiftConflictChoice(actions)
+	if !ok {
+		return ParseAction{}, false
+	}
+	foundReduce := false
+	for _, act := range actions {
+		if act.Type != ParseActionReduce {
+			continue
+		}
+		foundReduce = true
+		if !symbolHasName(lang, act.Symbol, "block_comment_repeat1") {
+			return ParseAction{}, false
+		}
+	}
+	if !foundReduce {
+		return ParseAction{}, false
+	}
+	return chosen, true
 }
 
 // forestSingletonActions returns a reusable one-element action slice holding the

@@ -229,7 +229,7 @@ Forest frontier before-finalization follow-up:
 
 | Grammar/file | Current frame | Variant evidence | Classified next lane |
 | --- | --- | --- | --- |
-| scala `AutomaticModuleName.scala` | production remains `iteration_limit`, `truncated`, parity `0/1`, no errors or missing nodes, Go span `0:311` vs C span `0:658` | `stack2`, `stack8`, and `node3` do not change stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; after the zero-width external retry fix, forest masks that unusable external marker and advances through `object AutomaticModuleName`, but still returns `go_no_tree` because the surviving frontier lacks the object-definition path and later dies on a stale-byte attachment gap near the method body `{` | `forest/materialization`, refined to `forest/object-definition-frontier-after-zero-width-external-retry` |
+| scala `AutomaticModuleName.scala` | production smoke remains `iteration_limit`, `truncated`, parity `0/1`; post-follow-up forest replay advances from `go_no_tree` to full-span root divergence, Go span `0:658` vs C span `0:658`, no errors or missing nodes, root child count `4` vs `5` | `stack2`, `stack8`, and `node3` do not change production stop reason, EOF progress, span, or parity; pre-fix `forest` advanced Go span to `0:395`, but tracing proved that root came from incorrectly finalizing a synthetic no-lookahead EOF; after the generic no-lookahead fix, forest re-lexes the real successor and exposes a zero-width `_automatic_semicolon` no-shift at byte `396` with surviving states `21248` and `16120`; after the zero-width external retry fix, forest masks that unusable external marker and advances through `object AutomaticModuleName`, but still reports `go_no_tree`; the generic forest block-comment repeat conflict choice now keeps hidden repeat continuations from materializing every equal-score block-comment prefix and advances the frame to a full-span child-count divergence | `forest/materialization`, refined to `forest/root-extra-materialization-after-repetition-shift` |
 
 Scala remains a true-coding runtime-frontier witness under production settings,
 but the next useful machinery lane is forest/materialization rather than node
@@ -265,16 +265,28 @@ Validation artifacts:
 - `harness_out/docker/20260625T113614Z-forest-zero-width-external-unit-final-20260625`
 - `harness_out/docker/20260625T113621Z-scala-zero-width-external-retry-final-20260625`
 
-Scala frame 1 did not move out of Tier IV. The Scala forest run still reports
-`comparison_result result=go_no_tree` and
-`MEASURE-DTIER scala mode=forest files=1 ... parityMatch=0/1(0%) diverge=0
-trunc=0 errTree=0 panics=0`. Local token tracing confirms progress beyond the
-prior byte-`396` `_automatic_semicolon`: the lexer reaches `object`, the object
-identifier, signature tokens, and then dies later around the method body `{`
-because the surviving states remain the post-comment frontier rather than an
-object-definition frontier. The next generalized target is therefore
-`forest/object-definition-frontier-after-zero-width-external-retry`, not
-zero-width token-source state selection.
+Generic forest block-comment repeat follow-up landed a small parser-machinery
+fix: when a forest conflict is exactly one repetition shift plus reductions of
+`block_comment_repeat1` on `block_comment_token1`, the forest now keeps the
+repeat continuation instead of materializing every equal-score comment prefix.
+This is not Scala-specific or language-name gated, and is covered by
+`TestForestResolveConflictPrefersBlockCommentRepetitionShift`.
+
+Validation artifacts:
+
+- `harness_out/docker/20260625T115517Z-forest-block-comment-repeat-unit-final-20260625`
+- `harness_out/docker/20260625T115526Z-scala-block-comment-repeat-final-20260625`
+
+Scala frame 1 is not parity-clean and remains a residual/Tier IV ledger row,
+but the specific forest replay moved out of `go_no_tree`. The Scala forest run
+now reports `comparison_result result=diverge`,
+`goRootSpan=0:658 cRootSpan=0:658`, `goRootCC=4 cRootCC=5`,
+`goErrors=0 cErrors=0 goMissing=0 cMissing=0`, and
+`MEASURE-DTIER scala mode=forest files=1 ... parityMatch=0/1(0%) diverge=1
+trunc=1 errTree=0 panics=0`. The next generalized target is therefore
+`forest/root-extra-materialization-after-repetition-shift`: determine why the
+full-span forest root has one fewer child than C after the block-comment/object
+frontier is recovered.
 
 ## F# State
 

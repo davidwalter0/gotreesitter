@@ -218,6 +218,30 @@ func TestParseForestRetriesUnshiftableZeroWidthExternalToken(t *testing.T) {
 	}
 }
 
+func TestForestResolveConflictPrefersBlockCommentRepetitionShift(t *testing.T) {
+	p := NewParser(&Language{
+		Name:        "forest_repetition_conflict",
+		SymbolNames: []string{"end", "block_comment_token1", "x", "block_comment_repeat1"},
+	})
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 2, Repetition: true},
+	}
+
+	got := p.forestResolveConflict(actions, Token{Symbol: 1})
+	if len(got) != 1 {
+		t.Fatalf("resolved actions len = %d, want 1", len(got))
+	}
+	if got[0].Type != ParseActionShift || !got[0].Repetition || got[0].State != 2 {
+		t.Fatalf("resolved action = %+v, want repetition shift to state 2", got[0])
+	}
+
+	ordinary := p.forestResolveConflict(actions, Token{Symbol: 2})
+	if len(ordinary) != len(actions) {
+		t.Fatalf("ordinary repetition conflict resolved len = %d, want %d", len(ordinary), len(actions))
+	}
+}
+
 func TestReduceOverForestLinearChainWithExtra(t *testing.T) {
 	// n0 <-(a:10)- n1 <-(b:11)- n2 <-(extra:90)- n3 <-(c:12)- n4
 	extra := &Node{}

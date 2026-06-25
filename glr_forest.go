@@ -993,7 +993,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte) (*Node, bool) {
 			node.processedDirty = node.dirty
 
 			nodeActions := p.actionsForParseState(node.state, tok.Symbol, lang.ParseActions)
-			nodeActions = p.forestResolveConflict(nodeActions)
+			nodeActions = p.forestResolveConflict(nodeActions, tok)
 			for _, act := range nodeActions {
 				switch act.Type {
 				case ParseActionReduce:

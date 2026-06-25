@@ -30,7 +30,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | `generalized_recovery_shape_and_cost` | 7 |
 | `recovery_shape_and_materialization_after_generalized_retry` | 2 |
 | `scoped_c_recovery_selection_and_materialization` | 1 |
-| `forest/object-definition-frontier-after-zero-width-external-retry` | 1 |
+| `forest/root-extra-materialization-after-repetition-shift` | 1 |
 | `corpus_coverage_or_unmeasured_accounting` | 1 |
 
 ## High-Priority True-Coding Residuals
@@ -43,7 +43,7 @@ This report is generated from the current 206 smoke artifact plus an explicit st
 | cuda | `runtime_frontier_stop/no_stacks_alive` | post-retry and scoped-first reports migrate CUDA from runtime frontier to accepted/non-truncated recovery-shape/materialization evidence | `scoped_c_recovery_selection_and_materialization` |
 | asm | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | nushell | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
-| scala | `runtime_frontier_stop/iteration_limit` | a30545a9 fixes zero-width external token-source selection | `forest/object-definition-frontier-after-zero-width-external-retry` |
+| scala | `runtime_frontier_stop/iteration_limit` | generic forest block-comment repeat conflict choice advances Scala frame 1 from go_no_tree to full-span root child-count divergence | `forest/root-extra-materialization-after-repetition-shift` |
 | objc | `recovery_error_cost/error_tree_or_root_error` | current_smoke_only | `generalized_recovery_shape_and_cost` |
 | wat | `runtime_frontier_stop/no_stacks_alive` | current_smoke_only | `glr_frontier_survival_and_reuse_selection` |
 | fsharp | `accepted_shape_materialization/accepted_diverge` | current_smoke_only | `generalized_materialization_invariant` |
