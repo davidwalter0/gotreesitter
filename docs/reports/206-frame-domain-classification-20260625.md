@@ -134,7 +134,7 @@ witnesses.
 
 ## Post-Retry Evidence, 2026-06-25
 
-Post-patch retry witnesses show the first two runtime-frontier controls moved
+Post-patch retry witnesses show three runtime-frontier controls moved
 into accepted/non-truncated recovery-shape evidence under the default
 generalized C-recovery retry.
 
@@ -142,12 +142,13 @@ generalized C-recovery retry.
 | --- | --- | --- | --- | --- |
 | cpp `args.h` | `runtime_frontier_stop`: `no_stacks_alive`, `truncated` | `accepted`, non-truncated, EOF reached under default retry | parity remains `0/1` because the recovery tree shape still differs | `docs/reports/cpp-recovery-admission-witness-20260625.md` |
 | cuda `UnifiedMemoryStreams.cu` | `runtime_frontier_stop`: `no_stacks_alive`, `truncated` | `accepted`, non-truncated, EOF reached under default retry | parity remains `0/1` because `recovery_error_shape` still differs | `docs/reports/cuda-recovery-retry-witness-20260625.md` |
+| glsl `100.frag` | `runtime_frontier_stop`: `no_stacks_alive`, `truncated`, root `ERROR->translation_unit`, tokens `320`, EOF not reached | `accepted`, non-truncated, EOF reached under default retry, root `translation_unit->translation_unit` | parity remains `0/1` due `recovery_error_shape`/root child-count; Go/C errors `6/5`, missing `3/2` | `docs/reports/glsl-recovery-frontier-witness-20260625.md` |
 
 This supports the generalized retry/recovery machinery direction, not
-per-grammar normalizers. The next coding-language target should be
-recovery-shape and materialization invariant work. GLSL and Scala remain
-frontier controls because their current evidence has not yet moved out of the
-runtime-frontier lane.
+per-grammar normalizers. GLSL joins C++ and CUDA as migrated true-coding
+frontier witnesses. Scala remains a distinct iteration-limit frontier control.
+The next coding-language target should be recovery-shape and materialization
+invariant work.
 
 ## F# State
 
