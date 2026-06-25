@@ -2966,7 +2966,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if tok.StartByte > s.byteOffset &&
 				!realTokenAttachmentGapIsParserPadding(source, s, tok) &&
 				!p.gapIsCoveredByGrammarExtras(source, s.byteOffset, tok.StartByte) &&
-				parseStacksShareState(stacks[:numStacks], currentState) {
+				parseStacksShareStateAndByte(stacks[:numStacks], currentState, s.byteOffset) {
 				if reTok, ok := p.tryRelexCurrentStateDFAFromByte(tok, currentState, s.byteOffset, ts); ok {
 					tok = reTok
 					needToken = false
@@ -4093,6 +4093,21 @@ func parseStacksShareState(stacks []glrStack, state StateID) bool {
 			continue
 		}
 		if stacks[i].top().state != state {
+			return false
+		}
+	}
+	return true
+}
+
+func parseStacksShareStateAndByte(stacks []glrStack, state StateID, byteOffset uint32) bool {
+	if len(stacks) == 1 {
+		return true
+	}
+	for i := range stacks {
+		if stacks[i].dead {
+			continue
+		}
+		if stacks[i].top().state != state || stacks[i].byteOffset != byteOffset {
 			return false
 		}
 	}

@@ -50,3 +50,73 @@ func TestUpdateCurrentRelexParserStateTokenSourceExcludesShiftedStacks(t *testin
 		}
 	}
 }
+
+func TestParseStacksShareStateAndByte(t *testing.T) {
+	tests := []struct {
+		name       string
+		stacks     []glrStack
+		state      StateID
+		byteOffset uint32
+		want       bool
+	}{
+		{
+			name: "same state and byte",
+			stacks: []glrStack{
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+			},
+			state:      10,
+			byteOffset: 12,
+			want:       true,
+		},
+		{
+			name: "same state mixed byte",
+			stacks: []glrStack{
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+				{entries: []stackEntry{{state: 10}}, byteOffset: 16},
+			},
+			state:      10,
+			byteOffset: 12,
+			want:       false,
+		},
+		{
+			name: "mixed state same byte",
+			stacks: []glrStack{
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+				{entries: []stackEntry{{state: 11}}, byteOffset: 12},
+			},
+			state:      10,
+			byteOffset: 12,
+			want:       false,
+		},
+		{
+			name: "dead stack ignored",
+			stacks: []glrStack{
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+				{entries: []stackEntry{{state: 11}}, byteOffset: 16, dead: true},
+			},
+			state:      10,
+			byteOffset: 12,
+			want:       true,
+		},
+		{
+			name: "shifted stack still vetoes",
+			stacks: []glrStack{
+				{entries: []stackEntry{{state: 10}}, byteOffset: 12},
+				{entries: []stackEntry{{state: 10}}, byteOffset: 16, shifted: true},
+			},
+			state:      10,
+			byteOffset: 12,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseStacksShareStateAndByte(tt.stacks, tt.state, tt.byteOffset)
+			if got != tt.want {
+				t.Fatalf("parseStacksShareStateAndByte() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
