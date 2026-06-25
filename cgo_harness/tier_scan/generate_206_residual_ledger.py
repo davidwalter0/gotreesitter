@@ -119,8 +119,8 @@ OVERLAY_STATUS = {
         "recovery_shape_and_materialization_after_generalized_retry",
     ),
     "scala": (
-        "post-smoke Scala reports keep production as iteration-limit frontier, refined to forest zero-width successor frontier after no-lookahead",
-        "forest_zero_width_successor_frontier_after_no_lookahead",
+        "a30545a9 fixes zero-width external token-source selection; Scala remains Tier IV; validation artifacts harness_out/docker/20260625T113614Z-forest-zero-width-external-unit-final-20260625 and harness_out/docker/20260625T113621Z-scala-zero-width-external-retry-final-20260625",
+        "forest/object-definition-frontier-after-zero-width-external-retry",
     ),
 }
 
