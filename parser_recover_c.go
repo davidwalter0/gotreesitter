@@ -427,7 +427,7 @@ type cStackSummaryEntry struct {
 
 type cGroupSummaryEntry struct {
 	cStackSummaryEntry
-	member int
+	memberID int
 }
 
 // cRecGroup coordinates the absorbing stacks that map to C's ONE merged
@@ -452,6 +452,9 @@ type cRecoverState struct {
 	summary []cStackSummaryEntry
 	// group ties the absorbing stacks that represent the same C version.
 	group *cRecGroup
+	// memberID is stable within group even when the GLR stack slice is
+	// compacted or reordered.
+	memberID int
 	// openErr is the open error region node on the stack top (the C
 	// error_repeat being accumulated). nil right after entering the error
 	// state — the C "ERROR_STATE head with NULL subtree" shape, which costs an
@@ -463,7 +466,7 @@ func (r *cRecoverState) clone() *cRecoverState {
 	if r == nil {
 		return nil
 	}
-	cp := &cRecoverState{openErr: r.openErr, group: r.group}
+	cp := &cRecoverState{openErr: r.openErr, group: r.group, memberID: r.memberID}
 	if len(r.summary) > 0 {
 		cp.summary = append([]cStackSummaryEntry(nil), r.summary...)
 	}
@@ -934,13 +937,13 @@ type cSummaryPathEntry struct {
 	posBytes  uint32
 	posRow    uint32
 	errorCost uint32
-	member    int
+	memberID  int
 }
 
 type cMergedSummaryNode struct {
 	entry     cSummaryPathEntry
 	links     []cMergedSummaryLink
-	member    int
+	memberID  int
 	posBytes  uint32
 	posRow    uint32
 	errorCost uint32
@@ -951,7 +954,7 @@ type cMergedSummaryLink struct {
 	node    *cMergedSummaryNode
 }
 
-func (p *Parser) cSummaryPath(entries []stackEntry, member int) []cSummaryPathEntry {
+func (p *Parser) cSummaryPath(entries []stackEntry, memberID int) []cSummaryPathEntry {
 	path := make([]cSummaryPathEntry, len(entries))
 	var posBytes uint32
 	var posRow uint32
@@ -967,7 +970,7 @@ func (p *Parser) cSummaryPath(entries []stackEntry, member int) []cSummaryPathEn
 			posBytes:  posBytes,
 			posRow:    posRow,
 			errorCost: errorCost,
-			member:    member,
+			memberID:  memberID,
 		}
 	}
 	return path
@@ -979,7 +982,7 @@ func cSummaryNodeFromPath(path []cSummaryPathEntry, idx int) *cMergedSummaryNode
 	}
 	n := &cMergedSummaryNode{
 		entry:     path[idx],
-		member:    path[idx].member,
+		memberID:  path[idx].memberID,
 		posBytes:  path[idx].posBytes,
 		posRow:    path[idx].posRow,
 		errorCost: path[idx].errorCost,
@@ -1100,7 +1103,7 @@ func (p *Parser) cBuildMergedGroupSummaryForPaths(paths [][]cSummaryPathEntry) [
 				posBytes: n.posBytes,
 				posRow:   n.posRow,
 			},
-			member: n.member,
+			memberID: n.memberID,
 		})
 	}
 	for len(iterators) > 0 {
@@ -1146,7 +1149,7 @@ func (p *Parser) cBuildMergedGroupSummary(stacks []glrStack, members []int, gssS
 			continue
 		}
 		entries := cStackEntriesTopFirst(&stacks[mi], gssScratch)
-		paths = append(paths, p.cSummaryPath(entries, mi))
+		paths = append(paths, p.cSummaryPath(entries, stacks[mi].cRec.memberID))
 	}
 	return p.cBuildMergedGroupSummaryForPaths(paths)
 }
@@ -1156,10 +1159,8 @@ func (p *Parser) cBuildMergedGroupSummary(stacks []glrStack, members []int, gssS
 // ---------------------------------------------------------------------------
 
 type cReduceActionKey struct {
-	symbol            Symbol
-	count             uint8
-	dynamicPrecedence int16
-	productionID      uint16
+	symbol Symbol
+	count  uint8
 }
 
 // cCollectPotentialReductions gathers the deduped reduce-action set for the
@@ -1183,10 +1184,8 @@ func (p *Parser) cCollectPotentialReductions(state StateID, lookaheadSym Symbol,
 			case ParseActionReduce:
 				if act.ChildCount > 0 {
 					key := cReduceActionKey{
-						symbol:            act.Symbol,
-						count:             act.ChildCount,
-						dynamicPrecedence: act.DynamicPrecedence,
-						productionID:      act.ProductionID,
+						symbol: act.Symbol,
+						count:  act.ChildCount,
 					}
 					if !seen[key] {
 						seen[key] = true
@@ -1397,7 +1396,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 		v.pushEntry(stackEntry{state: cErrorState}, entryScratch, gssScratch)
 		v.cNodeBaseline = p.cStackCumulativeNodeCount(v)
 		entries := cStackEntriesTopFirst(v, gssScratch)
-		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group}
+		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group, memberID: vi}
 		v.shifted = false
 	}
 
@@ -1546,6 +1545,17 @@ func (p *Parser) cEffectiveVersionCount(stacks []glrStack, group *cRecGroup) int
 	return count
 }
 
+func cRecoverGroupMemberIndex(stacks []glrStack, group *cRecGroup, memberID int) int {
+	for i := range stacks {
+		rec := stacks[i].cRec
+		if stacks[i].dead || rec == nil || rec.group != group || rec.memberID != memberID {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
 // cRecoverStrategy1Election runs the C summary scan once per token across all
 // absorbing group members, in C's merged-summary order: depth-major, member
 // order minor (ts_stack_record_summary's breadth-first traversal of the
@@ -1594,8 +1604,8 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 	seen := make(map[seenKey]bool, 16)
 	for _, merged := range group.mergedSummary {
 		entry := merged.cStackSummaryEntry
-		mi := merged.member
-		if mi < 0 || mi >= len(*stacks) || (*stacks)[mi].dead || (*stacks)[mi].cRec == nil || (*stacks)[mi].cRec.group != group {
+		mi := cRecoverGroupMemberIndex(*stacks, group, merged.memberID)
+		if mi < 0 {
 			continue
 		}
 		if entry.state == cErrorState {

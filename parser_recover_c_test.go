@@ -2,7 +2,7 @@ package gotreesitter
 
 import "testing"
 
-func TestCCollectPotentialReductionsKeepsFullReduceIdentity(t *testing.T) {
+func TestCCollectPotentialReductionsDedupeMatchesReduceActionSet(t *testing.T) {
 	lang := &Language{
 		TokenCount:  3,
 		StateCount:  1,
@@ -27,29 +27,15 @@ func TestCCollectPotentialReductionsKeepsFullReduceIdentity(t *testing.T) {
 	if hasShift {
 		t.Fatal("hasShift = true, want false")
 	}
-	if len(reductions) != 3 {
-		t.Fatalf("reduction count = %d, want 3", len(reductions))
+	// Upstream reduce_action.h only compares symbol and count in
+	// ts_reduce_action_set_add, so production id and dynamic precedence do not
+	// keep otherwise-equivalent reductions distinct.
+	if len(reductions) != 1 {
+		t.Fatalf("reduction count = %d, want 1", len(reductions))
 	}
-
-	want := map[cReduceActionKey]bool{
-		{symbol: 4, count: 2, productionID: 7, dynamicPrecedence: 0}: true,
-		{symbol: 4, count: 2, productionID: 8, dynamicPrecedence: 0}: true,
-		{symbol: 4, count: 2, productionID: 7, dynamicPrecedence: 3}: true,
-	}
-	for _, reduction := range reductions {
-		key := cReduceActionKey{
-			symbol:            reduction.Symbol,
-			count:             reduction.ChildCount,
-			productionID:      reduction.ProductionID,
-			dynamicPrecedence: reduction.DynamicPrecedence,
-		}
-		if !want[key] {
-			t.Fatalf("unexpected reduction survived collection: %+v", reduction)
-		}
-		delete(want, key)
-	}
-	if len(want) != 0 {
-		t.Fatalf("missing reductions after collection: %+v", want)
+	got := reductions[0]
+	if got.Symbol != 4 || got.ChildCount != 2 || got.ProductionID != 7 || got.DynamicPrecedence != 0 {
+		t.Fatalf("surviving reduction = %+v, want first symbol/count action", got)
 	}
 }
 
@@ -122,9 +108,9 @@ func TestCBuildMergedGroupSummaryMatchesStackIterDelayedBranchOrder(t *testing.T
 	}
 	path := func(member int, firstState, branchState StateID, sym Symbol) []cSummaryPathEntry {
 		return []cSummaryPathEntry{
-			{entry: stackEntry{state: cErrorState}, posBytes: 2, member: member},
-			{entry: newStackEntryNode(firstState, leaf(sym)), posBytes: 2, member: member},
-			{entry: stackEntry{state: branchState}, posBytes: 0, member: member},
+			{entry: stackEntry{state: cErrorState}, posBytes: 2, memberID: member},
+			{entry: newStackEntryNode(firstState, leaf(sym)), posBytes: 2, memberID: member},
+			{entry: stackEntry{state: branchState}, posBytes: 0, memberID: member},
 		}
 	}
 
@@ -143,10 +129,37 @@ func TestCBuildMergedGroupSummaryMatchesStackIterDelayedBranchOrder(t *testing.T
 		t.Fatalf("summary length = %d, want %d: %+v", len(got), len(wantStates), got)
 	}
 	for i := range got {
-		if got[i].state != wantStates[i] || got[i].member != wantMembers[i] {
+		if got[i].state != wantStates[i] || got[i].memberID != wantMembers[i] {
 			t.Fatalf("summary[%d] = state %d member %d, want state %d member %d; full=%+v",
-				i, got[i].state, got[i].member, wantStates[i], wantMembers[i], got)
+				i, got[i].state, got[i].memberID, wantStates[i], wantMembers[i], got)
 		}
+	}
+}
+
+func TestCRecoverGroupMemberIndexSurvivesStackReorder(t *testing.T) {
+	group := &cRecGroup{}
+	stacks := []glrStack{
+		{cRec: &cRecoverState{group: group, memberID: 42}},
+		{cRec: &cRecoverState{group: group, memberID: 7}},
+		{cRec: &cRecoverState{group: &cRecGroup{}, memberID: 42}},
+	}
+	summary := cGroupSummaryEntry{memberID: stacks[0].cRec.memberID}
+
+	stacks[0], stacks[1] = stacks[1], stacks[0]
+	if stacks[0].cRec.memberID == summary.memberID {
+		t.Fatal("test setup did not move the summary owner away from its original index")
+	}
+	got := cRecoverGroupMemberIndex(stacks, group, summary.memberID)
+	if got != 1 {
+		t.Fatalf("resolved member index = %d, want 1 after reorder", got)
+	}
+	clone := stacks[got].cRec.clone()
+	if clone == nil || clone.memberID != summary.memberID || clone.group != group {
+		t.Fatalf("clone = %+v, want same group and member id %d", clone, summary.memberID)
+	}
+	stacks[got].dead = true
+	if got := cRecoverGroupMemberIndex(stacks, group, summary.memberID); got != -1 {
+		t.Fatalf("resolved dead member index = %d, want -1", got)
 	}
 }
 
