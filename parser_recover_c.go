@@ -1254,14 +1254,30 @@ func (p *Parser) cDoAllPotentialReductions(start glrStack, lookaheadSym Symbol, 
 			fork.cRec = versions[v].cRec.clone()
 			var dummy bool
 			p.applyAction(&fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
-			if p.rejectUndrainedPendingForkStacks(&fork) {
-				continue
+			reductionVersion := -1
+			if !fork.dead {
+				versions = append(versions, fork)
+				reductionVersion = len(versions) - 1
 			}
-			if fork.dead {
-				continue
+			// C's reduce over merged stack links creates stack versions for
+			// every viable pop slice. In this Go runtime, applyReduceActionForked
+			// leaves the sibling slices in pendingForkStacks; C recovery must
+			// drain those into the local do_all_potential_reductions version set
+			// instead of rejecting the active fork.
+			for pi := range p.pendingForkStacks {
+				pending := p.pendingForkStacks[pi]
+				if pending.dead {
+					continue
+				}
+				versions = append(versions, pending)
+				if reductionVersion < 0 {
+					reductionVersion = len(versions) - 1
+				}
 			}
-			versions = append(versions, fork)
-			lastReduction = len(versions) - 1
+			p.pendingForkStacks = p.pendingForkStacks[:0]
+			if reductionVersion >= 0 {
+				lastReduction = reductionVersion
+			}
 		}
 		if hasShift {
 			canShift = true

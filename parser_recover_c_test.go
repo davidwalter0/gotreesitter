@@ -39,7 +39,7 @@ func TestCCollectPotentialReductionsDedupeMatchesReduceActionSet(t *testing.T) {
 	}
 }
 
-func TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks(t *testing.T) {
+func TestCDoAllPotentialReductionsRetainsMergedPopSliceForks(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
@@ -92,11 +92,20 @@ func TestCDoAllPotentialReductionsRejectsUndrainedFaithfulForks(t *testing.T) {
 	if len(parser.pendingForkStacks) != 0 {
 		t.Fatalf("pending forks = %d, want 0", len(parser.pendingForkStacks))
 	}
-	if len(versions) != 1 {
-		t.Fatalf("version count = %d, want only original version", len(versions))
+	if len(versions) != 2 {
+		t.Fatalf("version count = %d, want reduced current plus sibling", len(versions))
 	}
 	if versions[0].gss.head != rightNode {
-		t.Fatal("C recovery retained a forked reduction instead of the original version")
+		top := stackEntryNode(versions[0].top())
+		if top == nil || top.symbol != 4 {
+			t.Fatalf("current version top = %+v, want reduced parent symbol 4", top)
+		}
+	} else {
+		t.Fatal("current version still points at the unreduced merged head")
+	}
+	top := stackEntryNode(versions[1].top())
+	if top == nil || top.symbol != 4 {
+		t.Fatalf("sibling version top = %+v, want reduced parent symbol 4", top)
 	}
 }
 
