@@ -2943,6 +2943,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			}
 			state := originals[si].top().state
 			for _, cand := range candidates {
+				if cand.tok.StartByte < originals[si].byteOffset {
+					continue
+				}
 				if !stateSupportedByCandidate(state, cand) {
 					continue
 				}
