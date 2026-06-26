@@ -803,6 +803,81 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	return bestTok, true
 }
 
+type glrDFATokenCandidate struct {
+	tok    Token
+	endPos int
+	endRow uint32
+	endCol uint32
+	states []StateID
+}
+
+func (d *dfaTokenSource) collectGLRDFATokenCandidates() []glrDFATokenCandidate {
+	if d == nil || d.lexer == nil || d.language == nil || d.lookupActionIndex == nil {
+		return nil
+	}
+	states := d.glrStates
+	if len(states) == 0 {
+		d.singleState[0] = d.state
+		states = d.singleState[:]
+	}
+	if len(states) <= 1 {
+		return nil
+	}
+
+	minStart := ^uint32(0)
+	candidates := make([]glrDFATokenCandidate, 0, len(states))
+	for _, st := range states {
+		tok, endPos, endRow, endCol := d.scanPreferredTokenForState(st)
+		if tok.Symbol == 0 {
+			continue
+		}
+		supports := make([]StateID, 0, len(states))
+		for _, live := range states {
+			if d.lookupActionIndex(live, tok.Symbol) != 0 {
+				supports = append(supports, live)
+			}
+		}
+		if len(supports) == 0 {
+			continue
+		}
+		if tok.StartByte < minStart {
+			minStart = tok.StartByte
+		}
+		merged := false
+		for i := range candidates {
+			if candidates[i].tok.Symbol == tok.Symbol &&
+				candidates[i].tok.StartByte == tok.StartByte &&
+				candidates[i].tok.EndByte == tok.EndByte {
+				merged = true
+				break
+			}
+		}
+		if merged {
+			continue
+		}
+		candidates = append(candidates, glrDFATokenCandidate{
+			tok:    tok,
+			endPos: endPos,
+			endRow: endRow,
+			endCol: endCol,
+			states: supports,
+		})
+	}
+	if len(candidates) <= 1 || minStart == ^uint32(0) {
+		return nil
+	}
+	out := candidates[:0]
+	for _, cand := range candidates {
+		if cand.tok.StartByte == minStart {
+			out = append(out, cand)
+		}
+	}
+	if len(out) <= 1 {
+		return nil
+	}
+	return out
+}
+
 func (d *dfaTokenSource) dedupeGLRUnionScoreStates() bool {
 	return d != nil && d.language != nil && d.language.Name == "markdown_inline"
 }

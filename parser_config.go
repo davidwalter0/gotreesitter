@@ -157,6 +157,11 @@ func parsePreMaterializationDiagEnabled() bool {
 	return preMaterializationDiag
 }
 
+func parseGLRTokenFrontierDispatchEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("GOT_GLR_TOKEN_FRONTIER_DISPATCH"))
+	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
+}
+
 func parsePhaseTimingEnabled() bool {
 	parsePhaseTimingOnce.Do(func() {
 		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_PHASE_TIMING"))

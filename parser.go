@@ -2791,6 +2791,177 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	tryMissingSingleShift := func(stackIndex int, s *glrStack, currentState StateID) bool {
 		return missingShift.tryInsert(p, stackIndex, s, currentState, tok, &nodeCount, arena, scratch, &trackChildErrors)
 	}
+	// Env-gated prototype: preserve same-byte DFA token alternatives per GLR
+	// version before falling back to the normal single-token parser contract.
+	tryDispatchGLRTokenFrontier := func() (Token, bool) {
+		if !parseGLRTokenFrontierDispatchEnabled() || reuse != nil || oldTree != nil || len(stacks) <= 1 {
+			return Token{}, false
+		}
+		dts := underlyingDFATokenSource(ts)
+		if dts == nil {
+			return Token{}, false
+		}
+		candidates := dts.collectGLRDFATokenCandidates()
+		if len(candidates) <= 1 {
+			return Token{}, false
+		}
+		if DebugDFA.Load() {
+			fmt.Printf("GLR-FRONTIER-DISPATCH pos=%d candidates=%d stacks=%d\n", dts.lexer.pos, len(candidates), len(stacks))
+			for ci, cand := range candidates {
+				name := ""
+				if int(cand.tok.Symbol) < len(p.language.SymbolNames) {
+					name = p.language.SymbolNames[cand.tok.Symbol]
+				}
+				fmt.Printf("  cand[%d] sym=%d name=%q span=%d:%d supports=%v\n",
+					ci, cand.tok.Symbol, name, cand.tok.StartByte, cand.tok.EndByte, cand.states)
+			}
+		}
+		stateSupportedByCandidate := func(state StateID, cand glrDFATokenCandidate) bool {
+			for _, st := range cand.states {
+				if st == state {
+					return true
+				}
+			}
+			return false
+		}
+		drainFrontierPendingForks := func(dst []glrStack) []glrStack {
+			if len(p.pendingForkStacks) == 0 {
+				return dst
+			}
+			dst = append(dst, p.pendingForkStacks...)
+			p.pendingForkStacks = p.pendingForkStacks[:0]
+			return dst
+		}
+		applyCandidate := func(start glrStack, cand glrDFATokenCandidate) []glrStack {
+			work := []glrStack{start}
+			for step := 0; step < maxConsecutivePrimaryReduces; step++ {
+				progressed := false
+				next := make([]glrStack, 0, len(work)+4)
+				for wi := range work {
+					s := &work[wi]
+					if s.dead {
+						continue
+					}
+					if s.shifted || s.accepted {
+						next = append(next, *s)
+						continue
+					}
+					currentState := s.top().state
+					actions := p.actionsForParseState(currentState, cand.tok.Symbol, p.language.ParseActions)
+					if len(actions) == 0 {
+						continue
+					}
+					if len(actions) == 1 {
+						act := actions[0]
+						switch act.Type {
+						case ParseActionShift:
+							if !p.guardRealShiftGap(source, s, cand.tok) {
+								continue
+							}
+							p.applyShiftAction(s, act, cand.tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+							next = append(next, *s)
+						case ParseActionReduce:
+							anyReduced := false
+							p.applyActionWithReduceChain(source, s, act, cand.tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+							next = append(next, *s)
+							next = drainFrontierPendingForks(next)
+							progressed = true
+						case ParseActionAccept:
+							p.applyAcceptAction(s)
+							next = append(next, *s)
+						case ParseActionRecover:
+							if !p.guardRealTokenAttachmentGap(source, s, cand.tok, "recover") {
+								continue
+							}
+							p.applyRecoverAction(s, act, cand.tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+							next = append(next, *s)
+						}
+						continue
+					}
+					base := *s
+					for ai, act := range actions {
+						fork := base.cloneWithScratch(&scratch.gss)
+						if ai > 0 {
+							fork.branchOrder = nextBranchOrder
+							nextBranchOrder++
+						}
+						switch act.Type {
+						case ParseActionShift:
+							if !p.guardRealShiftGap(source, &fork, cand.tok) {
+								continue
+							}
+							p.applyShiftAction(&fork, act, cand.tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+						case ParseActionReduce:
+							anyReduced := false
+							p.applyActionWithReduceChain(source, &fork, act, cand.tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
+							progressed = true
+						case ParseActionAccept:
+							p.applyAcceptAction(&fork)
+						case ParseActionRecover:
+							if !p.guardRealTokenAttachmentGap(source, &fork, cand.tok, "recover") {
+								continue
+							}
+							p.applyRecoverAction(&fork, act, cand.tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &trackChildErrors)
+						}
+						if !fork.dead {
+							next = append(next, fork)
+						}
+						next = drainFrontierPendingForks(next)
+					}
+				}
+				work = next
+				if !progressed {
+					break
+				}
+			}
+			out := work[:0]
+			for i := range work {
+				if !work[i].dead {
+					out = append(out, work[i])
+				}
+			}
+			return out
+		}
+
+		originals := stacks
+		nextStacks := make([]glrStack, 0, len(originals)+len(candidates))
+		nextTok := candidates[0].tok
+		nextEndPos := candidates[0].endPos
+		nextEndRow := candidates[0].endRow
+		nextEndCol := candidates[0].endCol
+		for _, cand := range candidates {
+			if cand.endPos < nextEndPos {
+				nextTok = cand.tok
+				nextEndPos = cand.endPos
+				nextEndRow = cand.endRow
+				nextEndCol = cand.endCol
+			}
+		}
+		for si := range originals {
+			if originals[si].dead || originals[si].shifted || originals[si].accepted || originals[si].cPaused {
+				continue
+			}
+			state := originals[si].top().state
+			for _, cand := range candidates {
+				if !stateSupportedByCandidate(state, cand) {
+					continue
+				}
+				fork := originals[si].cloneWithScratch(&scratch.gss)
+				fork.branchOrder = nextBranchOrder
+				nextBranchOrder++
+				applied := applyCandidate(fork, cand)
+				nextStacks = append(nextStacks, applied...)
+			}
+		}
+		if len(nextStacks) == 0 {
+			return Token{}, false
+		}
+		stacks = nextStacks
+		dts.lexer.pos = nextEndPos
+		dts.lexer.row = nextEndRow
+		dts.lexer.col = nextEndCol
+		return nextTok, true
+	}
 
 	for iter := 0; iter < maxIter; iter++ {
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
@@ -2860,6 +3031,18 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			} else {
 				multiStackTokens++
 			}
+			for si := range stacks {
+				stacks[si].shifted = false
+			}
+			missingShift.resetForToken()
+			if frontierTok, ok := tryDispatchGLRTokenFrontier(); ok {
+				perfTokensConsumed++
+				lastTokenEndByte = frontierTok.EndByte
+				lastTokenSymbol = frontierTok.Symbol
+				lastTokenWasEOF = false
+				needToken = true
+				continue
+			}
 			if phaseTiming {
 				tokenStart := time.Now()
 				tok = ts.Next()
@@ -2878,10 +3061,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
 				tokenSourceEOFEarly = true
 			}
-			for si := range stacks {
-				stacks[si].shifted = false
-			}
-			missingShift.resetForToken()
 		}
 
 		if reuse != nil && len(stacks) == 1 && !stacks[0].dead && tok.Symbol != 0 {
