@@ -4076,6 +4076,14 @@ func makeRepetitionShiftConflictChoice(lang *Language, state StateID, actions []
 		if !allReducesHaveSymbol(lang, actions, "makefile_repeat1") {
 			return ParseAction{}, false
 		}
+	case 664:
+		if !allReducesHaveSymbol(lang, actions, "_line_text_repeat2") {
+			return ParseAction{}, false
+		}
+	case 686:
+		if !allReducesHaveSymbol(lang, actions, "_line_text_repeat1") {
+			return ParseAction{}, false
+		}
 	default:
 		return ParseAction{}, false
 	}

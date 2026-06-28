@@ -633,6 +633,43 @@ func TestAwkRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
 	}
 }
 
+func TestMakeRepetitionShiftConflictChoiceAllowsLineTextRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		state        StateID
+		reduceSymbol Symbol
+	}{
+		{name: "makefile_repeat1", state: 25, reduceSymbol: 1},
+		{name: "line_text_repeat2", state: 664, reduceSymbol: 2},
+		{name: "line_text_repeat1", state: 686, reduceSymbol: 3},
+	} {
+		lang := &Language{SymbolNames: []string{"end", "makefile_repeat1", "_line_text_repeat2", "_line_text_repeat1"}}
+		actions := []ParseAction{
+			{Type: ParseActionReduce, Symbol: tc.reduceSymbol, ChildCount: 2},
+			{Type: ParseActionShift, State: 9, Repetition: true},
+		}
+
+		chosen, ok := makeRepetitionShiftConflictChoice(lang, tc.state, actions)
+		if !ok {
+			t.Fatalf("makeRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+		}
+		if chosen.Type != ParseActionShift || chosen.State != 9 || !chosen.Repetition {
+			t.Fatalf("makeRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+		}
+	}
+}
+
+func TestMakeRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", "makefile_repeat1", "other_repeat1"}}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
+		{Type: ParseActionShift, State: 9, Repetition: true},
+	}
+	if _, ok := makeRepetitionShiftConflictChoice(lang, 25, actions); ok {
+		t.Fatal("makeRepetitionShiftConflictChoice = true, want false")
+	}
+}
+
 func TestRustRepetitionShiftConflictChoiceAllowsSourceFileRepeat(t *testing.T) {
 	lang := &Language{SymbolNames: []string{"end", "identifier", ";", "..", "source_file_repeat1", "_non_special_token_repeat1"}}
 	actions := []ParseAction{
