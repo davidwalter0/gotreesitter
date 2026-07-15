@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestParseFile(t *testing.T) {

@@ -3,7 +3,7 @@
 package grammars
 
 import (
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // External token indexes for the Djot grammar.

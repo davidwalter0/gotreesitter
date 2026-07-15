@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestForestTrailingExtraRetained locks the max-coverage accept fix. A file

@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // Golden hashes of golang.org/x/sys/windows/zerrors_windows.go (a 945KB single

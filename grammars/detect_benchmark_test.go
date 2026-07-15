@@ -3,7 +3,7 @@ package grammars_test
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // BenchmarkDetectLanguage measures the hot path for extension-based detection.

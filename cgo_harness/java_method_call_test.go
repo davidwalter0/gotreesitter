@@ -8,8 +8,8 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // stripFieldLabels removes "name: ", "object: ", etc. from C S-expressions

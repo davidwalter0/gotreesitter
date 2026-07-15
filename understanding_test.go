@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestExtractDefinitionSpansAndCallsGo(t *testing.T) {

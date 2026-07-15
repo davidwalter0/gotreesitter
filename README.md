@@ -3,7 +3,7 @@
 Pure-Go [tree-sitter](https://tree-sitter.github.io/) runtime. No CGo, no C toolchain. Cross-compiles to any `GOOS`/`GOARCH` target Go supports, including `wasip1`.
 
 ```sh
-go get github.com/odvcencio/gotreesitter
+go get github.com/davidwalter0/gotreesitter
 ```
 
 gotreesitter loads the same parse-table format that tree-sitter's C runtime uses. Grammar tables are extracted from upstream `parser.c` files by `ts2go`, compressed into binary blobs, and deserialized on first use. 206 grammars ship in the registry.
@@ -28,8 +28,8 @@ gotreesitter eliminates the C dependency entirely. The parser, lexer, query engi
 import (
     "fmt"
 
-    "github.com/odvcencio/gotreesitter"
-    "github.com/odvcencio/gotreesitter/grammars"
+    "github.com/davidwalter0/gotreesitter"
+    "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func main() {

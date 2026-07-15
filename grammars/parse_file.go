@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 var (

@@ -3,7 +3,7 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // jstsCompatCleanParseGoldenSExprJS / jstsCompatCleanParseGoldenSExprTS pin

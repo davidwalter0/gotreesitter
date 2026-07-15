@@ -31,7 +31,7 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	testBinary := buildProductionTestBinary(t)
 
 	nm := runGoTool(t, "nm", testBinary)
-	productionWorkCountSymbol := regexp.MustCompile(`(?m)^\s*[0-9a-f]+\s+\S\s+github\.com/odvcencio/gotreesitter\.(?:\(\*[^)]*\)\.)?workCount`)
+	productionWorkCountSymbol := regexp.MustCompile(`(?m)^\s*[0-9a-f]+\s+\S\s+github\.com/davidwalter0/gotreesitter\.(?:\(\*[^)]*\)\.)?workCount`)
 	if match := productionWorkCountSymbol.Find(nm); match != nil {
 		t.Fatalf("untagged binary retains a production work-count symbol: %s", match)
 	}
@@ -41,13 +41,13 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 		"tryGSSMainMergeForParserPhase",
 		"postReduceForkMergePreflight",
 	} {
-		if bytes.Contains(nm, []byte("github.com/odvcencio/gotreesitter."+forbidden)) {
+		if bytes.Contains(nm, []byte("github.com/davidwalter0/gotreesitter."+forbidden)) {
 			t.Fatalf("untagged binary retains diagnostic merge helper %s", forbidden)
 		}
 	}
 
 	finalizeLine := sourceMarkerLine(t, "parser.go", finalizeDeferGuardMarker) - 1
-	closures := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.parseInternal\.func`, testBinary)
+	closures := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.\(\*Parser\)\.parseInternal\.func`, testBinary)
 	finalizeAssembly := uniqueAssemblySectionForLine(t, closures, "parser.go", finalizeLine)
 	if bytes.Contains(finalizeAssembly, []byte("runtime.deferreturn")) {
 		t.Fatalf("untagged finalizeTree retains defer scaffolding:\n%s", finalizeAssembly)
@@ -55,26 +55,26 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoDiagnosticAssembly(t, finalizeAssembly)
 
 	popCensusLine := sourceMarkerLine(t, "parser_reduce.go", popPayloadCensusMarker)
-	reduceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.selectedReduceWindowsFromGSSWithBudget`, testBinary)
+	reduceAssembly := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.\(\*Parser\)\.selectedReduceWindowsFromGSSWithBudget`, testBinary)
 	if hasAssemblyForLine(reduceAssembly, "parser_reduce.go", popCensusLine) {
 		t.Fatalf("untagged reduction path retains instructions at the payload-census seam:\n%s", reduceAssembly)
 	}
 	assertNoDiagnosticAssembly(t, reduceAssembly)
 
 	assertNoAssemblyAtMarker(t, closures, "parser.go", convergenceIterationMarker)
-	resultAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.buildResultFromGLR`, testBinary)
+	resultAssembly := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.\(\*Parser\)\.buildResultFromGLR`, testBinary)
 	assertNoAssemblyAtMarker(t, resultAssembly, "parser_result.go", convergenceFinalExpandMarker)
 	assertNoDiagnosticAssembly(t, resultAssembly)
-	gssAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.tryGSSMainMergeForParser`, testBinary)
+	gssAssembly := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.tryGSSMainMergeForParser`, testBinary)
 	assertNoAssemblyAtMarker(t, gssAssembly, "glr.go", convergenceGSSMarker)
 	assertNoDiagnosticAssembly(t, gssAssembly)
-	gssMutationAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:setGSSMainLink|gssMainAddLinkSeenMutate|gssMainReplaceWorstEquivalentLinkIfBetterMutate|gssMainMergeNodesSeenMutate|gssMainMergeWithScratch|tryGSSMainMergeResult|\(\*gssNode\)\.appendExtraLink)`, testBinary)
+	gssMutationAssembly := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.(?:setGSSMainLink|gssMainAddLinkSeenMutate|gssMainReplaceWorstEquivalentLinkIfBetterMutate|gssMainMergeNodesSeenMutate|gssMainMergeWithScratch|tryGSSMainMergeResult|\(\*gssNode\)\.appendExtraLink)`, testBinary)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetPrimaryMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetExtraMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendReuseMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendGrowMarker)
 	assertNoDiagnosticAssembly(t, gssMutationAssembly)
-	postReduceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:tryMergePostReduceFork|postReduceForkMergePreflight|\(\*Parser\)\.(?:applyReduceActionForked|applyReduceActionFromGSS))`, testBinary)
+	postReduceAssembly := runGoTool(t, "objdump", "-s", `github.com/davidwalter0/gotreesitter\.(?:tryMergePostReduceFork|postReduceForkMergePreflight|\(\*Parser\)\.(?:applyReduceActionForked|applyReduceActionFromGSS))`, testBinary)
 	assertNoDiagnosticAssembly(t, postReduceAssembly)
 }
 

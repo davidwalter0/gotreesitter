@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // top50CorrectnessLanguages is a curated broad-coverage correctness gate used

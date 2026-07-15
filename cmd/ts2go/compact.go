@@ -3,7 +3,7 @@ package main
 import (
 	"hash/fnv"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // LanguageCompactor compacts generated language tables and reuses repeated

@@ -17,7 +17,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // externalScannerRegistry maps language names (e.g. "javascript") to their

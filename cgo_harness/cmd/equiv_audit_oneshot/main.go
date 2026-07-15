@@ -12,8 +12,8 @@ import (
 	"os"
 	"time"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func main() {

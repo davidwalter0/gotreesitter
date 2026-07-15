@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	gts "github.com/odvcencio/gotreesitter"
-	grm "github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	grm "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestForestCorpusParity is the correctness gate for promoting a language onto

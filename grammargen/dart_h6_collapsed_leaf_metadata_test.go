@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestDartH6GeneratedCollapsedLeafMetadataAndMaterialization(t *testing.T) {

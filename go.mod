@@ -1,4 +1,4 @@
-module github.com/odvcencio/gotreesitter
+module github.com/davidwalter0/gotreesitter
 
 go 1.22.0
 

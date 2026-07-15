@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // certifiedConflictPolicyProfile contains narrow conflict decisions that

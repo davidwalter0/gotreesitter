@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 type manifest struct {

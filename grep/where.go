@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // WhereFilter is a predicate that tests whether a match result satisfies a

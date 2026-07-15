@@ -3,8 +3,8 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestBibtexRecoveredMissingEntryKeyMatchesCShape(t *testing.T) {

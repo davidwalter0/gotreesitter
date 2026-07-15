@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestBuildSeqCoalescesAdjacentStrings(t *testing.T) {

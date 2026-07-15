@@ -3,7 +3,7 @@ package grammars
 import (
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
+	ts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestGraphQLOperationTypeKeepsQueryTokenChildViaEngine proves that the

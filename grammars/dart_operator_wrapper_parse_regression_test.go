@@ -3,7 +3,7 @@ package grammars
 import (
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
+	ts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestDartOperatorWrappersKeepTokenChildrenViaEngine proves that the reduce

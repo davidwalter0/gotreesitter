@@ -7,7 +7,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestFsharpKeywordDedentFallbackIgnoresEmptyIndentStack(t *testing.T) {
@@ -51,8 +51,8 @@ func TestFsharpKeywordDedentFallbackIgnoresEmptyIndentStack(t *testing.T) {
 	}
 }
 
-//go:linkname newFsharpExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newFsharpExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newFsharpExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer
 
-//go:linkname fsharpExternalLexerToken github.com/odvcencio/gotreesitter.(*ExternalLexer).token
+//go:linkname fsharpExternalLexerToken github.com/davidwalter0/gotreesitter.(*ExternalLexer).token
 func fsharpExternalLexerToken(*gotreesitter.ExternalLexer) (gotreesitter.Token, bool)

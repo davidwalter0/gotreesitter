@@ -22,9 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	cgoharness "github.com/odvcencio/gotreesitter/cgo_harness"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	cgoharness "github.com/davidwalter0/gotreesitter/cgo_harness"
+	"github.com/davidwalter0/gotreesitter/grammars"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -866,7 +866,7 @@ type commonFields struct {
 
 func commonRowFields(repoRoot string) commonFields {
 	return commonFields{
-		Repo:        "odvcencio/gotreesitter",
+		Repo:        "davidwalter0/gotreesitter",
 		Commit:      gitOutput(repoRoot, "rev-parse", "HEAD"),
 		Branch:      gitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD"),
 		GoVersion:   runtime.Version(),

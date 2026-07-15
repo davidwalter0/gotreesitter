@@ -5,7 +5,7 @@ package grammars
 import (
 	"unicode"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // External token indexes for the scss grammar (must match grammar.js externals).

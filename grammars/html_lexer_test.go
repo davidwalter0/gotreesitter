@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestNewHTMLTokenSourceReturnsErrorOnMissingSymbols(t *testing.T) {

@@ -5,7 +5,7 @@ package grammars
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func skipToByte(ts gotreesitter.TokenSource, offset uint32) (gotreesitter.Token, bool) {

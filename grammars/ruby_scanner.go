@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // External token indexes for the Ruby grammar (order must match grammar.js externals).

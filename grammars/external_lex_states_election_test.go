@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestExternalLexStatesDefaultElectionInventory(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 type updateStatus string

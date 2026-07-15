@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	cgoharness "github.com/odvcencio/gotreesitter/cgo_harness"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	cgoharness "github.com/davidwalter0/gotreesitter/cgo_harness"
+	"github.com/davidwalter0/gotreesitter/grammars"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 

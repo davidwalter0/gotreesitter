@@ -3,8 +3,8 @@ package parserresult_test
 import (
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
-	gr "github.com/odvcencio/gotreesitter/grammars"
+	ts "github.com/davidwalter0/gotreesitter"
+	gr "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestScalaTrailingCommentAttachesToIndentedFunctionBody(t *testing.T) {

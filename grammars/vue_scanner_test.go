@@ -5,7 +5,7 @@ package grammars
 import (
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // TestVueCommentAfterNewlineInTemplate guards against a scanner regression where

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // maxUint16Index is the largest value that fits in the uint16 index/ID fields

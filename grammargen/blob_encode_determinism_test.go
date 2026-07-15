@@ -6,7 +6,7 @@ import (
 	"encoding/gob"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // syntheticLargeStateGotos returns a map shaped like what

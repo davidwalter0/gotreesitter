@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func TestKeywordFollowTokensAllowKeywordAfterReduce(t *testing.T) {

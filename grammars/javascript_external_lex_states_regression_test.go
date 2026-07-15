@@ -3,7 +3,7 @@ package grammars
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // TestJavascriptExternalLexStatesRegression guards the default javascript

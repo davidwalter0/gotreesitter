@@ -31,8 +31,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestMain ensures the out-of-tree tree-sitter-markdown corpus required by the

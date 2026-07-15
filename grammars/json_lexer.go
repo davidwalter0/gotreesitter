@@ -7,7 +7,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // JSONTokenSource bridges raw JSON source to tree-sitter token symbols.

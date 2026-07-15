@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // buildFollowTokensFunc returns a function that, given a parser state,

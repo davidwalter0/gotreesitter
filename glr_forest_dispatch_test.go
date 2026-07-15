@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	grm "github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	grm "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestCertifiedAutomaticForestRoutingRequiresExactArtifact(t *testing.T) {

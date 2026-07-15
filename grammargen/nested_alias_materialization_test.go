@@ -3,7 +3,7 @@ package grammargen
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // These tests cover the alias-materialization bug fixed in

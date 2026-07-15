@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	grm "github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	grm "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestRustLineCommentTextEditUsesInvariantReuse(t *testing.T) {
