@@ -98,7 +98,33 @@ go test . -tags treesitter_c_parity -run '^$' \
   -benchmem -count=10 -benchtime=750ms
 ```
 
-## Run Real-Corpus Parser Benchmarks
+## Run Locked Canonical Go Incremental Benchmarks
+
+`BenchmarkParityGoCanonicalIncremental` uses four locked edits over the
+authenticated real-Go fixtures: token-class change, same-line length change,
+early newline insertion, and recovery deletion. It verifies exact fresh and
+incremental Go/C trees in both edit directions before timing; an admission
+failure stops the benchmark without dynamically selecting another edit.
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh --cpus 1 -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 go test . \
+    -tags treesitter_c_parity -run '^$' \
+    -bench '^BenchmarkParityGoCanonicalIncremental/' \
+    -benchmem -count=10 -benchtime=750ms"
+```
+
+Run the same four-way admission without timing with:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh --cpus 1 -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 \
+    GTS_CANONICAL_GO_INCREMENTAL=1 go test . \
+    -tags treesitter_c_parity \
+    -run '^TestCanonicalGoIncrementalParity$' -count=1 -v"
+```
+
+## Run Dynamic Real-Corpus Parser Benchmarks
 
 `BenchmarkParityRealCorpusParse*` uses `cgo_harness/corpus_real/<language>`
 fixtures and compares gotreesitter against the C tree-sitter runtime for full

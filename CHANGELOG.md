@@ -23,6 +23,10 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Add locked representative real-Go incremental benchmarks for token-class,
+  length-changing, newline-insertion, and recovery-deletion edits. Each lane
+  requires exact fresh and incremental Go/C tree parity before reporting
+  Tree.Edit, reuse, reparse, stack, allocation, and reuse-volume metrics.
 - Report-mode fleet reduction now preserves closed-vocabulary
   `no_static_c_oracle`, `no_corpus`, and `no_corpus_files` shards as fatal
   closure findings in the combined artifact. Certification remains fail-closed,
