@@ -3397,9 +3397,54 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 		// only invisible (hidden-symbol) subtrees flatten.
 		children = p.cAppendVisibleSplice(children, n)
 	}
-	root := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, children, 0)
+	// Split the leading and trailing runs of EXTRA children (comments /
+	// whitespace) out of the ERROR node. tree-sitter keeps a file's leading
+	// license comment — and any trailing trivia — as top-level siblings of the
+	// error region, not folded inside it: the oracle frames
+	// [leadingExtras..., ERROR(interior), trailingExtras...] under the root,
+	// whereas an unsplit collect wraps the whole file (including that leading
+	// comment) in one ERROR. Only the contiguous interior between the leading
+	// and trailing extra runs becomes the ERROR; the peeled extras are
+	// re-emitted as separate stack siblings so the wrapper root matches the
+	// oracle's leading-sibling boundary.
+	lead := 0
+	for lead < len(children) && children[lead] != nil && children[lead].isExtra() {
+		lead++
+	}
+	trail := len(children)
+	for trail > lead && children[trail-1] != nil && children[trail-1].isExtra() {
+		trail--
+	}
+	var leadingSiblings, trailingSiblings, errChildren []*Node
+	if lead < trail {
+		leadingSiblings = children[:lead]
+		errChildren = children[lead:trail:trail]
+		trailingSiblings = children[trail:]
+	} else {
+		// Degenerate: every child is an extra — keep the whole span as the
+		// ERROR rather than emit an empty error node.
+		errChildren = children
+	}
+	root := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
+	// Span: preserve the original raw stack span (rawFirst/rawLast — a raw
+	// stack node's span can legitimately extend past its last VISIBLE child,
+	// e.g. an open error region that absorbed trailing whitespace). Only pull
+	// the START forward when a leading-extra run was lifted, and the END back
+	// when a trailing-extra run was lifted; otherwise the ERROR keeps the exact
+	// byte-identical span it had before this split (KDL/uxntal no-lift parses).
 	if rawFirst != nil {
-		cSetNodeSpan(root, rawFirst.startByte, rawLast.endByte, rawFirst.startPoint, rawLast.endPoint)
+		startByte, startPoint := rawFirst.startByte, rawFirst.startPoint
+		endByte, endPoint := rawLast.endByte, rawLast.endPoint
+		if lead < trail {
+			if len(leadingSiblings) > 0 {
+				startByte, startPoint = errChildren[0].startByte, errChildren[0].startPoint
+			}
+			if len(trailingSiblings) > 0 {
+				last := errChildren[len(errChildren)-1]
+				endByte, endPoint = last.endByte, last.endPoint
+			}
+		}
+		cSetNodeSpan(root, startByte, endByte, startPoint, endPoint)
 	} else {
 		cSetNodeSpan(root, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	}
@@ -3417,7 +3462,13 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 	v.truncate(1)
 	v.cRec = nil
 	v.cRecoverMissingGroup = nil
+	for _, n := range leadingSiblings {
+		p.pushStackNode(v, 1, n, entryScratch, gssScratch)
+	}
 	p.pushStackNode(v, 1, root, entryScratch, gssScratch)
+	for _, n := range trailingSiblings {
+		p.pushStackNode(v, 1, n, entryScratch, gssScratch)
+	}
 	if debugRecoveryCycleChecks {
 		debugRecoveryCheckNodeAcyclic(p, arena, "recover-eof-accept-root", root)
 	}
@@ -4233,10 +4284,30 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		return ParseStopNone
 	}
 	cand := nodes[rootIdx]
+	// When the accepted root is an ERROR — a whole-file / top-level error
+	// recovery result — the oracle keeps the file's leading trivia (a license
+	// comment) and any trailing trivia as top-level SIBLINGS of the error
+	// region, not folded inside it. ts_parser__accept faithfully prepends
+	// leading extras as children of the root, which for an ERROR root
+	// over-extends its start backward across the leading comment (and its end
+	// across trailing trivia) — the leading-sibling over-extension defect. Lift
+	// the leading and trailing EXTRA runs out as separate siblings so the
+	// wrapper root frames [leadingExtras..., ERROR(interior), trailingExtras...]
+	// like the oracle's recover-to-state boundary. A REAL (non-error) root keeps
+	// the faithful fold: its leading/trailing extras are genuinely its children.
+	leadExtra, trailExtra := 0, len(nodes)
+	if cand.symbol == errorSymbol {
+		for leadExtra < rootIdx && nodes[leadExtra].isExtra() {
+			leadExtra++
+		}
+		for trailExtra > rootIdx+1 && nodes[trailExtra-1].isExtra() {
+			trailExtra--
+		}
+	}
 	childLimit := cAcceptRootRebuildChildLimit(arena)
 	initialCap := min(len(nodes)-1+len(cand.children), 1024)
 	children := make([]*Node, 0, initialCap)
-	for _, n := range nodes[:rootIdx] {
+	for _, n := range nodes[leadExtra:rootIdx] {
 		var ok bool
 		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
 		if !ok {
@@ -4248,7 +4319,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 	if !ok {
 		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
-	for _, n := range nodes[rootIdx+1:] {
+	for _, n := range nodes[rootIdx+1 : trailExtra] {
 		var ok bool
 		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
 		if !ok {
@@ -4265,10 +4336,19 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		}
 	}
 	children = cloneNodeSliceInArena(arena, children)
-	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, 0)
+	// tree-sitter's ERROR symbol is NAMED (isNamedSymbol has no metadata row
+	// for the sentinel errorSymbol and returns false); an ERROR root must carry
+	// named=true to match the oracle — the same invariant cRecoverEOFAccept
+	// hardcodes. Without this, lifting the ERROR to a top-level sibling (above)
+	// would surface it as an unnamed node and diverge on the `named` flag.
+	rootNamed := p.isNamedSymbol(cand.symbol)
+	if cand.symbol == errorSymbol {
+		rootNamed = true
+	}
+	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, rootNamed, children, 0)
 	root.rawShape = captureRawShapeForNodeSlice(arena, cand.symbol, cand.productionID, children)
 	root.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
-	first, last := nodes[0], nodes[len(nodes)-1]
+	first, last := nodes[leadExtra], nodes[trailExtra-1]
 	cSetNodeSpan(root, first.startByte, last.endByte, first.startPoint, last.endPoint)
 	hasErr := false
 	for _, c := range children {
@@ -4284,7 +4364,17 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 	if !s.truncate(1) {
 		return ParseStopNone
 	}
+	// Push the lifted leading extras, then the ERROR root, then the trailing
+	// extras, as separate top-level stack siblings (leadExtra == 0 &&
+	// trailExtra == len(nodes) for a non-error root, preserving the faithful
+	// single-root push).
+	for _, n := range nodes[:leadExtra] {
+		p.pushStackNode(s, 1, n, entryScratch, gssScratch)
+	}
 	p.pushStackNode(s, 1, root, entryScratch, gssScratch)
+	for _, n := range nodes[trailExtra:] {
+		p.pushStackNode(s, 1, n, entryScratch, gssScratch)
+	}
 	if debugRecoveryCycleChecks {
 		debugRecoveryCheckNodeAcyclic(p, arena, "accept-root-rebuild", root)
 	}
