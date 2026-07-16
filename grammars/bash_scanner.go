@@ -239,12 +239,6 @@ func bshSkip(lexer *gotreesitter.ExternalLexer) {
 	lexer.Advance(true)
 }
 
-func bshSkipHorizontalSpace(lexer *gotreesitter.ExternalLexer) {
-	for lexer.Lookahead() == ' ' || lexer.Lookahead() == '\t' {
-		bshSkip(lexer)
-	}
-}
-
 // bshAdvanceWord consumes a POSIX "word" from the lexer, appending the
 // unquoted content to unquoted. Returns true if the word is non-empty.
 func bshAdvanceWord(lexer *gotreesitter.ExternalLexer) (unquoted []byte, ok bool) {
@@ -338,43 +332,6 @@ func bshDelimiterSize(d []byte) int {
 		}
 	}
 	return len(d)
-}
-
-func bshIsReservedWordBoundary(r rune) bool {
-	return r == 0 || bshIsSpace(r) || r == ';' || r == '&' || r == '|' || r == ')'
-}
-
-func bshScanOpeningParen(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if !bshIsValid(validSymbols, bshTokConcat) {
-		bshSkipHorizontalSpace(lexer)
-	}
-	if lexer.Lookahead() != '(' {
-		return false
-	}
-
-	bshAdvance(lexer)
-	lexer.MarkEnd()
-	lexer.SetResultSymbol(bshSymOpeningParen)
-	return true
-}
-
-func bshScanEsac(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if !bshIsValid(validSymbols, bshTokConcat) {
-		bshSkipHorizontalSpace(lexer)
-	}
-	for _, want := range []rune{'e', 's', 'a', 'c'} {
-		if lexer.Lookahead() != want {
-			return false
-		}
-		bshAdvance(lexer)
-	}
-	if !bshIsReservedWordBoundary(lexer.Lookahead()) {
-		return false
-	}
-
-	lexer.MarkEnd()
-	lexer.SetResultSymbol(bshSymEsac)
-	return true
 }
 
 // ---- heredoc scanning ----
@@ -1063,17 +1020,19 @@ func bshScan(s *bshState, lexer *gotreesitter.ExternalLexer, validSymbols []bool
 		}
 	}
 
-	// OPENING_PAREN / ESAC
-	if bshIsValid(validSymbols, bshTokOpeningParen) && !bshInErrorRecovery(validSymbols) {
-		if bshScanOpeningParen(lexer, validSymbols) {
-			return true
-		}
-	}
-	if bshIsValid(validSymbols, bshTokEsac) && !bshInErrorRecovery(validSymbols) {
-		if bshScanEsac(lexer, validSymbols) {
-			return true
-		}
-	}
+	// NOTE: OPENING_PAREN and ESAC are listed as external symbols in the
+	// upstream grammar's `externals` array, but the real scanner.c never
+	// actively scans for or emits either one -- valid_symbols[OPENING_PAREN]
+	// is only ever read as a disambiguation flag inside VARIABLE_NAME
+	// scanning below, and valid_symbols[ESAC] is never read at all. An
+	// earlier version of this port actively matched '(' here (see
+	// bshScanOpeningParen, since removed): that pre-empted the internal
+	// DFA's longest-match tokenization, e.g. returning a 1-byte '(' before
+	// the DFA got a chance to match the 2-byte '((' arithmetic-command
+	// token, misparsing `(( expr ))` as two nested plain subshells
+	// (`( ( expr ) )`) instead of the grammar's dedicated arithmetic
+	// compound_statement. Do not resurrect active OPENING_PAREN/ESAC
+	// scanning here; let the internal DFA lex '(' and "esac" normally.
 
 	// CONCAT
 	if bshIsValid(validSymbols, bshTokConcat) && !bshInErrorRecovery(validSymbols) {
