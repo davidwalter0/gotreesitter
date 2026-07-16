@@ -1255,6 +1255,23 @@ func (p *Parser) tryOpportunisticTopLevelResyncRecovery(source []byte, s *glrSta
 	return p.tryResyncErrorRecoveryMode(source, s, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, true)
 }
 
+// resyncPreservedNextState returns the state after transparently placing a
+// preserved top-level sibling n back on the stack during panic-mode resync.
+// Extras (comments / whitespace) do not consume an LR GOTO — tree-sitter
+// shifts them at the same state — so they keep the state unchanged; every
+// other sibling advances via its GOTO. A zero GOTO for a non-extra returns
+// ok=false, which the caller treats as a bail-out (fall back to the leaf path).
+func (p *Parser) resyncPreservedNextState(state StateID, n *Node) (StateID, bool) {
+	if n.isExtra() {
+		return state, true
+	}
+	next := p.lookupGoto(state, n.symbol)
+	if next == 0 {
+		return 0, false
+	}
+	return next, true
+}
+
 func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool, opportunisticRetryOnly bool) int {
 	if p == nil || s == nil || arena == nil || tok.Symbol == 0 {
 		return resyncNone
@@ -1356,6 +1373,20 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 	gotoState := recoverState
 	for preservedEnd < len(poppedNodes) {
 		n := poppedNodes[preservedEnd]
+		// Extras (comments / whitespace) do not participate in the LR GOTO
+		// table: tree-sitter shifts them transparently at any state without a
+		// state transition. A leading extra — most visibly a file's license
+		// comment ahead of the first real construct — therefore has no GOTO and
+		// must NOT terminate the completed-sibling scan. Preserve it as a
+		// top-level sibling and continue at the SAME state. Without this the
+		// first leading comment collapses every following clean top-level
+		// construct into the ERROR node — the leading-sibling over-extension
+		// where gt's whole-file ERROR swallows the leading siblings the oracle
+		// keeps separate before the error region.
+		if n.isExtra() {
+			preservedEnd++
+			continue
+		}
 		next := p.lookupGoto(gotoState, n.symbol)
 		if next == 0 {
 			break
@@ -1409,8 +1440,8 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 			pushState := recoverState
 			for i := 0; i < preservedEnd; i++ {
 				n := poppedNodes[i]
-				next := p.lookupGoto(pushState, n.symbol)
-				if next == 0 {
+				next, ok := p.resyncPreservedNextState(pushState, n)
+				if !ok {
 					return resyncNone
 				}
 				n.preGotoState = pushState
@@ -1469,12 +1500,13 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		return resyncNone
 	}
 	// Re-push the preserved valid top-level siblings, advancing the state via
-	// GOTO exactly as the original parse did.
+	// GOTO exactly as the original parse did (extras are shifted transparently
+	// at the same state — see resyncPreservedNextState).
 	pushState := recoverState
 	for i := 0; i < preservedEnd; i++ {
 		n := poppedNodes[i]
-		next := p.lookupGoto(pushState, n.symbol)
-		if next == 0 {
+		next, ok := p.resyncPreservedNextState(pushState, n)
+		if !ok {
 			// Defensive: should not happen given the preservation loop above.
 			return resyncNone
 		}

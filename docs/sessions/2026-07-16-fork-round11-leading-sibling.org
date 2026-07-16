@@ -1,0 +1,125 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round11-leading-sibling
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork-round11-leading-sibling
+#+date: 2026-07-16
+
+* Session Topic
+Fix the cross-language "whole-file ERROR swallows the leading top-level
+siblings" recovery-boundary defect on the BLOB (external-scanner TokenSource)
+path for C and C++. Root-cause, one principled boundary fix, not per-file
+signatures.
+
+* Files Touched
+- parser_recover_c.go — leading/trailing extra lift in cAcceptRootRebuild and
+  cRecoverEOFAccept; ERROR-root named=true invariant.
+- parser_reduce.go — panic-mode resync completed-sibling scan skips extras
+  (they carry no LR GOTO); resyncPreservedNextState helper.
+- grammars/leading_sibling_recovery_test.go — new regression test (teeth
+  verified: fails pre-fix).
+
+* Root Cause (verified)
+When a C/C++ file fails to reduce to translation_unit, gt materializes a
+whole-file / top-level ERROR through error recovery. THREE recovery sites folded
+the file's leading trivia (the license comment) — and, per file, the leading
+clean top-level constructs — INTO that ERROR instead of keeping them as
+siblings before it:
+
+1. =cAcceptRootRebuild= (parser_recover_c.go, the faithful ts_parser__accept
+   port): the topmost non-extra subtree names the root and every earlier
+   subtree (incl. leading extras) is prepended as its CHILD. For an ERROR root
+   this over-extends its start backward across the leading comment. This is the
+   WINNER for the 3 C exemplars (libintl / cache-view / deprecate).
+2. =cRecoverEOFAccept= (parser_recover_c.go): collects all stack subtrees into
+   one ERROR spanning rawFirst..rawLast — the leading comment is child[0].
+3. =tryResyncErrorRecoveryMode= (parser_reduce.go, panic-mode top-level
+   resync): its completed-sibling scan advanced by GOTO, but EXTRAS have no LR
+   GOTO, so the FIRST leading comment (=lookupGoto==0=) terminated the scan at
+   preservedEnd=0 → every following clean top-level construct collapsed into the
+   ERROR. This is the path for the 3 C++ exemplars (display_list /
+   dl_path_builder / Certifier).
+
+The oracle (tree-sitter-c/-cpp) keeps the leading comment (and any clean leading
+top-level nodes) as SEPARATE siblings and starts the ERROR at the first
+genuinely-unparseable token — a recover-to-state outcome gt reaches via
+recover_eof, so gt must localize the ERROR boundary to match.
+
+* Decisions Made
+- resync scan: treat extras as transparent (preserve as a sibling, keep the
+  same state) instead of terminating the scan — extras genuinely do not
+  participate in GOTO (tree-sitter shifts them at any state). resyncPreservedNextState
+  mirrors this in both sibling-push loops (a bare lookupGoto would bail on the
+  extra and fall back to the buggy leaf path).
+- cAcceptRootRebuild / cRecoverEOFAccept: lift the leading AND trailing runs of
+  EXTRA children out of the ERROR as separate top-level stack siblings; the
+  result builder (buildResultFromNodes → synthetic root) wraps
+  [leadingExtras..., ERROR(interior), trailingExtras...] in translation_unit,
+  matching the oracle. Gated so a REAL (non-error) accept root keeps the
+  faithful ts_parser__accept fold.
+- SPAN CORRECTNESS (the KDL regression): cRecoverEOFAccept must keep the ERROR
+  span at rawFirst..rawLast when NOTHING is lifted — a raw stack node's span can
+  legitimately extend past its last VISIBLE child (open error region absorbing
+  trailing whitespace). Using the last spliced child's end shrank the KDL root
+  by 37 bytes. Fixed: adjust start only on a leading lift, end only on a
+  trailing lift.
+- ERROR-root named=true: isNamedSymbol has no metadata row for the sentinel
+  errorSymbol (returns false); tree-sitter ERROR is named. cRecoverEOFAccept
+  already hardcodes true — cAcceptRootRebuild now does too for errorSymbol
+  roots.
+
+* Work Completed
+- All 6 exemplars now emit the leading comment (and cpp: leading preproc_includes)
+  as SEPARATE top-level siblings before the ERROR. libintl now matches the
+  oracle's top-level EXACTLY: [comment(0-774), ERROR(776-42676), comment(42677-42692)].
+- corpus_parity (Docker, blob path, OOM-safe, one lang/container):
+  | lang       | baseline | r11   | lost | gained |
+  |------------+----------+-------+------+--------|
+  | c          | 23/55    | 23/55 | 0    | 0      |
+  | cpp        | 37/55    | 37/55 | 0    | 0      |
+  | go         | 55/55    | 55/55 | 0    | 0      |
+  | typescript | 39/39    | 39/39 | 0    | 0      |
+  | bash       | 43/55    | 43/55 | 0    | 0      |
+  | json       | 50/50    | 50/50 | 0    | 0      |
+  ZERO cross-language regressions; identical passing sets.
+- Regression test green; verified FAILS pre-fix (c_accept_rebuild folds to
+  ERROR[0-45] 1-child; cpp_resync first child = ERROR). Build
+  =CGO_ENABLED=0 go build ./...= + =go vet= green. KDL recovery digest test green.
+
+* Next Steps (the honest partial — second divergences beyond the boundary)
+No file FLIPS: the boundary fix moved every first-divergence deeper, exposing an
+independent second divergence per file:
+- libintl: ERROR node =extra= flag (oracle extra=true — tree-sitter strategy
+  recovery builds error nodes extra; gt builds the region non-extra, and
+  rootIdx selection deliberately skips extras). Pre-existing; not caused by this
+  fix; deeply tangled with error-node classification.
+- cache-view / deprecate: ERROR vs =preproc_ifdef= (type) — gt flattens the
+  =#ifndef= block to a bare ERROR where the oracle reduces a preproc_ifdef that
+  carries the error.
+- display_list / dl_path_builder / Certifier: error-region FRAGMENTATION — gt
+  splits the failing region into more top-level siblings (21/11/76) than the
+  oracle (10/10/28).
+
+* Glossary
+- leading-sibling over-extension :: the ERROR node's START swallows the leading
+  top-level nodes (esp. the license comment) that precede the error region.
+- cAcceptRootRebuild :: parser_recover_c.go — faithful ts_parser__accept root
+  rebuild at EOF; topmost non-extra subtree names the root.
+- cRecoverEOFAccept :: parser_recover_c.go — recover_eof: wrap remaining stack
+  subtrees in one ERROR and accept.
+- resync completed-sibling scan :: parser_reduce.go — keeps already-reduced
+  top-level items as siblings, wraps the failed suffix in one ERROR.
+- extra :: comment/whitespace node; no LR GOTO, shifted transparently.
+
+* Index
+- leading lift (C EOF) :: parser_recover_c.go cAcceptRootRebuild / cRecoverEOFAccept
+- resync extra-skip :: parser_reduce.go tryResyncErrorRecoveryMode preservedEnd loop
+- ERROR named invariant :: parser_recover_c.go cAcceptRootRebuild rootNamed
+- regression :: grammars/leading_sibling_recovery_test.go
+
+* Cross-References
+- Prior C recovery: [[id:gotreesitter-2026-07-16-fork-round8-cpp-cascade]]
+- Genuine-defect scoreboard: file:/home/david/.claude/jobs/f84fc485/tmp/genuine-defect-metric/GENUINE-SCOREBOARD.org
+- Parity artifacts: cgo_harness/parity_out/r11/ (gitignored)
+
+* Footnotes
+[fn:1] corpus: /home/david/.claude/jobs/f84fc485/tmp/blob-parity/corpus/{c,cpp}/
