@@ -385,6 +385,8 @@ func goRecoverStatementNodesFromRange(source []byte, start, end uint32, p *Parse
 			}
 		}
 		tree.Release()
+	} else if tree != nil {
+		tree.Release()
 	}
 	if node, ok := goRecoverIfStatementFromRange(source, start, end, p, arena); ok {
 		return []*Node{node}, true
