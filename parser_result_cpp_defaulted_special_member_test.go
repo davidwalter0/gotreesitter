@@ -60,6 +60,24 @@ func TestCppOutOfLineDefaultedEmptyParamMember(t *testing.T) {
 			if args == nil || args.Type(lang) != "argument_list" {
 				t.Fatalf("call.arguments = %v, want argument_list\n%s", args, left.SExpr(lang))
 			}
+
+			// Regression: the rewritten assign's middle child (the `=` token)
+			// must carry the "operator" field, matching every other
+			// assignment_expression shape (`a = b;`, `a += b;`, `arr[0] = b;`,
+			// ...). This was hardcoded to field ID 0 (no field) when this
+			// rewrite was first added, so gt's `=` node exposed no field tag
+			// here even though the real tree-sitter-cpp oracle always assigns
+			// "operator" to an assignment_expression's middle token.
+			eq := assign.ChildByFieldName("operator", lang)
+			if eq == nil || eq.Type(lang) != "=" {
+				t.Fatalf("assign.operator = %v, want \"=\" token\n%s", eq, assign.SExpr(lang))
+			}
+			if got, want := int(assign.ChildCount()), 3; got != want {
+				t.Fatalf("assign.ChildCount() = %d, want %d\n%s", got, want, assign.SExpr(lang))
+			}
+			if got := assign.FieldNameForChild(1, lang); got != "operator" {
+				t.Fatalf("assign child[1] field name = %q, want \"operator\"\n%s", got, assign.SExpr(lang))
+			}
 		})
 	}
 
