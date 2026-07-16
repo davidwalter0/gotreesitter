@@ -1,0 +1,112 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round10-cpp-retryfresh
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork-round10-cpp-retryfresh
+#+date: 2026-07-16
+
+* Session Topic
+Fix the C++ GLR "retry-vs-fresh path-dependence" (Round-8 residual) to raise cpp
+blob-parity above 37/55. Outcome: root-caused, but the described lever is INERT on
+the canonical parity path — reverted the speculative fix; the residual is a
+GLR-core / grammar-level defect (d6444430), not a retry-rung fix.
+
+* Key Finding (the reason parity cannot move via this lever)
+The task's premise — "a FRESH parse at GOT_GLR_MAX_MERGE_PER_KEY>=2 recovers the
+residual files CLEAN, while the retry rung truncates" — is TRUE only on the DFA
+=Parser.Parse()= path. But cpp's REGISTERED / canonical backend is the
+**TokenSource** path (grammars/registry_test.go asserts
+=cpp backend == ParseBackendTokenSource=), and corpus_parity measures cpp via
+=goParser.ParseWithTokenSource(src, entry.TokenSourceFactory(src, lang))=
+(parseWithGoRunner, ParseBackendTokenSource case). The two paths diverge:
+
+| file (residual)          | DFA Parse() fresh merge=16 | TokenSource fresh merge=16 |
+|--------------------------+----------------------------+----------------------------|
+| dl_paint_unittests.cc    | accepted CLEAN             | accepted ERROR (whole file) |
+| dl_color_source_unittests| accepted CLEAN             | accepted ERROR             |
+| dl_image_filter_unittests| accepted CLEAN (via ladder)| accepted ERROR             |
+
+On the TokenSource path NO cap widening clears these — measured merge=16, merge=48,
+stacks=48, stacks=48+merge=16 (the last actually regresses to no_stacks_alive
+truncated at byte 7115). The first ERROR node spans [0..7250] of dl_paint (the
+whole translation_unit), triggered by the same GoogleTest =EXPECT_EQ(A::x, B::y)=
+qualified-identifier construct — but on the TokenSource path the merge-per-key
+lever does not disambiguate it. So these residuals are NOT the merge-cascade class
+on the canonical path.
+
+* DFA-path RCA (correct, but not parity-relevant)
+On the DFA path the retry-vs-fresh path-dependence is real and I root-caused +
+fixed it:
+- cap=1 first parse ACCEPTS with error at a tiny MaxStacksSeen (3-5) <
+  initialMaxStacks (8), so shouldRetryAcceptedErrorParse never fires the
+  stack-widening ladder; only the Round-8 merge retry at the NARROW stacks=8 runs,
+  which dies on no_stacks_alive and is (correctly) rejected → errored original kept.
+- A fresh env merge>=2 parse instead ends no_stacks_alive → escalates the stack
+  ladder to fullParseRetryMaxGLRStacks (48) → a recovery (retryPass) pass at
+  stacks=48 + wide merge reaches CLEAN.
+- The winning recipe is stacks=48 + merge=16 + retryPass=true (a single from-scratch
+  wide pass). Implemented (then reverted): admit cpp cold cascade shapes (accepted-
+  complete + no_stacks_alive + iteration_limit) to the stack ladder + wide merge,
+  and run the cpp initial_merge retry at the widened stack budget; relax the DFA
+  early-stop retry gate so iteration_limit cold parses retry.
+- DFA-path result: cleared 5 files cold+warm (dl_paint_unittests,
+  dl_color_source_unittests, dl_image_filter_unittests, task_runners,
+  dl_matrix_color_filter), node-count identical to the fresh parse, ZERO cold
+  regressions across 55.
+
+* Why reverted
+corpus_parity (TokenSource) = 37/55 BEFORE and AFTER (measured both in Docker:
+harness_out/r10/cpp-{base,after,after-w1}.jsonl). The fix flips ZERO parity files
+(the flipped-on-DFA files stay errored on TokenSource), and it ADDS retry cost on
+the canonical path: cpp accepted-error files go 2->6 retry passes, up to 5.5x wall
+(dl_color_source 94ms->517ms, dl_benchmarks 170ms->498ms) for no benefit. Net
+negative on the path that matters → reverted to baseline (Round-8 cpp override kept
+intact). No cross-language runs needed (no code landed).
+
+* Decisions Made
+- The retry-rung / merge-per-key lever is EXHAUSTED for these residuals on the
+  canonical TokenSource path. This is a GLR-core / grammar-level defect →
+  d6444430, not a retry fix.
+- Do NOT land a DFA-only improvement: cpp's canonical backend is TokenSource
+  (registry + production gateway + parity all use it), so a DFA-path-only clear is
+  low value and pays cost on the canonical path.
+
+* Work Completed
+- Full RCA of the DFA-vs-TokenSource path split (the crux the Round-8 residual note
+  missed: its "fresh merge>=2 recovers them" was a DFA observation).
+- Verified corpus_parity uses TokenSource for cpp; reproduced its result on the host
+  (zzts driver) and in-Docker (zzwarm); confirmed 37->37, 0 regressions.
+- Reverted parser_retry.go + parser_api.go to baseline; removed throwaway drivers.
+
+* Next Steps / Residual (feeds d6444430 GLR-core effort)
+- Investigate WHY merge widening disambiguates =EXPECT_EQ(A::x, B::y)= on the DFA
+  token stream but NOT on the cpp external-scanner TokenSource stream — the fork
+  point / reduce differs between the two lexers. This is where the real cpp lift is.
+- The DFA-path retry-vs-fresh fix (stacks=48 + merge=16 + retryPass, admit
+  accepted/no_stacks_alive/iteration_limit cpp cascades) is validated and can be
+  revived IF a TokenSource-path equivalent is found, or if the DFA path becomes
+  parity-relevant.
+
+* Glossary
+- DFA path :: =Parser.Parse()=; built-in DFA lexer; NOT cpp's registered backend.
+- TokenSource path :: =Parser.ParseWithTokenSource()= with a grammar TokenSource
+  factory (cpp external scanner); cpp's REGISTERED backend and the one corpus_parity
+  measures.
+- retry-vs-fresh path-dependence :: a warm retry at cap N selects a worse GLR merge
+  winner than a cold fresh parse at N (documented engine quirk; real on DFA).
+- cascade :: one mis-resolved qualified-identifier construct wraps the whole file in
+  a root ERROR via error recovery.
+
+* Index
+- backend assertion :: grammars/registry_test.go (cpp == ParseBackendTokenSource)
+- parity parse routing :: cgo_harness/cmd/corpus_parity/main.go parseWithGoRunner
+- DFA retry gate :: parser_api.go parseWithTokenSource / dfa full-parse retry gate
+- cpp merge override (Round-8, kept) :: parser_retry.go fullParseRetryMergePerKeyOverride "cpp"
+
+* Cross-References
+- Prior session: [[id:gotreesitter-2026-07-16-fork-round8-cpp-cascade]]
+- Corpus: /home/david/.claude/jobs/f84fc485/tmp/blob-parity/corpus/cpp/ (55 files)
+
+* Footnotes
+[fn:1] Parity artifacts this session: harness_out/r10/cpp-base.jsonl (37/55),
+cpp-after.jsonl (37/55, workers=2), cpp-after-w1.jsonl (37/55, workers=1),
+cpp-mini.jsonl (5-file isolation, same 3 fail).
