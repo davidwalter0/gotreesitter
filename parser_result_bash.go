@@ -1,19 +1,19 @@
 package gotreesitter
 
-func normalizeBashProgramVariableAssignments(root *Node, lang *Language) {
+func normalizeBashProgramVariableAssignments(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "bash" || root.Type(lang) != "program" || len(root.children) == 0 {
 		return
 	}
-	normalizeBashVariableAssignmentsInNode(root, lang)
+	normalizeBashVariableAssignmentsInNode(root, source, lang)
 }
 
-func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
+func normalizeBashVariableAssignmentsInNode(node *Node, source []byte, lang *Language) {
 	if node == nil || lang == nil || len(node.children) == 0 {
 		return
 	}
 	for _, child := range node.children {
 		if child != nil {
-			normalizeBashVariableAssignmentsInNode(child, lang)
+			normalizeBashVariableAssignmentsInNode(child, source, lang)
 		}
 	}
 	out := make([]*Node, 0, len(node.children))
@@ -22,7 +22,7 @@ func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
 		if child == nil {
 			continue
 		}
-		if child.Type(lang) == "variable_assignments" && bashAllVariableAssignments(child, lang) && bashShouldSplitVariableAssignments(node.Type(lang)) {
+		if child.Type(lang) == "variable_assignments" && bashAllVariableAssignments(child, lang) && bashShouldSplitVariableAssignments(node.Type(lang), child, source) {
 			out = append(out, child.children...)
 			changed = true
 			continue
@@ -311,13 +311,70 @@ func bashAllVariableAssignments(node *Node, lang *Language) bool {
 	return true
 }
 
-func bashShouldSplitVariableAssignments(parentType string) bool {
+// bashShouldSplitVariableAssignments decides whether a raw "variable_assignments"
+// group (upstream rule: variable_assignments: $ => seq($.variable_assignment,
+// repeat1($.variable_assignment)) -- grammar.js) found as a direct child of
+// parentType should be exploded back into individual variable_assignment
+// siblings.
+//
+// $.variable_assignments is a completely ordinary member of
+// $._statement_not_subshell (grammar.js), so it is grammatically valid --
+// and must be left GROUPED -- as a direct statement child of program,
+// if/while/for bodies, subshell, list, etc. whenever it represents one
+// genuine same-statement multi-assignment, e.g. `VERBOSE= QUIET= OPTS=` or
+// `[[ cond ]] || A=1 B=2 C=3`. Splitting those (as an earlier, parent-type-only
+// heuristic did for program/if_statement/subshell/list) diverges from the
+// pinned oracle -- confirmed byte-exact against tree-sitter-bash@a06c2e44 for
+// both shapes.
+//
+// The one case that legitimately needs splitting is a merge artifact: gt's
+// GLR/LALR statement-boundary handling occasionally accumulates what should
+// have been >=2 separate _terminated_statement reductions (separate lines)
+// into a single variable_assignments production instead of treating the
+// intervening newline as a statement terminator. bashVariableAssignmentsSpansNewline
+// distinguishes the two cases directly from the source bytes: a newline
+// between two consecutive assignment children is only possible if a
+// terminator got swallowed, since bash's own newline-as-terminator rule
+// would otherwise have closed the statement there.
+func bashShouldSplitVariableAssignments(parentType string, group *Node, source []byte) bool {
 	switch parentType {
 	case "command", "redirected_statement", "declaration_command", "unset_command":
+		// variable_assignments never appears here in the upstream grammar
+		// (command's own repeat(choice($.variable_assignment, ...)) already
+		// yields individual assignment children); a distinct, more specific
+		// pass (normalizeBashGeneratedCommandAssignments) owns any repair
+		// needed for these parent shapes. Leave them alone here.
 		return false
 	default:
-		return true
+		return bashVariableAssignmentsSpansNewline(group, source)
 	}
+}
+
+// bashVariableAssignmentsSpansNewline reports whether any gap between
+// consecutive children of a "variable_assignments" group node contains a
+// newline byte, which is only possible if the group is a cross-statement
+// merge artifact rather than a genuine single-line multi-assignment.
+func bashVariableAssignmentsSpansNewline(group *Node, source []byte) bool {
+	if group == nil || len(source) == 0 || len(group.children) < 2 {
+		return false
+	}
+	for i := 1; i < len(group.children); i++ {
+		prev := group.children[i-1]
+		cur := group.children[i]
+		if prev == nil || cur == nil {
+			continue
+		}
+		start, end := int(prev.endByte), int(cur.startByte)
+		if start < 0 || end > len(source) || start > end {
+			continue
+		}
+		for _, b := range source[start:end] {
+			if b == '\n' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func assignBashIfConditionField(node *Node, lang *Language) {

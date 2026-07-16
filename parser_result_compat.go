@@ -102,7 +102,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "bibtex":
 		normalizeBibtexCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "bash":
-		normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
+		normalizeBashProgramVariableAssignments(ctx.root, ctx.source, ctx.lang)
 		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 		normalizeBashCommandNameArguments(ctx.root, ctx.lang)
 	case "bitbake":
