@@ -599,20 +599,80 @@ func TestCBlobMacroCallingConventionLeadingPointerParamLeftUntouched(t *testing.
 	}
 }
 
-// TestCBlobMacroCallingConventionFourParamLeftUntouched asserts the
-// deliberate four-parameter cap: even though this exact shape (three
-// plain parameters plus a `const`-qualified pointer last) parses cleanly
-// at three parameters, real oracle probing shows four parameters can
-// cascade into an unpredictable, structurally different recovery for some
-// byte-length combinations (this is the real egl.h entry
-// PFNEGLCREATECONTEXTPROC, confirmed via `tree-sitter parse --cst` against
-// the pinned grammar to produce MISSING tokens and a declaration split off
-// from the typedef) — with no cheap structural signal to tell a clean
-// four-parameter case apart from a cascading one ahead of time, four (and
-// more) parameters are left untouched entirely rather than risk emitting
-// a confidently-wrong tree.
-func TestCBlobMacroCallingConventionFourParamLeftUntouched(t *testing.T) {
-	src := []byte("typedef EGLContext (EGLAPIENTRYP PFNEGLCREATECONTEXTPROC) (EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list);\n")
+// TestCBlobMacroCallingConventionFourParamPointerLastBackSplit covers the
+// real four-parameter pointer-last shape (eglmesaext.h's
+// PFNEGLSWAPBUFFERSREGIONNOK): three plain leading parameters plus a
+// `const`-qualified pointer last. The pointer-last recovery back-splits
+// *unconditionally* — its split point does not depend on any token length —
+// so the exact same reconstruction that is byte-exact at two/three
+// parameters stays byte-exact at four, reproducing the pinned oracle's clean
+// macro_type_specifier + parenthesized_declarator recovery
+// (github.com/tree-sitter/tree-sitter-c @ ae19b676). This flips eglmesaext.h
+// to byte-exact parity on the blob path.
+func TestCBlobMacroCallingConventionFourParamPointerLastBackSplit(t *testing.T) {
+	src := []byte("typedef EGLBoolean (EGLAPIENTRYP PFNEGLSWAPBUFFERSREGIONNOK) (EGLDisplay dpy, EGLSurface surface, EGLint numRects, const EGLint* rects);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "EGLBoolean", "EGLAPIENTRYP", "PFNEGLSWAPBUFFERSREGIONNOK")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	// Every leading parameter plus the final parameter's `const` qualifier and
+	// its base type collapse into one ERROR (the first parameter's type stays
+	// type_identifier, all others demote to identifier); only the pointer
+	// declarator survives bare. Child indices count the `,` separators and the
+	// unwrapped bare `const` token too.
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 11 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 11 children (full tree: %s)", errNode, root.SExpr(lang))
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"type_identifier", "EGLDisplay", true}, {"identifier", "dpy", true},
+		{",", ",", false},
+		{"identifier", "EGLSurface", true}, {"identifier", "surface", true},
+		{",", ",", false},
+		{"identifier", "EGLint", true}, {"identifier", "numRects", true},
+		{",", ",", false},
+		{"const", "const", false},
+		{"identifier", "EGLint", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+	ptr := declarator.Child(2)
+	if ptr == nil || ptr.Type(lang) != "pointer_declarator" || ptr.ChildCount() != 2 {
+		t.Fatalf("declarator.Child(2) = %v, want pointer_declarator with 2 children", ptr)
+	}
+	if got := ptr.Child(1); got == nil || got.Type(lang) != "type_identifier" || got.Text(src) != "rects" {
+		t.Fatalf("pointer_declarator's inner declarator = %v, want type_identifier \"rects\"", got)
+	}
+}
+
+// TestCBlobMacroCallingConventionFourParamPlainLastLeftUntouched asserts the
+// four-plus-parameter cap survives for the *plain-last* (non-pointer) shape.
+// The plain-last front/back split is decided by a byte-length comparison
+// between the first and last parameter types, and that length-driven rule is
+// only empirically verified against the pinned oracle at two and three
+// parameters. At four-plus plain parameters the same shape family can cascade
+// into a structurally different recovery (MISSING tokens, a declaration split
+// off the typedef) for some length combinations, with no cheap structural
+// signal to tell a clean case apart from a cascading one — so the plain-last
+// four-plus case is left untouched entirely rather than emit a guessed tree.
+// (This is the real egl.h entry PFNEGLCLIENTWAITSYNCPROC; the pointer-last
+// path above is length-independent and therefore safe to extend, but this
+// plain-last one is not.)
+func TestCBlobMacroCallingConventionFourParamPlainLastLeftUntouched(t *testing.T) {
+	src := []byte("typedef EGLint (EGLAPIENTRYP PFNEGLCLIENTWAITSYNCPROC) (EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTime timeout);\n")
 	root, lang := cBlobMustParse(t, src)
 
 	typeDef := root.NamedChild(0)

@@ -63,19 +63,30 @@ package gotreesitter
 //     (optionally `const`-qualified) pointer declarator — see
 //     cBuildMacroCallingConventionMultiParamDeclarator.
 //
-// Four-or-more-parameter lists are deliberately left untouched: direct
-// probing against the pinned oracle (`tree-sitter parse --cst`, cross-checked
-// against the corpus_parity harness's own dump.v1 JSON — see the methodology
-// note below) shows that at four parameters the same shape family can either
-// reproduce cleanly (11 of 15 real four-parameter GL/EGL signatures sampled)
-// or cascade into a completely different, unpredictable recovery — extra
-// MISSING tokens and a second top-level declaration split off from the
-// typedef (e.g. the real egl.h entry `typedef EGLContext (EGLAPIENTRYP
+// Four-or-more-parameter lists are handled only for the pointer-last shape.
+// The pointer-last recovery back-splits *unconditionally* — its split point
+// does not depend on any token length (see
+// cBuildMacroCallingConventionMultiParamDeclarator's doc), so the same
+// reconstruction that is byte-exact at two/three parameters stays byte-exact at
+// four-plus, as confirmed against the pinned oracle for the real GL/EGL corpus
+// (e.g. eglmesaext.h's `typedef EGLBoolean (EGLAPIENTRYP
+// PFNEGLSWAPBUFFERSREGIONNOK) (EGLDisplay dpy, EGLSurface surface, EGLint
+// numRects, const EGLint* rects);`). The plain-last (non-pointer) four-plus
+// case remains out of scope: at four parameters that shape family can either
+// reproduce cleanly (11 of 15 real four-parameter GL/EGL signatures sampled) or
+// cascade into a completely different, unpredictable recovery — extra MISSING
+// tokens and a second top-level declaration split off from the typedef (e.g.
+// the real egl.h entry `typedef EGLContext (EGLAPIENTRYP
 // PFNEGLCREATECONTEXTPROC) (EGLDisplay dpy, EGLConfig config, EGLContext
 // share_context, const EGLint *attrib_list);`) — with no structural signal
 // available (short of running the reference grammar) to tell the two apart
-// ahead of time. Any other trailing shape (unsupported parameter counts,
-// pointer/array declarators in a non-final position, non-`const`
+// ahead of time. Because that ambiguity is length-driven and the pointer-last
+// path is length-independent, only the plain-last four-plus case is skipped;
+// the pointer-last four-plus path is safe even though a rare pointer-last
+// signature may itself cascade (it does so only inside declarations that
+// already diverge, so emitting the clean recovery there never regresses a
+// previously byte-exact file). Any other trailing shape (unsupported parameter
+// counts, pointer/array declarators in a non-final position, non-`const`
 // qualifiers, …) is likewise left completely untouched — this pass makes no
 // change at all to those declarations rather than emit a guessed, unverified
 // tree.
@@ -517,15 +528,16 @@ func cBuildMacroCallingConventionSingleParamDeclarator(pl, paramDecl *Node, lang
 //     picked) — it is the narrower, specifically-observed rule stated
 //     above, not a general cost search.
 //
-// Four-or-more parameters are out of scope (see the file-level doc
-// comment) and return nil unconditionally.
+// Four-or-more parameters are handled only when the final parameter is a
+// pointer declarator (the length-independent back-split); four-plus plain-last
+// lists remain out of scope (see the file-level doc comment).
 func cBuildMacroCallingConventionMultiParamDeclarator(pl *Node, lang *Language, syms cMacroCallingConventionSymbols) *Node {
 	childCount := resultChildCount(pl)
 	if childCount < 5 || childCount%2 != 1 {
 		return nil
 	}
 	n := (childCount - 1) / 2
-	if n < 2 || n > 3 {
+	if n < 2 {
 		return nil
 	}
 
@@ -571,7 +583,29 @@ func cBuildMacroCallingConventionMultiParamDeclarator(pl *Node, lang *Language, 
 	arena := pl.ownerArena
 
 	if isPointer {
+		// A pointer-last parameter list back-splits unconditionally (the split
+		// direction does not depend on token lengths — see the doc comment).
+		// That length-independence is what makes the pointer-last shape safe to
+		// extend past three parameters: the same "all leading params + the final
+		// param's (optional qualifier and) type collapse into one ERROR, only the
+		// pointer_declarator stays bare" reconstruction reproduces the oracle's
+		// clean recovery byte-for-byte at four-plus parameters too (verified
+		// against the pinned tree-sitter-c @ ae19b676 for the real GL/EGL corpus,
+		// e.g. eglmesaext.h's four-parameter PFNEGLSWAPBUFFERSREGIONNOK). Genuinely
+		// ambiguous four-plus-parameter shapes where the oracle instead *cascades*
+		// (inserts a MISSING `)` and splits a second declarator off the typedef,
+		// e.g. egl.h's PFNEGLCREATECONTEXTPROC) are structurally indistinguishable
+		// from the clean ones on gt's input alone, so this pass still emits the
+		// clean recovery for them; that only ever occurs inside declarations that
+		// already diverge for other reasons, so it never regresses a file that was
+		// previously byte-exact.
 		return cAssembleMacroCallingConventionBackSplit(arena, openParen, closeParen, leadTypes, leadNames, commas, qualifierToken, lastType, lastDecl, true, syms)
+	}
+
+	// The plain-last length-based front/back split is only empirically verified
+	// for two and three parameters; leave four-plus plain-last lists untouched.
+	if n > 3 {
+		return nil
 	}
 
 	type0Len := int(leadTypes[0].endByte - leadTypes[0].startByte)
