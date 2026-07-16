@@ -35,6 +35,11 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	// still increments passesChecked/passesRun so observability is preserved.
 	normalizePythonFusedPreorder(root, source, parser, lang, sourceFlags)
 	parser.runNormalizationPass(func() bool {
+		return sourceFlags.listSplatBinding
+	}, func() normalizationPassCounters {
+		return normalizePythonListSplatBinding(root, lang)
+	})
+	parser.runNormalizationPass(func() bool {
 		return sourceFlags.continuationEscape
 	}, func() normalizationPassCounters {
 		return normalizePythonStringContinuationEscapes(root, source, lang)
@@ -592,6 +597,7 @@ type pythonCompatibilitySourceFlags struct {
 	asPattern          bool
 	casePattern        bool
 	continuationEscape bool
+	listSplatBinding   bool
 }
 
 func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceFlags {
@@ -603,6 +609,7 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 		switch source[i] {
 		case '*':
 			flags.wildcardImport = true
+			flags.listSplatBinding = true
 			i++
 			continue
 		case '#':
@@ -2307,6 +2314,119 @@ func pythonSyntheticIfFieldIDs(arena *nodeArena, childCount int, lang *Language)
 		fieldIDs[3] = fid
 	}
 	return fieldIDs
+}
+
+// normalizePythonListSplatBinding repairs the list_splat scope mis-binding: a
+// postfix chain (subscript / attribute / call) whose left spine bottoms in a
+// list_splat. Because list_splat is never a primary_expression, a tree of the
+// form (subscript|attribute|call ... (list_splat X)) never occurs in canonical
+// tree-sitter-python; it means "*" was bound only to the primary X while the
+// trailing postfix operators wrongly wrapped the list_splat. gt exhibits this
+// for a splat element of a tuple / list display whose operand carries a postfix
+// chain, e.g. typing.py:1682 (*params[:-1], *params[-1].__args__): the second
+// splat is parsed as (*params[-1]).__args__ instead of *(params[-1].__args__).
+//
+// The (correct) form list_splat(call(...)) — a splat whose operand is itself a
+// call, which canonical mis-parses as call(list_splat(...)) inside an
+// argument_list — is left untouched here: its list_splat sits at the TOP of the
+// chain, not the bottom, so the detector never fires. Matching that canonical
+// quirk would diverge gt from CPython's AST, so it is intentionally not done.
+func normalizePythonListSplatBinding(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil || lang.Name != "python" {
+		return counters
+	}
+	listSplatSym, ok := symbolByName(lang, "list_splat")
+	if !ok {
+		return counters
+	}
+	listSplatNamed := symbolIsNamed(lang, listSplatSym)
+	walkResultTree(root, func(n *Node) {
+		counters.nodesVisited++
+		if rebindPythonMisboundListSplat(n, lang, listSplatSym, listSplatNamed) {
+			counters.nodesRewritten++
+		}
+	})
+	return counters
+}
+
+// isPythonPostfixExpression reports whether n is a postfix operator whose base
+// (the operand the operator applies to) is its first child: subscript (value),
+// attribute (object), or call (function).
+func isPythonPostfixExpression(n *Node, lang *Language) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Type(lang) {
+	case "subscript", "attribute", "call":
+		return true
+	}
+	return false
+}
+
+// rebindPythonMisboundListSplat, when node is the top of a postfix chain whose
+// left spine bottoms in a list_splat, rotates the list_splat to the top so it
+// wraps the whole corrected chain and transforms node in place into that
+// list_splat. Returns true if a rewrite happened. Called on every node during a
+// preorder walk; because the outermost postfix is visited first, one rewrite
+// fixes an entire chain and the inner (now detached) originals are never
+// revisited.
+func rebindPythonMisboundListSplat(node *Node, lang *Language, listSplatSym Symbol, listSplatNamed bool) bool {
+	if node == nil || !isPythonPostfixExpression(node, lang) {
+		return false
+	}
+	arena := node.ownerArena
+
+	// Walk the left spine (each node's first child) collecting postfix nodes
+	// until a non-postfix bottom is reached; require that bottom to be a
+	// list_splat.
+	var spine []*Node
+	cur := node
+	for isPythonPostfixExpression(cur, lang) {
+		c0 := resultChildAt(cur, 0)
+		if c0 == nil {
+			return false
+		}
+		spine = append(spine, cur)
+		cur = c0
+	}
+	if len(spine) == 0 || cur == nil || cur.Type(lang) != "list_splat" {
+		return false
+	}
+	splat := cur
+	splatChildren := resultChildSliceForMutation(splat)
+	if len(splatChildren) < 2 {
+		return false
+	}
+	star := splatChildren[0]                          // the "*" token
+	operand := splatChildren[len(splatChildren)-1]    // the splat's operand
+
+	// Rebuild the spine bottom-up, substituting the splat's operand for the
+	// splat at the innermost postfix. Field metadata is preserved on each
+	// rebuilt node because child positions are unchanged.
+	replacement := operand
+	for i := len(spine) - 1; i >= 0; i-- {
+		p := spine[i]
+		buf := cloneNodeSliceInArena(arena, resultChildSliceForMutation(p))
+		if len(buf) == 0 {
+			return false
+		}
+		buf[0] = replacement
+		newP := cloneNodeInArena(arena, p)
+		newP.children = buf
+		if arena != nil {
+			arena.clearFinalChildRefs(newP)
+		}
+		populateParentNode(newP, buf)
+		replacement = newP
+	}
+
+	// Transform node in place into list_splat("*", correctedChain). list_splat
+	// carries no child fields, so clearing field metadata is correct here.
+	node.symbol = listSplatSym
+	node.setNamed(listSplatNamed)
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(arena, []*Node{star, replacement}))
+	return true
 }
 
 func pythonModuleChildrenLookComplete(nodes []*Node, lang *Language) bool {
