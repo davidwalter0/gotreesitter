@@ -601,3 +601,78 @@ func TestTypeScriptCommentedLogicalOrCallChainStillKeepsBinaryExpression(t *test
 		t.Fatalf("commented logical-or chain still parsed as call_expression: %s", bad.SExpr(lang))
 	}
 }
+
+// TestTSXStaticGenericMethodKeepsTypeParametersField regression-tests the
+// round5-tsts field-label fix: a modifier-prefixed (here "static") generic
+// method_definition in TSX must keep the oracle's "type_parameters:" field
+// label. Root cause: ctx.typeParametersSym/typeParametersFieldID were only
+// ever resolved inside a visibleLanguageSymbols(...) block gated on
+// "type_assertion" existing — a symbol TSX genuinely lacks (angle-bracket
+// `<T>expr` casts are invalid TSX syntax, ambiguous with JSX), so the whole
+// block silently failed for TSX and collaterally zeroed the unrelated
+// type_parameters symbol/field IDs. Those are needed by
+// typeScriptAssignMemberFields, which rebuilds a method_definition's field
+// metadata whenever the node's source text starts with a modifier keyword
+// (static/public/private/protected/readonly/abstract/async/get/set) — a
+// byte-prefix check that fires for ANY modifier-prefixed member, not just
+// ones needing genuine recovery. Confirmed against the real
+// tree-sitter-typescript/tsx C oracle: it labels this child "type_parameters:"
+// even in the simplest "static bar<T>(x: T) {}" case.
+func TestTSXStaticGenericMethodKeepsTypeParametersField(t *testing.T) {
+	const src = "class Foo {\n  static bar<T>(x: T) {}\n}\n"
+	tree, lang := parseByLanguageName(t, "tsx", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected tsx parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}
+
+// TestTSXStaticGenericMethodWithThisParamKeepsTypeParametersField is the
+// original round5-tsts tsx-2 repro (static generic method with a
+// `this:`-typed first parameter and a type-parameter constraint), preserved
+// verbatim from the blob-parity report.
+func TestTSXStaticGenericMethodWithThisParamKeepsTypeParametersField(t *testing.T) {
+	const src = "class SingletonMock {\n  static createInstance<T, R extends any[]>(\n    this: StaticThis<T, R>,\n    ...args: R\n  ) {\n    return null;\n  }\n}\n"
+	tree, lang := parseByLanguageName(t, "tsx", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected tsx parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}
+
+// TestTypeScriptStaticGenericMethodKeepsTypeParametersField is the
+// plain-TypeScript control for the same fix — this dialect was never broken
+// (it has "type_assertion" so the original gating block always succeeded),
+// and must stay that way.
+func TestTypeScriptStaticGenericMethodKeepsTypeParametersField(t *testing.T) {
+	const src = "class Foo {\n  static bar<T>(x: T) {}\n}\n"
+	tree, lang := parseByLanguageName(t, "typescript", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected typescript parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}

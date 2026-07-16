@@ -1747,6 +1747,26 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 	ctx.dynamicImportSym, ctx.hasDynamicImportSym = lang.symbolByNameAndNamed("import", true)
 	ctx.typeQuerySym, _ = lang.SymbolByName("type_query")
 
+	// type_parameters/type_parameter/type_identifier are needed broadly (e.g.
+	// typeScriptAssignMemberFields's member-modifier-recovery field re-tag
+	// below) independent of the generic-arrow-type-assertion rewrite feature.
+	// Resolve them unconditionally here so a dialect that lacks type_assertion
+	// entirely — TSX, where the angle-bracket cast `<T>expr` is invalid syntax
+	// (ambiguous with JSX) and so has no type_assertion node at all — doesn't
+	// also lose these unrelated, always-present symbols as collateral damage
+	// (see the canRewriteGenericArrows block below, which legitimately stays
+	// off for TSX but must not gate these).
+	if syms, ok := visibleLanguageSymbols(lang, true, "type_parameters", "type_parameter"); ok {
+		ctx.typeParametersSym = syms[0]
+		ctx.typeParametersNamed = symbolIsNamed(lang, ctx.typeParametersSym)
+		ctx.typeParameterSym = syms[1]
+		ctx.typeParameterNamed = symbolIsNamed(lang, ctx.typeParameterSym)
+		ctx.typeParametersFieldID, _ = lang.FieldByName("type_parameters")
+		if ctx.nameFieldID == 0 {
+			ctx.nameFieldID, _ = lang.FieldByName("name")
+		}
+	}
+
 	if syms, ok := visibleLanguageSymbols(lang, true,
 		"type_assertion",
 		"arrow_function",
