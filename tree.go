@@ -478,6 +478,9 @@ func nodeMaterializeFinalChildRefs(n *Node, reason materializeReason) {
 	}
 	refs := childRange.refs(arena)
 	count := childRange.count()
+	if len(refs) < count {
+		return
+	}
 	children := arena.allocNodeSliceNoClear(count)
 	for i := 0; i < count; i++ {
 		entry := refs[i].stackEntry()
@@ -1968,6 +1971,9 @@ func collectFinalNodeStats(n *Node, lang *Language, stats *finalTreeMaterializat
 		stats.childPointers += uint64(childCount)
 		stats.unfieldedParentNodes++
 		refs := childRange.refs(n.ownerArena)
+		if len(refs) < childCount {
+			return
+		}
 		for i := childCount - 1; i >= 0; i-- {
 			*stack = append(*stack, finalTreeStatsItem{entry: refs[i].stackEntry(), arena: n.ownerArena})
 		}
