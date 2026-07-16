@@ -1353,6 +1353,7 @@ func computeLexModes(
 	suppressAfterWhitespaceSyms map[int]bool,
 	patternTerminals map[int]bool,
 	zeroWidthTerminals map[int]bool,
+	suppressKeywordWordShadow bool,
 ) ([]lexModeSpec, []int, []afterWSModeEntry) {
 	modes, stateToMode, afterWSModeMap, _ := computeLexModesWithContext(
 		context.Background(),
@@ -1372,6 +1373,7 @@ func computeLexModes(
 		suppressAfterWhitespaceSyms,
 		patternTerminals,
 		zeroWidthTerminals,
+		suppressKeywordWordShadow,
 	)
 	return modes, stateToMode, afterWSModeMap
 }
@@ -1394,6 +1396,7 @@ func computeLexModesWithContext(
 	suppressAfterWhitespaceSyms map[int]bool,
 	patternTerminals map[int]bool, // symbols whose rule is NOT a pure fixed string (regex/pattern-shaped terminals); may be nil
 	zeroWidthTerminals map[int]bool, // symbols whose rule can match the empty string (see zeroWidthTerminalSymSet); may be nil
+	suppressKeywordWordShadow bool, // drop the injected keyword-capture word from a state's lex mode when it has no real action there, no keyword has a real action, and a real-action pattern terminal would be shadowed (bash ${...} body); may be false
 ) ([]lexModeSpec, []int, []afterWSModeEntry, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1555,6 +1558,50 @@ func computeLexModesWithContext(
 		// and recognized via the word token + keyword promotion DFA.
 		if hasKeyword && wordSymbolID > 0 {
 			validSyms[wordSymbolID] = true
+		}
+
+		// Keyword-capture word shadow suppression (opt-in; bash ${...} body).
+		//
+		// The keyword-capture word (wordSymbolID) is injected above whenever any
+		// keyword is valid in the state so keywords can be lexed as a word and
+		// then promoted. `hasKeyword` counts reduce-follow / missing-recovery
+		// WIDENED keywords too (keywords are in the widen allowlist), not only
+		// keywords the parser can actually shift here. On a scanner-heavy grammar
+		// that is routed through LALR merging (bash: 29 externals, ~47K states),
+		// a single merged state can carry a widened keyword with no real action,
+		// which injects the broad word into a state whose real job is to lex a
+		// specific pattern terminal. tree-sitter's own precise per-state tables
+		// never expose word there, so the broad word — matching far more than the
+		// specific terminal — wins longest-match and swallows the following
+		// operators (e.g. `x:=y` in `${x:=y}` becomes one word, forcing the whole
+		// expansion into ERROR). Drop the injected word in exactly that shape:
+		// word has no real action, NO keyword has a real action (so the injection
+		// came purely from widening), and at least one real-action pattern
+		// terminal (e.g. _simple_variable_name = /\w+/) would be shadowed.
+		if suppressKeywordWordShadow && wordSymbolID > 0 &&
+			validSyms[wordSymbolID] && !directActionOnly[wordSymbolID] {
+			keywordHasRealAction := false
+			for sym := range directActionOnly {
+				if keywordSymbols[sym] {
+					keywordHasRealAction = true
+					break
+				}
+			}
+			if !keywordHasRealAction {
+				shadowsRealPatternTerminal := false
+				for sym := range directActionOnly {
+					if sym == wordSymbolID || extSet[sym] {
+						continue
+					}
+					if patternTerminals[sym] {
+						shadowsRealPatternTerminal = true
+						break
+					}
+				}
+				if shadowsRealPatternTerminal {
+					delete(validSyms, wordSymbolID)
+				}
+			}
 		}
 
 		// Determine if whitespace should be skipped in this mode.

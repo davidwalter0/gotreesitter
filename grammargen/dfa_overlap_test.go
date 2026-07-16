@@ -167,6 +167,7 @@ func TestBuildLexDFADistinguishesModePreferredSymbols(t *testing.T) {
 		nil,
 		map[int]bool{1: true, 2: true}, // both symbols are pattern-based ([a-z]+); a genuine same-length tie
 		nil,
+		false, // suppressKeywordWordShadow
 	)
 	if got, want := len(lexModes), 2; got != want {
 		t.Fatalf("lex mode count = %d, want %d", got, want)
@@ -252,7 +253,8 @@ func TestLexModePreferredSymbolsIgnoredWithoutPatternTerminals(t *testing.T) {
 		nil,
 		nil,
 		nil, // no pattern-based terminals: symA/symB are both fixed strings
-		nil, // no zero-width terminals either
+		nil, // no zero-width terminals either,
+		false,
 	)
 	if got, want := len(lexModes), 1; got != want {
 		t.Fatalf("lex mode count = %d, want %d (fixed-string-only states must share a mode)", got, want)
@@ -326,7 +328,8 @@ func TestLexModePreferredSymbolsKeptForZeroWidthTerminal(t *testing.T) {
 		},
 		nil,
 		nil,                      // no pattern-based terminals: symA/symB are both fixed strings
-		map[int]bool{symB: true}, // symB can match the empty string
+		map[int]bool{symB: true}, // symB can match the empty string,
+		false,
 	)
 	if got, want := len(lexModes), 2; got != want {
 		t.Fatalf("lex mode count = %d, want %d (a zero-width symbol makes the tie genuine, so states must NOT share a mode)", got, want)
