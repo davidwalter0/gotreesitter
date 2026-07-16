@@ -38,6 +38,13 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
+	normalizeGoNewMakeTypeArgument(root, source, lang)
+	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
 	normalizeRootEOFNewlineSpan(root, source, lang)
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
