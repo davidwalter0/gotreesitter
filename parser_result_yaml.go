@@ -39,6 +39,21 @@ func normalizeYAMLRecoveredRoot(root *Node, source []byte, lang *Language) {
 	yamlUnwrapCommentLedSequenceDocuments(root, lang)
 	root.startByte = 0
 	root.startPoint = Point{}
+	if root.Type(lang) == "stream" {
+		// The oracle's stream node starts at the first real child, not
+		// unconditionally at byte 0: YAML's external scanner consumes leading
+		// blank lines (and any leading trivia before the first document) via
+		// skip-advance, so those bytes never become part of any token/node.
+		// Forcing startByte/startPoint to 0 here silently re-absorbed that
+		// skipped span into the root's range whenever a document was preceded
+		// by one or more blank lines (e.g. CMake-generated YAML logs that open
+		// with a blank line before "---"). Only fall back to 0 when there is
+		// no real leading child to anchor on.
+		if first, _ := firstAndLastNonNilChild(root.children); first != nil {
+			root.startByte = first.startByte
+			root.startPoint = first.startPoint
+		}
+	}
 	root.endByte = uint32(len(source))
 	root.endPoint = pointAtOffsetYAML(source, len(source))
 }
