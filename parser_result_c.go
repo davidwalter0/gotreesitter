@@ -29,6 +29,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("cpp_nested_template_declaration", func() {
 			normalizeCppNestedTemplateDeclaration(root, source, lang)
 		})
+		run("cpp_nested_template_call", func() {
+			normalizeCppNestedTemplateCall(root, source, lang)
+		})
 		run("cpp_sizeof_decltype_scope", func() {
 			normalizeCppSizeofDecltypeScope(root, source, lang)
 		})
@@ -68,6 +71,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCppInlineErrorReturnType(root, source, lang)
 	normalizeCppOutOfLineDefaultedEmptyParamMember(root, source, lang)
 	normalizeCppNestedTemplateDeclaration(root, source, lang)
+	normalizeCppNestedTemplateCall(root, source, lang)
 	normalizeCppSizeofDecltypeScope(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
