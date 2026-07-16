@@ -39,6 +39,7 @@ func normalizeCppNestedTemplateDeclaration(root *Node, source []byte, lang *Lang
 		// Case A: a single expression_statement that spans the whole
 		// `Type<…> name ;` (statement / compound-statement context).
 		if n.Type(lang) == "expression_statement" && resultChildCount(n) > 0 {
+			r.baseOff, r.basePt = n.startByte, n.startPoint
 			if children, ok := r.buildDeclarationChildren(n.startByte, n.endByte); ok {
 				r.retagAsDeclaration(n, children)
 				return
@@ -56,6 +57,11 @@ type cppTemplateReconstructor struct {
 	src   []byte
 	lang  *Language
 	arena *nodeArena
+
+	// base offset/point of the span currently being reconstructed, so leaf
+	// points are computed relative to it (O(span) not O(file-offset)).
+	baseOff uint32
+	basePt  Point
 
 	declSym        Symbol
 	qualSym        Symbol
@@ -155,8 +161,17 @@ func newCppTemplateReconstructor(source []byte, lang *Language, arena *nodeArena
 
 func (r *cppTemplateReconstructor) leaf(sym Symbol, named bool, start, end uint32) *Node {
 	return newLeafNodeInArena(r.arena, sym, named, start, end,
-		advancePointByBytes(Point{}, r.src[:start]),
-		advancePointByBytes(Point{}, r.src[:end]))
+		r.pointAt(start), r.pointAt(end))
+}
+
+// pointAt computes the Point at an absolute byte offset within the span being
+// reconstructed, advancing from the cached base offset/point so the cost is
+// O(span length) rather than O(file offset).
+func (r *cppTemplateReconstructor) pointAt(off uint32) Point {
+	if off < r.baseOff {
+		return advancePointByBytes(Point{}, r.src[:off])
+	}
+	return advancePointByBytes(r.basePt, r.src[r.baseOff:off])
 }
 
 func (r *cppTemplateReconstructor) skipWS(i uint32, end uint32) uint32 {
@@ -342,6 +357,7 @@ func (r *cppTemplateReconstructor) mergeContainerExpressionSemicolonPairs(n *Nod
 		if child != nil && child.symbol == r.exprSym && i+1 < len(n.children) {
 			next := n.children[i+1]
 			if next != nil && next.symbol == r.exprStmtSym && cppNodeIsBareSemicolon(next, r.semiSym) {
+				r.baseOff, r.basePt = child.startByte, child.startPoint
 				if declChildren, ok := r.buildDeclarationChildren(child.startByte, next.endByte); ok {
 					decl := newParentNodeInArena(r.arena, r.declSym, r.declNamed,
 						cloneNodeSliceIfArena(r.arena, declChildren),
