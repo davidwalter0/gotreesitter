@@ -32,8 +32,12 @@ func getOrCreatePool(name string, lang *gotreesitter.Language) *gotreesitter.Par
 
 // ParseFile detects the language from filename, parses source, and returns
 // a BoundTree. The caller must call Release() on the returned BoundTree.
+//
+// Detection is content-aware (DetectLanguageWithContent): a plain ".h" file
+// whose content looks like C++ (templates, namespaces, std::, ...) is parsed
+// with the C++ grammar rather than the extension-only default of C.
 func ParseFile(filename string, source []byte) (*gotreesitter.BoundTree, error) {
-	entry := DetectLanguage(filename)
+	entry := DetectLanguageWithContent(filename, source)
 	if entry == nil {
 		return nil, fmt.Errorf("unsupported file type: %s", filename)
 	}
@@ -59,8 +63,10 @@ func ParseFile(filename string, source []byte) (*gotreesitter.BoundTree, error) 
 // ParseFilePooled is like ParseFile but reuses a per-language ParserPool
 // to avoid allocating a new parser on every call. It is safe for concurrent use.
 // The caller must call Release() on the returned BoundTree.
+//
+// Detection is content-aware; see the ParseFile doc comment.
 func ParseFilePooled(filename string, source []byte) (*gotreesitter.BoundTree, error) {
-	entry := DetectLanguage(filename)
+	entry := DetectLanguageWithContent(filename, source)
 	if entry == nil {
 		return nil, fmt.Errorf("unsupported file type: %s", filename)
 	}
