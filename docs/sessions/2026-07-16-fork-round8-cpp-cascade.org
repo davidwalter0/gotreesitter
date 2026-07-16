@@ -1,0 +1,114 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round8-cpp-cascade
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork-round8-cpp-cascade
+#+date: 2026-07-16
+
+* Session Topic
+Fix the C++ whole-file ERROR-cascade triggers on the BLOB path
+(grammars.CppLanguage()); cpp blob-parity was stuck at 27/55.
+
+* Files Touched
+- parser_retry.go — cpp retry-rung merge-per-key widening
+- parser_api_internal_test.go — updated TestCppAcceptedErrorRetrySkipsCompleteTree
+- parser_cpp_qualified_cascade_test.go — new regression test
+
+* Root Cause (verified)
+The cascades are NOT post-parse-reconstructible node mis-shapes (unlike the
+nested-template family). They are a GLR merge-selection defect: C++'s
+steady-state merge-per-key survivor cap is hard-set to 1
+(effectiveParseMergePerKeyCap, "cpp" case). At cap=1 the GLR engine prunes the
+alternative the tree-sitter-cpp oracle selects for two qualified-identifier
+ambiguities, and a single occurrence cascades the enclosing function — and via
+error recovery the whole file — to a root ERROR:
+
+1. *Qualified-argument call vs. declaration.* A call at statement scope whose
+   arguments are all namespace-qualified identifiers — =EXPECT_EQ(A::x, B::y)= —
+   is mis-read as a local function declaration (=A::x=/=B::y= look like qualified
+   type names in a typed, unnamed parameter list). One non-qualified argument
+   (=EXPECT_EQ(paint, A::y)=) or a single argument disambiguates and parses
+   clean. This is the GoogleTest =TEST(...)= / =EXPECT_*= exemplar
+   (dl_paint_unittests.cc).
+2. *Qualified template return type.* An out-of-line method with a
+   namespace-qualified template return whose template argument is also qualified
+   — =fml::RefPtr<fml::TaskRunner> C::M()= or =std::vector<std::string> C::M()= —
+   is mis-read as a =<=/=>= comparison chain. =fml::RefPtr<TaskRunner>= (bare arg)
+   or =RefPtr<fml::TaskRunner>= (bare name) parses clean. This is the
+   task_runners.cc / dl_matrix_color_filter.cc exemplar.
+
+Confirmed the merge-cap is the lever: env GOT_GLR_MAX_MERGE_PER_KEY>=2 clears
+5/6 whole-file-ERROR corpus files.
+
+* Decisions Made
+- Fix by *cascade prevention via the retry rung*, the sanctioned pattern
+  (mirrors the go/java/typescript per-language merge-widening retry overrides),
+  NOT a post-parse reconstruction (the cascade is ERROR soup, not a rewritable
+  clean-but-wrong node) and NOT a blanket steady-state cap raise (the documented
+  "go" history warns that is non-monotonic and perf-cliff-prone).
+- New: cppFullParseRetryMaxMergePerKey=16, applied in
+  fullParseRetryMergePerKeyOverride for a cpp tree that accepted-with-error,
+  reaches EOF (complete), and is not truncated. Placed BEFORE
+  certifiedAcceptedErrorRetrySkipsComplete: cpp's runtime profile sets
+  SkipCompleteAcceptedErrorRetry because the OLD ladder (no cpp merge widening)
+  did not help complete accepted-error files; the merge widening DOES, so the
+  pre-dating certification must not suppress it. Truncated accepted-error trees
+  keep the existing wider generic path (24).
+- Clean files never retry (fullParseRetryMergePerKeyOverride returns 0 for
+  treeParseClean), so the cap=1 fast path and cpp gates are untouched; only
+  accepted-error parses pay a second pass, and preferRetryTree keeps the original
+  when the retry does not improve it — never a regression.
+- REJECTED a source-gated first-parse merge widening: measured it via
+  corpus_parity — it cleared the ERROR on dl_paint/dl_color_source/dl_image_filter
+  unittests but gained ZERO parity (they still diverge from the oracle in *shape*
+  beyond the cascade) and regressed dl_benchmarks.cc (passing against an
+  oracle-that-itself-errors). Reverted entirely.
+
+* Work Completed
+- cpp blob-parity 27/55 -> 36/55 (+9), ZERO regressions (corpus_parity, Docker,
+  cgo oracle @ pinned tree-sitter-cpp, flutter-engine/libcertifier corpus).
+- Flipped to PASS: task_runners.cc, dl_matrix_color_filter.cc, dl_paint.cc,
+  dl_color.cc, dl_path.cc, dl_canvas_unittests.cc, dl_region_benchmarks.cc,
+  native_assets.cc, CertifierOptions.cpp.
+- Both named exemplars (task_runners.cc trigger-2, dl_matrix_color_filter.cc)
+  flipped.
+- Regression test + updated unit test; targeted cpp/retry/merge/parity test
+  families green; CGO_ENABLED=0 go build ./... and go vet . green.
+
+* Next Steps / Residual (feeds d6444430 GLR-core effort)
+- ~19 cpp files still fail. Of the residual ERROR-cascade files:
+  - dl_paint_unittests.cc, dl_color_source_unittests.cc: a FRESH parse at
+    merge>=2 recovers them clean+accepted, but the retry at the same cap
+    truncates — the documented retry-vs-fresh GLR merge-selection
+    path-dependence (see the "go" RCA-seed comments). Even when the cascade is
+    cleared they diverge from the oracle in shape, so they need more than cascade
+    removal.
+  - task_runners-shaped snippets and two-qualified-template-return sequences can
+    hit ParseStopIterationLimit on a cold fresh parse (the retry rung only
+    handles accepted/no-stacks/node-limit, not iteration_limit); the real files
+    flip in the warm parity harness. iteration_limit cascades need a GLR-core fix.
+  - CertifierDACProvider.cpp: iteration_limit, not cleared by merge widening.
+- Remaining non-error failures: type/shape/range divergences unrelated to the
+  cascade.
+
+* Glossary
+- merge-per-key cap :: max GLR survivor stacks retained per merge key; cpp
+  steady-state = 1 (tight, for churn), widened on retry for accepted-error.
+- cascade :: one mis-resolved construct corrupts the enclosing function and, via
+  error recovery, the whole file to a root ERROR.
+- retry rung :: a second full parse with a widened cap, fired only when the first
+  parse accepted-with-error; the sanctioned alternative to a steady-state raise.
+- retry-vs-fresh path-dependence :: a warm retry at cap N can select a worse GLR
+  merge winner than a cold fresh parse at the same N (documented engine quirk).
+
+* Index
+- cpp merge cap :: parser_retry.go effectiveParseMergePerKeyCap "cpp"
+- retry override :: parser_retry.go fullParseRetryMergePerKeyOverride "cpp" case
+- regression :: file:parser_cpp_qualified_cascade_test.go
+- runtime profile SkipCompleteAcceptedErrorRetry :: grammars/runtime_profiles.go "cpp"
+
+* Cross-References
+- Related session: [[id:gotreesitter-2026-07-16-fork-round7-bash-edge]]
+- Prior cpp reconstructions: parser_result_cpp_nested_template_{decl,call}.go
+
+* Footnotes
+[fn:1] corpus: /home/david/.claude/jobs/f84fc485/tmp/blob-parity/corpus/cpp/ (55 files)
