@@ -45,6 +45,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_sizeof_unknown_type_identifiers", func() {
 			normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 		})
+		run("c_sizeof_cast_merged_signed_literal", func() {
+			normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
+		})
 		run("c_cast_unknown_type_identifiers", func() {
 			normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 		})
@@ -53,6 +56,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		})
 		run("c_pointer_assignment_inversion", func() {
 			normalizeCPointerAssignmentInversion(root, lang)
+		})
+		run("c_macro_calling_convention_type_specifier", func() {
+			normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
 		})
 		return
 	}
@@ -65,9 +71,11 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCppSizeofDecltypeScope(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
+	normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPointerAssignmentInversion(root, lang)
+	normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of two preorder walks in
