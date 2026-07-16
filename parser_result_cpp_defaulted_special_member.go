@@ -69,6 +69,10 @@ func normalizeCppOutOfLineDefaultedEmptyParamMember(root *Node, source []byte, l
 	if !ok {
 		return
 	}
+	operatorFID, ok := lang.FieldByName("operator")
+	if !ok {
+		return
+	}
 	exprStmtNamed := symbolIsNamed(lang, exprStmtSym)
 	assignNamed := symbolIsNamed(lang, assignSym)
 	callNamed := symbolIsNamed(lang, callSym)
@@ -114,7 +118,7 @@ func normalizeCppOutOfLineDefaultedEmptyParamMember(root *Node, source []byte, l
 			defaultTok.startByte, defaultTok.endByte, defaultTok.startPoint, defaultTok.endPoint)
 		assign := newParentNodeInArena(arena, assignSym, assignNamed,
 			cloneNodeSliceIfArena(arena, []*Node{callExpr, eq, identDefault}),
-			cloneFieldIDSliceInArena(arena, []FieldID{leftFID, 0, rightFID}), 0)
+			cloneFieldIDSliceInArena(arena, []FieldID{leftFID, operatorFID, rightFID}), 0)
 
 		// Retag n (the former function_definition) in place as the
 		// expression_statement wrapping the assignment plus the trailing `;`.

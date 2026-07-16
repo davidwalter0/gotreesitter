@@ -322,7 +322,10 @@ func advanceJSONPoint(pt gotreesitter.Point, src []byte) gotreesitter.Point {
 			pt.Row++
 			pt.Column = 0
 		} else {
-			pt.Column++
+			// tree-sitter's Point.Column is a byte offset from the start of the
+			// line, not a codepoint count, so a multi-byte UTF-8 rune must
+			// advance the column by its full byte width.
+			pt.Column += uint32(size)
 		}
 		src = src[size:]
 	}
@@ -635,7 +638,11 @@ func (ts *JSONTokenSource) advanceOneRune() {
 		ts.row++
 		ts.col = 0
 	} else {
-		ts.col++
+		// tree-sitter's Point.Column is a byte offset from the start of the
+		// line, not a codepoint count: a multi-byte UTF-8 rune (e.g. curly
+		// quotes, em-dash) must advance the column by its full byte width,
+		// matching advanceByte's per-byte semantics for the ASCII fast path.
+		ts.col += uint32(size)
 	}
 }
 
