@@ -77,10 +77,40 @@ intact). No cross-language runs needed (no code landed).
   (zzts driver) and in-Docker (zzwarm); confirmed 37->37, 0 regressions.
 - Reverted parser_retry.go + parser_api.go to baseline; removed throwaway drivers.
 
+* Strategy Rethink (prompted mid-session) — grammar-grounded, not cap-tuning
+The original approach (mine + Round-8) was empirical GLR cap-tuning (merge-per-key,
+stack budget) diffed against the tree-sitter-cpp C oracle. That frame is wrong for
+the residual. Findings that reframe it:
+- cpp's grammar is NOT hand-written in the fork; it is compiled from tree-sitter-cpp
+  grammar.js via grammargen/import_grammarjs.go (PrecDynamic handling at :544) into
+  an embedded LALR+dynamic-precedence blob. So the disambiguation is a
+  =prec.dynamic()= weight baked into the tables — that is the real fix surface.
+- GCC/Clang are the WRONG implementation reference: they disambiguate =A::x=
+  type-vs-value with a SYMBOL TABLE (tentative parse + name lookup, the C++ "lexer
+  hack"). tree-sitter is scannerless GLR with NO symbol table by design; porting a
+  semantic parser is against the architecture. GCC/Clang are only a SEMANTIC
+  cross-check (they confirm the construct is a call). The authoritative reference is
+  tree-sitter-cpp's grammar.js precedence/conflicts + the ISO C++ grammar shape.
+- The Round-8 trigger hypothesis (=EXPECT_EQ(A::x, B::y)=) is INCOMPLETE: that
+  construct, and every isolated candidate I extracted (brace-init-list call args
+  =g({0,0},{10,10})=, fluent builder chains, =EXPECT_EQ(a, C::k().withAlpha(x))=),
+  parses CLEAN on the canonical TokenSource path. The whole-file [0..7250] ERROR in
+  dl_paint_unittests.cc is a GLR-STATE INTERACTION that only manifests in full-file
+  context (bisection localizes it to a long fluent-builder region ~lines 116-133,
+  but no minimal sub-snippet reproduces it) — i.e. a cumulative parse-state /
+  precedence-resolution effect, not an isolatable grammar rule.
+
 * Next Steps / Residual (feeds d6444430 GLR-core effort)
-- Investigate WHY merge widening disambiguates =EXPECT_EQ(A::x, B::y)= on the DFA
-  token stream but NOT on the cpp external-scanner TokenSource stream — the fork
-  point / reduce differs between the two lexers. This is where the real cpp lift is.
+- Real target: the fork's GLR dynamic-precedence RESOLUTION vs tree-sitter's, on the
+  external-scanner TokenSource path — why the same compiled grammar keeps the
+  call/expression branch alive in the C reference but loses it here in full-file
+  context. Compare the compiled cpp blob's DynamicPrecedence on the
+  _declaration_statement / expression_statement / call_expression productions
+  against tree-sitter-cpp grammar.js, and trace the exact GLR fork where the winning
+  branch is pruned on the TokenSource token stream.
+- Method: grammar-grounded, not numeric. Use tree-sitter-cpp grammar.js as the spec;
+  GCC/Clang as a semantic oracle only; bisect on the full-file GLR state, not on
+  isolated constructs (they parse clean).
 - The DFA-path retry-vs-fresh fix (stacks=48 + merge=16 + retryPass, admit
   accepted/no_stacks_alive/iteration_limit cpp cascades) is validated and can be
   revived IF a TokenSource-path equivalent is found, or if the DFA path becomes
