@@ -29,6 +29,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("cpp_nested_template_declaration", func() {
 			normalizeCppNestedTemplateDeclaration(root, source, lang)
 		})
+		run("cpp_sizeof_decltype_scope", func() {
+			normalizeCppSizeofDecltypeScope(root, source, lang)
+		})
 		// Fused walk covers two preorder passes (builtin primitive identifiers +
 		// preproc newline spans). It formerly also carried declaration-bounds
 		// extension and variadic-ellipsis materialization, both cut as dead
@@ -59,6 +62,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCppInlineErrorReturnType(root, source, lang)
 	normalizeCppOutOfLineDefaultedEmptyParamMember(root, source, lang)
 	normalizeCppNestedTemplateDeclaration(root, source, lang)
+	normalizeCppSizeofDecltypeScope(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
