@@ -145,13 +145,19 @@ func ImportGrammarJSON(data []byte) (*Grammar, error) {
 	// Build named precedence → numeric value mapping from the precedences array.
 	// Each level is an ordered list from highest to lowest precedence.
 	// STRING entries define named precedence values.
-	namedPrecs := buildNamedPrecMap(raw.Precedences)
+	namedPrecs, err := buildNamedPrecMap(raw.Precedences)
+	if err != nil {
+		return nil, fmt.Errorf("precedences: %w", err)
+	}
 
 	// Store the full precedences table (including SYMBOL entries) for use
 	// during LR conflict resolution. SYMBOL entries define rule-level
 	// precedence ordering (e.g. update_expression > logical_and) that
 	// cannot be captured by numeric prec values alone.
-	g.Precedences = importPrecedenceLevels(raw.Precedences)
+	g.Precedences, err = importPrecedenceLevels(raw.Precedences)
+	if err != nil {
+		return nil, fmt.Errorf("precedences: %w", err)
+	}
 
 	conv := &jsonConverter{namedPrecs: namedPrecs}
 
@@ -250,17 +256,23 @@ func ImportGrammarJSON(data []byte) (*Grammar, error) {
 // level, earlier entries have higher precedence. Values are assigned globally
 // across all levels so that entries in earlier levels always outrank entries
 // in later levels.
-func buildNamedPrecMap(rawLevels []json.RawMessage) map[string]int {
+//
+// A precedence level that fails to unmarshal is reported as an error instead
+// of being dropped: precedence data feeds LR/GLR conflict resolution
+// directly, so silently discarding a whole level would let the generator
+// resolve conflicts against an incomplete precedence table with no
+// indication that anything was lost.
+func buildNamedPrecMap(rawLevels []json.RawMessage) (map[string]int, error) {
 	// First pass: collect all STRING entries across all levels in order.
 	type precEntry struct {
 		name      string
 		globalIdx int
 	}
 	var all []precEntry
-	for _, rawLevel := range rawLevels {
+	for i, rawLevel := range rawLevels {
 		var entries []jsonPrecEntry
 		if err := json.Unmarshal(rawLevel, &entries); err != nil {
-			continue
+			return nil, fmt.Errorf("precedence level %d: %w", i, err)
 		}
 		for _, entry := range entries {
 			if entry.Type == "STRING" && entry.Value != "" {
@@ -278,17 +290,19 @@ func buildNamedPrecMap(rawLevels []json.RawMessage) map[string]int {
 			m[e.name] = val
 		}
 	}
-	return m
+	return m, nil
 }
 
 // importPrecedenceLevels converts raw JSON precedence levels into the Grammar
-// IR's PrecEntry format.
-func importPrecedenceLevels(rawLevels []json.RawMessage) [][]PrecEntry {
+// IR's PrecEntry format. A level that fails to unmarshal is reported as an
+// error rather than dropped — see buildNamedPrecMap for why silently losing
+// a precedence level is unsafe for LR/GLR conflict resolution.
+func importPrecedenceLevels(rawLevels []json.RawMessage) ([][]PrecEntry, error) {
 	var levels [][]PrecEntry
-	for _, rawLevel := range rawLevels {
+	for i, rawLevel := range rawLevels {
 		var entries []jsonPrecEntry
 		if err := json.Unmarshal(rawLevel, &entries); err != nil {
-			continue
+			return nil, fmt.Errorf("precedence level %d: %w", i, err)
 		}
 		var level []PrecEntry
 		for _, e := range entries {
@@ -303,7 +317,7 @@ func importPrecedenceLevels(rawLevels []json.RawMessage) [][]PrecEntry {
 			levels = append(levels, level)
 		}
 	}
-	return levels
+	return levels, nil
 }
 
 // grammarJSONExtensions holds gotreesitter-specific settings that extend the

@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -8,32 +9,35 @@ import (
 )
 
 var (
-	parseNodeLimitScaleOnce     sync.Once
-	parseNodeLimitScale         int
-	parseMemoryBudgetOnce       sync.Once
-	parseMemoryBudgetMBVal      int
-	parseMemoryHardCeilingOnce  sync.Once
-	parseMemoryHardCeilingMBVal int
-	parseMaxGLRStacksOnce       sync.Once
-	parseMaxGLRStacks           int
-	parseMaxMergePerKeyOnce     sync.Once
-	parseMaxMergePerKey         int
-	preMaterializationDiagOnce  sync.Once
-	preMaterializationDiag      bool
-	parsePhaseTimingOnce        sync.Once
-	parsePhaseTiming            bool
-	parseReduceTimingOnce       sync.Once
-	parseReduceTiming           bool
-	parseActionTimingOnce       sync.Once
-	parseActionTiming           bool
-	parseReduceChainHintsOnce   sync.Once
-	parseReduceChainHints       bool
-	parseTSLazyCompatOnce       sync.Once
-	parseTSLazyCompat           bool
-	parseEagerDefaultOnce       sync.Once
-	parseEagerDefault           bool
-	parseEagerDefaultDebugOnce  sync.Once
-	parseEagerDefaultDebug      bool
+	parseNodeLimitScaleOnce      sync.Once
+	parseNodeLimitScale          int
+	parseMemoryBudgetOnce        sync.Once
+	parseMemoryBudgetMBVal       int
+	parseMemoryBudgetMBMalformed string // raw GOT_PARSE_MEMORY_BUDGET_MB value rejected during memoization, "" if none
+	parseMemoryHardCeilingOnce   sync.Once
+	parseMemoryHardCeilingMBVal  int
+	parseMaxGLRStacksOnce        sync.Once
+	parseMaxGLRStacks            int
+	parseMaxGLRStacksMalformed   string // raw GOT_GLR_MAX_STACKS value rejected during memoization, "" if none
+	parseMaxMergePerKeyOnce      sync.Once
+	parseMaxMergePerKey          int
+	parseMaxMergePerKeyMalformed string // raw GOT_GLR_MAX_MERGE_PER_KEY value rejected during memoization, "" if none
+	preMaterializationDiagOnce   sync.Once
+	preMaterializationDiag       bool
+	parsePhaseTimingOnce         sync.Once
+	parsePhaseTiming             bool
+	parseReduceTimingOnce        sync.Once
+	parseReduceTiming            bool
+	parseActionTimingOnce        sync.Once
+	parseActionTiming            bool
+	parseReduceChainHintsOnce    sync.Once
+	parseReduceChainHints        bool
+	parseTSLazyCompatOnce        sync.Once
+	parseTSLazyCompat            bool
+	parseEagerDefaultOnce        sync.Once
+	parseEagerDefault            bool
+	parseEagerDefaultDebugOnce   sync.Once
+	parseEagerDefaultDebug       bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -45,12 +49,15 @@ func ResetParseEnvConfigCacheForTests() {
 	parseNodeLimitScale = 0
 	parseMemoryBudgetOnce = sync.Once{}
 	parseMemoryBudgetMBVal = 0
+	parseMemoryBudgetMBMalformed = ""
 	parseMemoryHardCeilingOnce = sync.Once{}
 	parseMemoryHardCeilingMBVal = 0
 	parseMaxGLRStacksOnce = sync.Once{}
 	parseMaxGLRStacks = 0
+	parseMaxGLRStacksMalformed = ""
 	parseMaxMergePerKeyOnce = sync.Once{}
 	parseMaxMergePerKey = 0
+	parseMaxMergePerKeyMalformed = ""
 	preMaterializationDiagOnce = sync.Once{}
 	preMaterializationDiag = false
 	parsePhaseTimingOnce = sync.Once{}
@@ -99,7 +106,12 @@ func parseMaxGLRStacksValue() int {
 		n, err := strconv.Atoi(raw)
 		if err == nil && n > 0 {
 			parseMaxGLRStacks = n
+			return
 		}
+		// Malformed or non-positive override: keep the default rather than
+		// silently applying garbage, and remember the raw value so
+		// envConfigWarnings() can surface it instead of it vanishing.
+		parseMaxGLRStacksMalformed = raw
 	})
 	return parseMaxGLRStacks
 }
@@ -114,7 +126,12 @@ func parseMaxMergePerKeyValue() int {
 		n, err := strconv.Atoi(raw)
 		if err == nil && n > 0 {
 			parseMaxMergePerKey = n
+			return
 		}
+		// Malformed or non-positive override: keep the default rather than
+		// silently applying garbage, and remember the raw value so
+		// envConfigWarnings() can surface it instead of it vanishing.
+		parseMaxMergePerKeyMalformed = raw
 	})
 	return parseMaxMergePerKey
 }
@@ -320,7 +337,12 @@ func parseMemoryBudgetMB() int {
 		n, err := strconv.Atoi(raw)
 		if err == nil && n >= 0 {
 			parseMemoryBudgetMBVal = n
+			return
 		}
+		// Malformed or negative override: keep the default rather than
+		// silently applying garbage, and remember the raw value so
+		// envConfigWarnings() can surface it instead of it vanishing.
+		parseMemoryBudgetMBMalformed = raw
 	})
 	return parseMemoryBudgetMBVal
 }
@@ -355,4 +377,41 @@ func parseMemoryHardCeilingBytes() int64 {
 		return 0
 	}
 	return int64(mb) * 1024 * 1024
+}
+
+// envConfigWarnings returns human-readable descriptions of malformed
+// environment-variable overrides discovered while memoizing parser config
+// (GOT_GLR_MAX_STACKS, GOT_GLR_MAX_MERGE_PER_KEY, GOT_PARSE_MEMORY_BUDGET_MB).
+// A malformed value never changes the effective config — the parser keeps
+// using its built-in default exactly as before this diagnostic existed —
+// but previously the bad value vanished without a trace, making a typo'd
+// env var indistinguishable from "not set". Calling the value getters here
+// forces their once-only memoization to run so the malformed-value state is
+// populated regardless of which getter a caller happened to invoke first.
+//
+// This is deliberately not printed anywhere by default: callers that want
+// visibility attach a Parser.SetLogger, and parseInternal forwards any
+// warnings here through it as ParserLogConfig events (see parser.go).
+func envConfigWarnings() []string {
+	_ = parseMaxGLRStacksValue()
+	_ = parseMaxMergePerKeyValue()
+	_ = parseMemoryBudgetMB()
+
+	var warnings []string
+	if parseMaxGLRStacksMalformed != "" {
+		warnings = append(warnings, fmt.Sprintf(
+			"GOT_GLR_MAX_STACKS=%q is not a positive integer; using default %d",
+			parseMaxGLRStacksMalformed, maxGLRStacks))
+	}
+	if parseMaxMergePerKeyMalformed != "" {
+		warnings = append(warnings, fmt.Sprintf(
+			"GOT_GLR_MAX_MERGE_PER_KEY=%q is not a positive integer; using default %d",
+			parseMaxMergePerKeyMalformed, maxStacksPerMergeKey))
+	}
+	if parseMemoryBudgetMBMalformed != "" {
+		warnings = append(warnings, fmt.Sprintf(
+			"GOT_PARSE_MEMORY_BUDGET_MB=%q is not a non-negative integer; using default %d",
+			parseMemoryBudgetMBMalformed, 512))
+	}
+	return warnings
 }

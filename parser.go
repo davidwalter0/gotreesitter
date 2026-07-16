@@ -3931,6 +3931,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
+		for _, warning := range envConfigWarnings() {
+			p.logf(ParserLogConfig, "%s", warning)
+		}
 	}
 	deferParentLinks := reuse == nil && oldTree == nil
 	scratch := acquireParserScratch()

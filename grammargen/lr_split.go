@@ -1,6 +1,7 @@
 package grammargen
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,6 +82,53 @@ func splitActionSignature(actions []lrAction) string {
 	return b.String()
 }
 
+// resolveConflictFunc resolves a single multi-action LR conflict. It is
+// exactly resolveActionConflict's signature, named so countGLRConflicts can
+// take it as a parameter and tests can inject a stub that fails — proving
+// a resolution error is surfaced rather than masked.
+type resolveConflictFunc func(lookaheadSym int, actions []lrAction, ng *NormalizedGrammar) ([]lrAction, error)
+
+// countGLRConflicts counts lookaheads in actionTable whose conflict
+// resolution keeps more than one action (a true, unresolved GLR conflict).
+// Raw multi-action entries are not counted directly because some resolve
+// via precedence/associativity and never become GLR entries.
+//
+// A resolution failure aborts the count and returns the error instead of
+// silently treating the entry as "not a conflict" (previously: `err == nil
+// && len(resolved) > 1`). Masking the error there let a split whose true
+// GLR-conflict count was unknown look like an improvement — see the P3
+// static-audit note on localLR1Rebuild's accept/rollback decision below.
+func countGLRConflicts(actionTable map[int][]lrAction, ng *NormalizedGrammar, resolve resolveConflictFunc) (int, error) {
+	glr := 0
+	for sym, acts := range actionTable {
+		if len(acts) <= 1 {
+			continue
+		}
+		resolved, err := resolve(sym, acts, ng)
+		if err != nil {
+			return 0, fmt.Errorf("count GLR conflicts: resolve symbol %d: %w", sym, err)
+		}
+		if len(resolved) > 1 {
+			glr++
+		}
+	}
+	return glr, nil
+}
+
+// countGLRConflictsAcrossStates sums countGLRConflicts over multiple states,
+// stopping at the first resolution error.
+func countGLRConflictsAcrossStates(states []int, tables *LRTables, ng *NormalizedGrammar, resolve resolveConflictFunc) (int, error) {
+	total := 0
+	for _, si := range states {
+		n, err := countGLRConflicts(tables.ActionTable[si], ng, resolve)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // localLR1Rebuild splits nominated LALR states into canonical LR(1) states
 // by rebuilding a bounded neighborhood around each split candidate.
 //
@@ -95,7 +143,11 @@ func splitActionSignature(actions []lrAction) string {
 //     rewrite transitions.
 //  4. Cap the total new states at maxNewStates to prevent explosion.
 //
-// Returns the number of states that were successfully split.
+// Returns the number of states that were successfully split. The error
+// return is non-nil only when a candidate's post-split GLR-conflict count
+// could not be verified (see countGLRConflicts); that candidate is rolled
+// back and processing continues with the remaining candidates, so a single
+// unverifiable split does not abort the whole batch.
 func localLR1Rebuild(
 	tables *LRTables,
 	ng *NormalizedGrammar,
@@ -109,6 +161,7 @@ func localLR1Rebuild(
 
 	tokenCount := ng.TokenCount()
 	totalSplit := 0
+	var verifyErr error
 
 	for _, cand := range candidates {
 		if totalSplit >= maxNewStates {
@@ -362,27 +415,22 @@ func localLR1Rebuild(
 		// than we had before. We must try conflict resolution, not just count
 		// raw multi-action entries, because some multi-action entries resolve
 		// via precedence/associativity and don't become GLR entries.
-		countGLR := func(actionTable map[int][]lrAction) int {
-			glr := 0
-			for sym, acts := range actionTable {
-				if len(acts) > 1 {
-					resolved, err := resolveActionConflict(sym, acts, ng)
-					if err == nil && len(resolved) > 1 {
-						glr++
-					}
-				}
+		newTotalConflicts, newErr := countGLRConflictsAcrossStates(splitStates, tables, ng, resolveActionConflict)
+		origTotalConflicts, origErr := countGLRConflicts(origActions, ng, resolveActionConflict)
+		candidateVerifyErr := newErr
+		if candidateVerifyErr == nil {
+			candidateVerifyErr = origErr
+		}
+
+		if candidateVerifyErr != nil || newTotalConflicts > origTotalConflicts {
+			// Rollback: splitting made things worse, or (candidateVerifyErr !=
+			// nil) the post-split GLR-conflict count could not be verified
+			// because conflict resolution failed for one of the affected
+			// states. An unverifiable split is treated the same as a
+			// regression rather than kept on the assumption it helped.
+			if candidateVerifyErr != nil {
+				verifyErr = errors.Join(verifyErr, fmt.Errorf("candidate state %d: %w", stateIdx, candidateVerifyErr))
 			}
-			return glr
-		}
-
-		newTotalConflicts := 0
-		for _, si := range splitStates {
-			newTotalConflicts += countGLR(tables.ActionTable[si])
-		}
-		origTotalConflicts := countGLR(origActions)
-
-		if newTotalConflicts > origTotalConflicts {
-			// Rollback: splitting made things worse.
 			tables.ActionTable[stateIdx] = origActions
 			tables.GotoTable[stateIdx] = origGoto
 			for _, si := range splitStates[1:] {
@@ -409,7 +457,7 @@ func localLR1Rebuild(
 		totalSplit += len(splitStates) - 1
 	}
 
-	return totalSplit, nil
+	return totalSplit, verifyErr
 }
 
 // splitReport describes the result of a local LR(1) rebuild pass.
