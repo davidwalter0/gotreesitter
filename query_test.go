@@ -709,10 +709,31 @@ func TestParsePredicateHasParent(t *testing.T) {
 	}
 }
 
-func TestParsePredicateUnsupportedErrors(t *testing.T) {
+// TestParsePredicateUnknownPassesThrough covers M4 (general-predicate
+// passthrough): an unrecognized predicate name no longer fails compilation.
+// It is parsed and surfaced via Query.GeneralPredicates for the caller to
+// evaluate, instead of being rejected outright.
+//
+// This test formerly asserted the opposite (named
+// TestParsePredicateUnsupportedErrors) — that an unknown predicate must be
+// a compile error, i.e. the closed predicate set this change replaces.
+// Inverted rather than appeased: the old assertion encoded the behavior
+// being removed, not a still-valid invariant.
+func TestParsePredicateUnknownPassesThrough(t *testing.T) {
 	lang := queryTestLanguage()
-	if _, err := NewQuery(`(identifier) @name (#does-not-exist? @name)`, lang); err == nil {
-		t.Fatal("expected error for unsupported predicate")
+	q, err := NewQuery(`(identifier) @name (#does-not-exist? @name)`, lang)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	general, ok := q.GeneralPredicates(0)
+	if !ok || len(general) != 1 {
+		t.Fatalf("general predicates: got %d, want 1 (ok=%v)", len(general), ok)
+	}
+	if general[0].Name != "#does-not-exist?" {
+		t.Fatalf("name: got %q, want %q", general[0].Name, "#does-not-exist?")
+	}
+	if len(general[0].Args) != 1 || !general[0].Args[0].IsCapture || general[0].Args[0].Capture != "name" {
+		t.Fatalf("args: got %+v, want single capture arg %q", general[0].Args, "name")
 	}
 }
 

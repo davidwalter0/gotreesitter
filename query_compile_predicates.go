@@ -60,7 +60,7 @@ func (p *queryParser) parsePredicate() (QueryPredicate, error) {
 	case "#is-exported?":
 		return p.parseIsExportedPredicate()
 	default:
-		return QueryPredicate{}, fmt.Errorf("query: unsupported predicate %q", name)
+		return p.parseGeneralPredicate(name)
 	}
 }
 
@@ -434,6 +434,33 @@ func (p *queryParser) parseIsExportedPredicate() (QueryPredicate, error) {
 	return QueryPredicate{
 		kind:        predicateIsExported,
 		leftCapture: capName,
+	}, nil
+}
+
+// parseGeneralPredicate parses a predicate whose name is not one of
+// gotreesitter's built-in predicates into a passthrough QueryPredicate. It
+// consumes arguments (captures, strings, and bare atoms, in any order or
+// mix) up to the closing ')' without imposing any arity or type
+// constraints — the caller decides what's valid for their custom
+// predicate. The result is never evaluated during matching; retrieve it via
+// Query.GeneralPredicates and evaluate it against each match's captures.
+func (p *queryParser) parseGeneralPredicate(name string) (QueryPredicate, error) {
+	args, err := p.readPredicateArgsUntilClose()
+	if err != nil {
+		return QueryPredicate{}, err
+	}
+	generalArgs := make([]GeneralPredicateArg, len(args))
+	for i, a := range args {
+		if a.kind == predicateArgCapture {
+			generalArgs[i] = GeneralPredicateArg{IsCapture: true, Capture: a.value}
+		} else {
+			generalArgs[i] = GeneralPredicateArg{Literal: a.value}
+		}
+	}
+	return QueryPredicate{
+		kind:        predicateGeneral,
+		name:        name,
+		generalArgs: generalArgs,
 	}, nil
 }
 

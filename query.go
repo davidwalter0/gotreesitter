@@ -94,6 +94,10 @@ const (
 	predicateStrip
 	predicateCount      // #count? @cap op value
 	predicateIsExported // #is-exported? @cap
+	// predicateGeneral is any predicate whose name is not one of the
+	// built-in kinds above. It is parsed but not evaluated in-engine; see
+	// GeneralPredicates.
+	predicateGeneral
 )
 
 // QueryPredicate is a post-match constraint attached to a pattern.
@@ -119,6 +123,13 @@ const (
 //   - (#set! key value), (#offset! @cap ...)
 //   - (#count? @a op value)       -- op: >, <, >=, <=, ==, !=
 //   - (#is-exported? @a)
+//
+// Any predicate name not listed above (e.g. (#custom? @a "x")) is a
+// "general predicate": it is parsed successfully rather than rejected at
+// compile time, but it is NOT evaluated during matching. Retrieve and
+// evaluate general predicates yourself via Query.GeneralPredicates, which
+// mirrors upstream tree-sitter's general-predicate escape hatch (the
+// official cgo binding's Query.GeneralPredicates()).
 type QueryPredicate struct {
 	kind queryPredicateType
 
@@ -134,6 +145,35 @@ type QueryPredicate struct {
 	countValue int    // for #count?
 
 	allowMissing bool // true when scoped under a child pattern that may match zero times
+
+	// name and generalArgs hold the parsed data for kind == predicateGeneral.
+	// name is the predicate name as written (including the leading '#').
+	name        string
+	generalArgs []GeneralPredicateArg
+}
+
+// GeneralPredicateArg is one argument to a general (non-standard) predicate,
+// exactly as written in the query source: either a capture reference (e.g.
+// @a) or a string/atom literal.
+type GeneralPredicateArg struct {
+	// IsCapture reports whether this argument is a capture reference. When
+	// true, Capture holds the capture name (without the leading '@');
+	// otherwise Literal holds the argument text.
+	IsCapture bool
+	Capture   string
+	Literal   string
+}
+
+// GeneralPredicate is a predicate parsed from a query pattern whose name is
+// not one of gotreesitter's built-in predicates (#eq?, #match?, #set!,
+// etc). It is surfaced verbatim for the caller to evaluate against each
+// match's captures — the query engine does not evaluate it and never
+// rejects a match because of it. See Query.GeneralPredicates.
+type GeneralPredicate struct {
+	// Name is the predicate name as written, including the leading '#'
+	// (e.g. "#custom?").
+	Name string
+	Args []GeneralPredicateArg
 }
 
 // alternativeSymbol is one branch of an alternation like [(true) (false)].
@@ -1126,6 +1166,33 @@ func (q *Query) PredicatesForPattern(patternIndex uint32) ([]QueryPredicate, boo
 	}
 	out := make([]QueryPredicate, len(preds))
 	copy(out, preds)
+	return out, true
+}
+
+// GeneralPredicates returns the non-standard ("general") predicates parsed
+// for patternIndex, in source order. These are predicates whose name is not
+// one of gotreesitter's built-in predicates (#eq?, #match?, #set!, etc) —
+// they are parsed but never evaluated in-engine, so the caller must
+// evaluate them against each match's captures itself. Known/standard
+// predicates are excluded here; use PredicatesForPattern for those. Returns
+// (nil, false) if patternIndex is out of range.
+func (q *Query) GeneralPredicates(patternIndex uint32) ([]GeneralPredicate, bool) {
+	if q == nil {
+		return nil, false
+	}
+	idx := int(patternIndex)
+	if idx < 0 || idx >= len(q.patterns) {
+		return nil, false
+	}
+	var out []GeneralPredicate
+	for _, pred := range q.patterns[idx].predicates {
+		if pred.kind != predicateGeneral {
+			continue
+		}
+		args := make([]GeneralPredicateArg, len(pred.generalArgs))
+		copy(args, pred.generalArgs)
+		out = append(out, GeneralPredicate{Name: pred.name, Args: args})
+	}
 	return out, true
 }
 

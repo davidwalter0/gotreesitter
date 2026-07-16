@@ -60,7 +60,11 @@ func (q *Query) matchesPredicate(pred QueryPredicate, captures []QueryCapture, l
 		return countPredicateMatches(pred, captures)
 	case predicateIsExported:
 		return captureTextIsExported(pred.leftCapture, captures, source)
-	case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip:
+	case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateGeneral:
+		// predicateGeneral is a non-standard predicate: it is never
+		// evaluated in-engine, so it never rejects a match here. Callers
+		// retrieve it via Query.GeneralPredicates and evaluate it
+		// themselves against the match's captures.
 		return true
 	default:
 		return false
@@ -145,7 +149,7 @@ func exportedPredicateStillViable(pred QueryPredicate, captures []QueryCapture, 
 func predicatesCanRejectMatch(predicates []QueryPredicate) bool {
 	for _, pred := range predicates {
 		switch pred.kind {
-		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip:
+		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateGeneral:
 			continue
 		default:
 			return true
