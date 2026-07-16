@@ -1006,6 +1006,16 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 							},
 						})
 					}
+				case typeScriptCtx.awaitExpressionSym:
+					if typeScriptCtx.hasAwaitExpressionSym && typeScriptCtx.canRewriteInstantiatedCalls && typeScriptAwaitExpressionCouldHoistInstantiatedCall(child, typeScriptCtx) {
+						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{
+							kind: typeScriptCompatibilityCandidateChild,
+							child: javaScriptTypeScriptPrecedenceCandidate{
+								parent:     n,
+								childIndex: i,
+							},
+						})
+					}
 				case typeScriptCtx.asExpressionSym:
 					if typeScriptCtx.canRewriteAsExpressions && typeScriptAsAssignmentOrTernaryCandidate(child, typeScriptCtx) {
 						index.typeScriptCompatibility.append(typeScriptCompatibilityCandidate{

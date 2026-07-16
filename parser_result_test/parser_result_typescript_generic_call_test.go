@@ -601,3 +601,171 @@ func TestTypeScriptCommentedLogicalOrCallChainStillKeepsBinaryExpression(t *test
 		t.Fatalf("commented logical-or chain still parsed as call_expression: %s", bad.SExpr(lang))
 	}
 }
+
+// TestTypeScriptAwaitGenericCallHoistsAwaitAroundCallee regression-tests the
+// round5-tsts ts-1 fix: "await callee<T>(args)" must attach the type
+// arguments and call parens to an outer call_expression whose "function"
+// field is an await_expression wrapping only the callee — i.e.
+// "(await callee)<T>(args)", not "await (callee<T>(args))". Confirmed
+// byte-exact against the real tree-sitter-typescript C oracle (pinned commit
+// 75b3874e) via `tree-sitter parse`: the official grammar's define-grammar.js
+// explicitly conflicts [call_expression, instantiation_expression,
+// binary_expression, await_expression] and resolves it this way.
+func TestTypeScriptAwaitGenericCallHoistsAwaitAroundCallee(t *testing.T) {
+	const src = "async function f() {\n  const response = await axios.get<Info>(InfoPath);\n  return response;\n}\n"
+	tree, lang := parseByLanguageName(t, "typescript", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected typescript parse error: %s", root.SExpr(lang))
+	}
+
+	call := firstNode(root, func(n *gotreesitter.Node) bool {
+		return n.Type(lang) == "call_expression" && n.Text([]byte(src)) == "await axios.get<Info>(InfoPath)"
+	})
+	if call == nil {
+		t.Fatalf("missing outer call_expression wrapping the await: %s", root.SExpr(lang))
+	}
+	fn := call.ChildByFieldName("function", lang)
+	if fn == nil || fn.Type(lang) != "await_expression" {
+		t.Fatalf("call_expression function field = %v, want await_expression: %s", fn, call.SExpr(lang))
+	}
+	if fn.Text([]byte(src)) != "await axios.get" {
+		t.Fatalf("await_expression text = %q, want %q: %s", fn.Text([]byte(src)), "await axios.get", call.SExpr(lang))
+	}
+	if typeArgs := call.ChildByFieldName("type_arguments", lang); typeArgs == nil || typeArgs.Type(lang) != "type_arguments" {
+		t.Fatalf("call_expression missing type_arguments field: %s", call.SExpr(lang))
+	}
+	if args := call.ChildByFieldName("arguments", lang); args == nil || args.Type(lang) != "arguments" {
+		t.Fatalf("call_expression missing arguments field: %s", call.SExpr(lang))
+	}
+	if bad := firstNode(root, func(n *gotreesitter.Node) bool {
+		return n.Type(lang) == "await_expression" && n.Text([]byte(src)) == "await axios.get<Info>(InfoPath)"
+	}); bad != nil {
+		t.Fatalf("await_expression still wraps the entire generic call: %s", bad.SExpr(lang))
+	}
+}
+
+// TestTSXAwaitNestedGenericCallHoistsAwaitAroundCallee is the TSX-dialect,
+// nested-type-argument variant of the same round5-tsts ts-1 fix (both
+// typescript and tsx share this normalization path).
+func TestTSXAwaitNestedGenericCallHoistsAwaitAroundCallee(t *testing.T) {
+	const src = "async function f() {\n  const response = await axios.get<ServiceResponse<Info>>(InfoPath);\n  return response;\n}\n"
+	tree, lang := parseByLanguageName(t, "tsx", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected tsx parse error: %s", root.SExpr(lang))
+	}
+
+	call := firstNode(root, func(n *gotreesitter.Node) bool {
+		return n.Type(lang) == "call_expression" && n.Text([]byte(src)) == "await axios.get<ServiceResponse<Info>>(InfoPath)"
+	})
+	if call == nil {
+		t.Fatalf("missing outer call_expression wrapping the await: %s", root.SExpr(lang))
+	}
+	fn := call.ChildByFieldName("function", lang)
+	if fn == nil || fn.Type(lang) != "await_expression" {
+		t.Fatalf("call_expression function field = %v, want await_expression: %s", fn, call.SExpr(lang))
+	}
+	if typeArgs := call.ChildByFieldName("type_arguments", lang); typeArgs == nil {
+		t.Fatalf("call_expression missing type_arguments field: %s", call.SExpr(lang))
+	} else if generic := firstNode(typeArgs, func(n *gotreesitter.Node) bool { return n.Type(lang) == "generic_type" }); generic == nil {
+		t.Fatalf("type_arguments missing nested generic_type: %s", typeArgs.SExpr(lang))
+	}
+}
+
+// TestTypeScriptAwaitPlainCallStillWrapsEntireCall guards the non-generic
+// case the ts-1 fix must NOT touch: "await callee(args)" with no type
+// arguments keeps the pre-existing (and already oracle-correct)
+// await_expression(call_expression(...)) nesting.
+func TestTypeScriptAwaitPlainCallStillWrapsEntireCall(t *testing.T) {
+	const src = "async function f() {\n  const response = await axios.get(InfoPath);\n  return response;\n}\n"
+	tree, lang := parseByLanguageName(t, "typescript", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected typescript parse error: %s", root.SExpr(lang))
+	}
+	await := firstNode(root, func(n *gotreesitter.Node) bool {
+		return n.Type(lang) == "await_expression" && n.Text([]byte(src)) == "await axios.get(InfoPath)"
+	})
+	if await == nil {
+		t.Fatalf("plain await call must still wrap the entire call_expression: %s", root.SExpr(lang))
+	}
+	if inner := firstNode(await, func(n *gotreesitter.Node) bool { return n.Type(lang) == "call_expression" }); inner == nil {
+		t.Fatalf("await_expression missing inner call_expression: %s", await.SExpr(lang))
+	}
+}
+
+// TestTSXStaticGenericMethodKeepsTypeParametersField regression-tests the
+// round5-tsts field-label fix: a modifier-prefixed (here "static") generic
+// method_definition in TSX must keep the oracle's "type_parameters:" field
+// label. Root cause: ctx.typeParametersSym/typeParametersFieldID were only
+// ever resolved inside a visibleLanguageSymbols(...) block gated on
+// "type_assertion" existing — a symbol TSX genuinely lacks (angle-bracket
+// `<T>expr` casts are invalid TSX syntax, ambiguous with JSX), so the whole
+// block silently failed for TSX and collaterally zeroed the unrelated
+// type_parameters symbol/field IDs. Those are needed by
+// typeScriptAssignMemberFields, which rebuilds a method_definition's field
+// metadata whenever the node's source text starts with a modifier keyword
+// (static/public/private/protected/readonly/abstract/async/get/set) — a
+// byte-prefix check that fires for ANY modifier-prefixed member, not just
+// ones needing genuine recovery. Confirmed against the real
+// tree-sitter-typescript/tsx C oracle: it labels this child "type_parameters:"
+// even in the simplest "static bar<T>(x: T) {}" case.
+func TestTSXStaticGenericMethodKeepsTypeParametersField(t *testing.T) {
+	const src = "class Foo {\n  static bar<T>(x: T) {}\n}\n"
+	tree, lang := parseByLanguageName(t, "tsx", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected tsx parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}
+
+// TestTSXStaticGenericMethodWithThisParamKeepsTypeParametersField is the
+// original round5-tsts tsx-2 repro (static generic method with a
+// `this:`-typed first parameter and a type-parameter constraint), preserved
+// verbatim from the blob-parity report.
+func TestTSXStaticGenericMethodWithThisParamKeepsTypeParametersField(t *testing.T) {
+	const src = "class SingletonMock {\n  static createInstance<T, R extends any[]>(\n    this: StaticThis<T, R>,\n    ...args: R\n  ) {\n    return null;\n  }\n}\n"
+	tree, lang := parseByLanguageName(t, "tsx", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected tsx parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}
+
+// TestTypeScriptStaticGenericMethodKeepsTypeParametersField is the
+// plain-TypeScript control for the same fix — this dialect was never broken
+// (it has "type_assertion" so the original gating block always succeeded),
+// and must stay that way.
+func TestTypeScriptStaticGenericMethodKeepsTypeParametersField(t *testing.T) {
+	const src = "class Foo {\n  static bar<T>(x: T) {}\n}\n"
+	tree, lang := parseByLanguageName(t, "typescript", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected typescript parse error: %s", root.SExpr(lang))
+	}
+	method := firstNode(root, func(n *gotreesitter.Node) bool { return n.Type(lang) == "method_definition" })
+	if method == nil {
+		t.Fatalf("missing method_definition: %s", root.SExpr(lang))
+	}
+	typeParams := method.ChildByFieldName("type_parameters", lang)
+	if typeParams == nil || typeParams.Type(lang) != "type_parameters" {
+		t.Fatalf("method_definition missing type_parameters field: %s", method.SExpr(lang))
+	}
+}
