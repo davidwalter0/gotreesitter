@@ -35,10 +35,126 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	// still increments passesChecked/passesRun so observability is preserved.
 	normalizePythonFusedPreorder(root, source, parser, lang, sourceFlags)
 	parser.runNormalizationPass(func() bool {
+		return sourceFlags.listSplatBinding
+	}, func() normalizationPassCounters {
+		return normalizePythonListSplatBinding(root, lang)
+	})
+	parser.runNormalizationPass(func() bool {
 		return sourceFlags.continuationEscape
 	}, func() normalizationPassCounters {
 		return normalizePythonStringContinuationEscapes(root, source, lang)
 	})
+}
+
+// pythonRHSPatternConversion holds the target expression-family symbols used to
+// rewrite pattern-family nodes that a GLR mis-resolution placed on the
+// right-hand side of an assignment (a pure expression context). Sources are
+// matched by type NAME (not symbol id) because tree-sitter-python assigns
+// list_pattern / tuple_pattern two distinct symbol ids each — one from the
+// direct rule and one from the alias() used in _left_hand_side — so an
+// id-equality test would miss half the nodes. Each conversion target is
+// independently gated so a grammar missing one symbol still converts the others.
+type pythonRHSPatternConversion struct {
+	active bool
+
+	expressionList      Symbol
+	expressionListNamed bool
+
+	list      Symbol
+	listNamed bool
+	haveList  bool
+
+	tuple      Symbol
+	tupleNamed bool
+	haveTuple  bool
+
+	listSplat      Symbol
+	listSplatNamed bool
+	haveSplat      bool
+}
+
+func newPythonRHSPatternConversion(lang *Language) pythonRHSPatternConversion {
+	var conv pythonRHSPatternConversion
+	expressionList, ok := symbolByName(lang, "expression_list")
+	if !ok {
+		return conv
+	}
+	conv.active = true
+	conv.expressionList = expressionList
+	conv.expressionListNamed = symbolIsNamed(lang, expressionList)
+	if s, ok := symbolByName(lang, "list"); ok {
+		conv.list, conv.listNamed, conv.haveList = s, symbolIsNamed(lang, s), true
+	}
+	if s, ok := symbolByName(lang, "tuple"); ok {
+		conv.tuple, conv.tupleNamed, conv.haveTuple = s, symbolIsNamed(lang, s), true
+	}
+	if s, ok := symbolByName(lang, "list_splat"); ok {
+		conv.listSplat, conv.listSplatNamed, conv.haveSplat = s, symbolIsNamed(lang, s), true
+	}
+	return conv
+}
+
+// convertPythonRHSPatternsToExpressions recursively rewrites pattern-family
+// nodes to their expression-family counterparts within an assignment's
+// right-hand-side value subtree. On the RHS of "=", canonical
+// tree-sitter-python never emits patterns; gt's GLR occasionally resolves an
+// ambiguous, un-anchored container (empty [] / (), or an element that is itself
+// only a bare identifier) to the pattern reading — grammar.js declares these as
+// genuine GLR ambiguities ([$.list, $.list_pattern], [$.tuple, $.tuple_pattern],
+// [$.primary_expression, $.list_splat_pattern]).
+//
+// Recursion descends ONLY through pattern-family nodes and the expression_list
+// that wraps the RHS values. It never descends into an already-correct
+// expression node, so legitimate pattern scopes that are only reachable through
+// a non-pattern boundary — comprehension for-targets (inside list_comprehension
+// / generator_expression), lambda parameters, and chained-assignment left sides
+// (inside a nested assignment) — are never touched.
+func convertPythonRHSPatternsToExpressions(n *Node, lang *Language, conv pythonRHSPatternConversion) bool {
+	if n == nil {
+		return false
+	}
+	changed := false
+	recurse := false
+	switch n.Type(lang) {
+	case "pattern_list":
+		n.symbol = conv.expressionList
+		n.setNamed(conv.expressionListNamed)
+		changed, recurse = true, true
+	case "list_pattern":
+		if conv.haveList {
+			n.symbol = conv.list
+			n.setNamed(conv.listNamed)
+			changed = true
+		}
+		recurse = true
+	case "tuple_pattern":
+		if conv.haveTuple {
+			n.symbol = conv.tuple
+			n.setNamed(conv.tupleNamed)
+			changed = true
+		}
+		recurse = true
+	case "list_splat_pattern":
+		if conv.haveSplat {
+			n.symbol = conv.listSplat
+			n.setNamed(conv.listSplatNamed)
+			changed = true
+		}
+		recurse = true
+	case "expression_list":
+		// Already an expression_list container (typically the RHS wrapper):
+		// its elements may still be mis-resolved patterns, so descend.
+		recurse = true
+	}
+	if recurse {
+		childCount := resultChildCount(n)
+		for i := 0; i < childCount; i++ {
+			if convertPythonRHSPatternsToExpressions(resultChildAt(n, i), lang, conv) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // pythonCollapsedKeywordSetup holds the resolved symbols for one collapsed-
@@ -129,17 +245,11 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		hasRaise = ok
 	}
 
-	var patternListSym, expressionListSym Symbol
-	var expressionListNamed bool
+	var rhsPatternConv pythonRHSPatternConversion
 	hasAssignment := false
 	if flags.assignmentList {
-		var ok1, ok2 bool
-		patternListSym, ok1 = symbolByName(lang, "pattern_list")
-		expressionListSym, ok2 = symbolByName(lang, "expression_list")
-		if ok1 && ok2 {
-			hasAssignment = true
-			expressionListNamed = symbolIsNamed(lang, expressionListSym)
-		}
+		rhsPatternConv = newPythonRHSPatternConversion(lang)
+		hasAssignment = rhsPatternConv.active
 	}
 
 	var yieldSym Symbol
@@ -338,6 +448,9 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		nodeType := n.Type(lang)
 
 		// Assignment rewrite — exclusive of block rewrites (different shape).
+		// The child immediately after the first "=" is the RHS value (a pure
+		// expression context). Recursively convert any pattern-family nodes a
+		// GLR mis-resolution left there back into expressions.
 		if hasAssignment && nodeType == "assignment" {
 			sawEquals := false
 			for i := 0; i < childCount; i++ {
@@ -349,10 +462,10 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 					sawEquals = true
 					continue
 				}
-				if sawEquals && child.symbol == patternListSym {
-					child.symbol = expressionListSym
-					child.setNamed(expressionListNamed)
-					rewritten++
+				if sawEquals {
+					if convertPythonRHSPatternsToExpressions(child, lang, rhsPatternConv) {
+						rewritten++
+					}
 					return
 				}
 			}
@@ -484,6 +597,7 @@ type pythonCompatibilitySourceFlags struct {
 	asPattern          bool
 	casePattern        bool
 	continuationEscape bool
+	listSplatBinding   bool
 }
 
 func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceFlags {
@@ -495,6 +609,7 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 		switch source[i] {
 		case '*':
 			flags.wildcardImport = true
+			flags.listSplatBinding = true
 			i++
 			continue
 		case '#':
@@ -2076,6 +2191,15 @@ func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) (
 		if source[i+1] == '\r' && end < int(node.endByte) && source[end] == '\n' {
 			end++
 		} else if source[i+1] != '\n' {
+			// "\X" (X not a newline) escapes the following byte X, so skip
+			// past X as well — otherwise X could be re-scanned as the start
+			// of a new escape. This is essential for "\\" immediately before
+			// a newline: the base lexer already tokenized the two backslashes
+			// as ONE escape_sequence, but without this extra advance the
+			// second backslash would be misread here as a "\<newline>" line
+			// continuation and a spurious second escape_sequence inserted
+			// (the escape_sequence double-count bug).
+			i++
 			continue
 		}
 		found := pythonChildSpanSymbolNoMaterialize(node, uint32(i), uint32(end), escapeSym)
@@ -2190,6 +2314,119 @@ func pythonSyntheticIfFieldIDs(arena *nodeArena, childCount int, lang *Language)
 		fieldIDs[3] = fid
 	}
 	return fieldIDs
+}
+
+// normalizePythonListSplatBinding repairs the list_splat scope mis-binding: a
+// postfix chain (subscript / attribute / call) whose left spine bottoms in a
+// list_splat. Because list_splat is never a primary_expression, a tree of the
+// form (subscript|attribute|call ... (list_splat X)) never occurs in canonical
+// tree-sitter-python; it means "*" was bound only to the primary X while the
+// trailing postfix operators wrongly wrapped the list_splat. gt exhibits this
+// for a splat element of a tuple / list display whose operand carries a postfix
+// chain, e.g. typing.py:1682 (*params[:-1], *params[-1].__args__): the second
+// splat is parsed as (*params[-1]).__args__ instead of *(params[-1].__args__).
+//
+// The (correct) form list_splat(call(...)) — a splat whose operand is itself a
+// call, which canonical mis-parses as call(list_splat(...)) inside an
+// argument_list — is left untouched here: its list_splat sits at the TOP of the
+// chain, not the bottom, so the detector never fires. Matching that canonical
+// quirk would diverge gt from CPython's AST, so it is intentionally not done.
+func normalizePythonListSplatBinding(root *Node, lang *Language) normalizationPassCounters {
+	var counters normalizationPassCounters
+	if root == nil || lang == nil || lang.Name != "python" {
+		return counters
+	}
+	listSplatSym, ok := symbolByName(lang, "list_splat")
+	if !ok {
+		return counters
+	}
+	listSplatNamed := symbolIsNamed(lang, listSplatSym)
+	walkResultTree(root, func(n *Node) {
+		counters.nodesVisited++
+		if rebindPythonMisboundListSplat(n, lang, listSplatSym, listSplatNamed) {
+			counters.nodesRewritten++
+		}
+	})
+	return counters
+}
+
+// isPythonPostfixExpression reports whether n is a postfix operator whose base
+// (the operand the operator applies to) is its first child: subscript (value),
+// attribute (object), or call (function).
+func isPythonPostfixExpression(n *Node, lang *Language) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Type(lang) {
+	case "subscript", "attribute", "call":
+		return true
+	}
+	return false
+}
+
+// rebindPythonMisboundListSplat, when node is the top of a postfix chain whose
+// left spine bottoms in a list_splat, rotates the list_splat to the top so it
+// wraps the whole corrected chain and transforms node in place into that
+// list_splat. Returns true if a rewrite happened. Called on every node during a
+// preorder walk; because the outermost postfix is visited first, one rewrite
+// fixes an entire chain and the inner (now detached) originals are never
+// revisited.
+func rebindPythonMisboundListSplat(node *Node, lang *Language, listSplatSym Symbol, listSplatNamed bool) bool {
+	if node == nil || !isPythonPostfixExpression(node, lang) {
+		return false
+	}
+	arena := node.ownerArena
+
+	// Walk the left spine (each node's first child) collecting postfix nodes
+	// until a non-postfix bottom is reached; require that bottom to be a
+	// list_splat.
+	var spine []*Node
+	cur := node
+	for isPythonPostfixExpression(cur, lang) {
+		c0 := resultChildAt(cur, 0)
+		if c0 == nil {
+			return false
+		}
+		spine = append(spine, cur)
+		cur = c0
+	}
+	if len(spine) == 0 || cur == nil || cur.Type(lang) != "list_splat" {
+		return false
+	}
+	splat := cur
+	splatChildren := resultChildSliceForMutation(splat)
+	if len(splatChildren) < 2 {
+		return false
+	}
+	star := splatChildren[0]                          // the "*" token
+	operand := splatChildren[len(splatChildren)-1]    // the splat's operand
+
+	// Rebuild the spine bottom-up, substituting the splat's operand for the
+	// splat at the innermost postfix. Field metadata is preserved on each
+	// rebuilt node because child positions are unchanged.
+	replacement := operand
+	for i := len(spine) - 1; i >= 0; i-- {
+		p := spine[i]
+		buf := cloneNodeSliceInArena(arena, resultChildSliceForMutation(p))
+		if len(buf) == 0 {
+			return false
+		}
+		buf[0] = replacement
+		newP := cloneNodeInArena(arena, p)
+		newP.children = buf
+		if arena != nil {
+			arena.clearFinalChildRefs(newP)
+		}
+		populateParentNode(newP, buf)
+		replacement = newP
+	}
+
+	// Transform node in place into list_splat("*", correctedChain). list_splat
+	// carries no child fields, so clearing field metadata is correct here.
+	node.symbol = listSplatSym
+	node.setNamed(listSplatNamed)
+	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(arena, []*Node{star, replacement}))
+	return true
 }
 
 func pythonModuleChildrenLookComplete(nodes []*Node, lang *Language) bool {
