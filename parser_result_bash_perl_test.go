@@ -91,7 +91,12 @@ func TestNormalizeBashProgramVariableAssignmentsSplitsTopLevelWrapper(t *testing
 	ifStmt := newLeafNodeInArena(arena, 5, true, 11, 15, Point{Column: 11}, Point{Column: 15})
 	root := newParentNodeInArena(arena, 1, true, []*Node{comment, assigns, ifStmt}, nil, 0)
 
-	normalizeBashProgramVariableAssignments(root, lang)
+	// byte 6 (the gap between assign1[3:6) and assign2[7:10)) is a newline:
+	// this variable_assignments group is a cross-statement merge artifact,
+	// not a genuine same-line multi-assignment, so it must still split.
+	//               comment[0:2) gap  assign1[3:6)  gap  assign2[7:10)  gap  ifStmt[11:15)
+	source := []byte("xx" + "y" + "abc" + "\n" + "def" + "z" + "ghij")
+	normalizeBashProgramVariableAssignments(root, source, lang)
 
 	if got, want := len(root.children), 4; got != want {
 		t.Fatalf("len(root.children) = %d, want %d", got, want)
@@ -129,7 +134,11 @@ func TestNormalizeBashProgramVariableAssignmentsSplitsNestedIfWrapper(t *testing
 	ifStmt := newParentNodeInArena(arena, 4, true, []*Node{assigns, fi}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{ifStmt}, nil, 0)
 
-	normalizeBashProgramVariableAssignments(root, lang)
+	// byte 3 (the gap between assign1[0:3) and assign2[4:7)) is a newline:
+	// cross-statement merge artifact, must still split.
+	//               assign1[0:3)  gap  assign2[4:7)  gap  fi[8:10)
+	source := []byte("abc" + "\n" + "def" + "g" + "hi")
+	normalizeBashProgramVariableAssignments(root, source, lang)
 
 	if got, want := len(ifStmt.children), 3; got != want {
 		t.Fatalf("len(ifStmt.children) = %d, want %d", got, want)
@@ -164,7 +173,9 @@ func TestNormalizeBashProgramVariableAssignmentsAssignsIfConditionField(t *testi
 	ifStmt := newParentNodeInArena(arena, 2, true, []*Node{ifTok, testCmd, fi}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{ifStmt}, nil, 0)
 
-	normalizeBashProgramVariableAssignments(root, lang)
+	// No variable_assignments node is present, so the split path is never
+	// consulted; the source content is irrelevant here.
+	normalizeBashProgramVariableAssignments(root, []byte("if x; fi;;"), lang)
 
 	if got, want := ifStmt.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("ifStmt.fieldIDs()[1] = %d, want %d", got, want)
@@ -200,7 +211,9 @@ func TestNormalizeBashProgramVariableAssignmentsExtendsIfConditionFieldToThenBou
 	ifStmt := newParentNodeInArena(arena, 2, true, []*Node{ifTok, testCmd, semi, thenTok, fi}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{ifStmt}, nil, 0)
 
-	normalizeBashProgramVariableAssignments(root, lang)
+	// No variable_assignments node is present, so the split path is never
+	// consulted; the source content is irrelevant here.
+	normalizeBashProgramVariableAssignments(root, []byte("if x; then  fi;;"), lang)
 
 	if got, want := ifStmt.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("ifStmt.fieldIDs()[1] = %d, want %d", got, want)
@@ -234,7 +247,11 @@ func TestNormalizeBashProgramVariableAssignmentsSplitsSubshellWrapper(t *testing
 	subshell := newParentNodeInArena(arena, 2, true, []*Node{open, assigns, close}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{subshell}, nil, 0)
 
-	normalizeBashProgramVariableAssignments(root, lang)
+	// byte 4 (the gap between assign1[1:4) and assign2[5:8)) is a newline:
+	// cross-statement merge artifact, must still split.
+	//                open[0:1) assign1[1:4)  gap  assign2[5:8)  gap  close[9:10)
+	source := []byte("(" + "abc" + "\n" + "def" + "g" + ")")
+	normalizeBashProgramVariableAssignments(root, source, lang)
 
 	if got, want := len(subshell.children), 4; got != want {
 		t.Fatalf("len(subshell.children) = %d, want %d", got, want)
@@ -244,6 +261,93 @@ func TestNormalizeBashProgramVariableAssignmentsSplitsSubshellWrapper(t *testing
 	}
 	if got, want := subshell.children[2].Type(lang), "variable_assignment"; got != want {
 		t.Fatalf("subshell.children[2].Type = %q, want %q", got, want)
+	}
+}
+
+// TestNormalizeBashProgramVariableAssignmentsKeepsSameLineTopLevelGroup covers
+// the regression found in usr/bin/socat-broker.sh line 32
+// (`VERBOSE= QUIET= OPTS=`): a genuine single-statement, same-line,
+// multi-assignment directly under program. tree-sitter-bash@a06c2e44 keeps
+// these grouped in one variable_assignments node (grammar.js:
+// $._statement_not_subshell includes $.variable_assignments directly); an
+// earlier parent-type-only heuristic wrongly split every program-level
+// group regardless of whether a newline separated its members.
+func TestNormalizeBashProgramVariableAssignmentsKeepsSameLineTopLevelGroup(t *testing.T) {
+	lang := &Language{
+		Name:        "bash",
+		SymbolNames: []string{"EOF", "program", "variable_assignments", "variable_assignment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "variable_assignments", Visible: true, Named: true},
+			{Name: "variable_assignment", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	// "VERBOSE= QUIET= OPTS="
+	//  0       8 9    15 16  21
+	assign1 := newLeafNodeInArena(arena, 3, true, 0, 8, Point{}, Point{Column: 8})
+	assign2 := newLeafNodeInArena(arena, 3, true, 9, 15, Point{Column: 9}, Point{Column: 15})
+	assign3 := newLeafNodeInArena(arena, 3, true, 16, 21, Point{Column: 16}, Point{Column: 21})
+	assigns := newParentNodeInArena(arena, 2, true, []*Node{assign1, assign2, assign3}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{assigns}, nil, 0)
+
+	source := []byte("VERBOSE= QUIET= OPTS=")
+	normalizeBashProgramVariableAssignments(root, source, lang)
+
+	if got, want := len(root.children), 1; got != want {
+		t.Fatalf("len(root.children) = %d, want %d (must stay grouped)", got, want)
+	}
+	if got, want := root.children[0].Type(lang), "variable_assignments"; got != want {
+		t.Fatalf("root.children[0].Type = %q, want %q", got, want)
+	}
+	if got, want := len(root.children[0].children), 3; got != want {
+		t.Fatalf("len(root.children[0].children) = %d, want %d", got, want)
+	}
+}
+
+// TestNormalizeBashProgramVariableAssignmentsKeepsSameLineListOperand covers
+// the regression found in usr/share/alsa-base/alsa-info.sh line 42
+// (`[[ $(cmd) ]] || KEEP_FILES="yes" UPLOAD="no" PBERROR="yes"`): a
+// $.variable_assignments group as the right-hand operand of a $.list's
+// '||' (grammar.js: list: $ => prec.left(-1, seq($._statement, choice('&&',
+// '||'), $._statement))). Must stay grouped.
+func TestNormalizeBashProgramVariableAssignmentsKeepsSameLineListOperand(t *testing.T) {
+	lang := &Language{
+		Name:        "bash",
+		SymbolNames: []string{"EOF", "program", "list", "test_command", "variable_assignments", "variable_assignment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "list", Visible: true, Named: true},
+			{Name: "test_command", Visible: true, Named: true},
+			{Name: "variable_assignments", Visible: true, Named: true},
+			{Name: "variable_assignment", Visible: true, Named: true},
+		},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	// "[[ x ]] || A=1 B=2"
+	//  0      7 8  10 11  14 15  18
+	testCmd := newLeafNodeInArena(arena, 3, true, 0, 7, Point{}, Point{Column: 7})
+	assign1 := newLeafNodeInArena(arena, 5, true, 11, 14, Point{Column: 11}, Point{Column: 14})
+	assign2 := newLeafNodeInArena(arena, 5, true, 15, 18, Point{Column: 15}, Point{Column: 18})
+	assigns := newParentNodeInArena(arena, 4, true, []*Node{assign1, assign2}, nil, 0)
+	list := newParentNodeInArena(arena, 2, true, []*Node{testCmd, assigns}, nil, 0)
+	root := newParentNodeInArena(arena, 1, true, []*Node{list}, nil, 0)
+
+	source := []byte("[[ x ]] || A=1 B=2")
+	normalizeBashProgramVariableAssignments(root, source, lang)
+
+	if got, want := len(list.children), 2; got != want {
+		t.Fatalf("len(list.children) = %d, want %d (must stay grouped)", got, want)
+	}
+	if got, want := list.children[1].Type(lang), "variable_assignments"; got != want {
+		t.Fatalf("list.children[1].Type = %q, want %q", got, want)
+	}
+	if got, want := len(list.children[1].children), 2; got != want {
+		t.Fatalf("len(list.children[1].children) = %d, want %d", got, want)
 	}
 }
 
