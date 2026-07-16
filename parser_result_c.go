@@ -60,6 +60,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_macro_calling_convention_type_specifier", func() {
 			normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
 		})
+		run("c_preproc_arg_leading_comment", func() {
+			normalizeCPreprocArgLeadingComment(root, source, lang)
+		})
 		return
 	}
 	normalizeCTranslationUnitRoot(root, lang)
@@ -76,6 +79,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPointerAssignmentInversion(root, lang)
 	normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
+	normalizeCPreprocArgLeadingComment(root, source, lang)
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of two preorder walks in
