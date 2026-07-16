@@ -2076,6 +2076,15 @@ func addPythonContinuationEscapes(node *Node, source []byte, escapeSym Symbol) (
 		if source[i+1] == '\r' && end < int(node.endByte) && source[end] == '\n' {
 			end++
 		} else if source[i+1] != '\n' {
+			// "\X" (X not a newline) escapes the following byte X, so skip
+			// past X as well — otherwise X could be re-scanned as the start
+			// of a new escape. This is essential for "\\" immediately before
+			// a newline: the base lexer already tokenized the two backslashes
+			// as ONE escape_sequence, but without this extra advance the
+			// second backslash would be misread here as a "\<newline>" line
+			// continuation and a spurious second escape_sequence inserted
+			// (the escape_sequence double-count bug).
+			i++
 			continue
 		}
 		found := pythonChildSpanSymbolNoMaterialize(node, uint32(i), uint32(end), escapeSym)
