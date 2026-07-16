@@ -16,6 +16,9 @@ type typeScriptNormalizationContext struct {
 	arrayPatternSym             Symbol
 	callSym                     Symbol
 	callNamed                   bool
+	awaitExpressionSym          Symbol
+	awaitExpressionNamed        bool
+	hasAwaitExpressionSym       bool
 	instantiationExprSym        Symbol
 	instantiationExprNamed      bool
 	typeArgsSym                 Symbol
@@ -449,6 +452,7 @@ type typeScriptCompatibilityStats struct {
 	callChildren                normalizationPassCounters
 	callInstantiatedChildren    normalizationPassCounters
 	callFastSkipped             normalizationPassCounters
+	awaitInstantiatedChildren   normalizationPassCounters
 	asChildren                  normalizationPassCounters
 	typeAssertionChildren       normalizationPassCounters
 	expressionStatementChildren normalizationPassCounters
@@ -721,6 +725,8 @@ func typeScriptCompatibilityChildCanRewrite(child *Node, ctx *typeScriptNormaliz
 		return ctx.canRewriteGenericCalls || ctx.canRewriteAsExpressions
 	case ctx.callSym:
 		return ctx.canRewriteInstantiatedCalls
+	case ctx.awaitExpressionSym:
+		return ctx.hasAwaitExpressionSym && ctx.canRewriteInstantiatedCalls
 	case ctx.asExpressionSym:
 		return ctx.canRewriteAsExpressions
 	case ctx.typeAssertionSym:
@@ -746,6 +752,10 @@ func typeScriptCompatibilityChildStatsBucket(child *Node, ctx *typeScriptNormali
 	case ctx.callSym:
 		if ctx.canRewriteInstantiatedCalls {
 			return &stats.callChildren
+		}
+	case ctx.awaitExpressionSym:
+		if ctx.hasAwaitExpressionSym && ctx.canRewriteInstantiatedCalls {
+			return &stats.awaitInstantiatedChildren
 		}
 	case ctx.asExpressionSym:
 		if ctx.canRewriteAsExpressions {
@@ -849,6 +859,10 @@ func rewriteTypeScriptCompatibilityChild(parent, child *Node, ctx *typeScriptNor
 	case ctx.callSym:
 		if ctx.canRewriteInstantiatedCalls && typeScriptCallCouldBeInstantiated(child, ctx) {
 			return rewriteTypeScriptInstantiatedCall(child, ctx)
+		}
+	case ctx.awaitExpressionSym:
+		if ctx.hasAwaitExpressionSym && ctx.canRewriteInstantiatedCalls && typeScriptAwaitExpressionCouldHoistInstantiatedCall(child, ctx) {
+			return rewriteTypeScriptAwaitInstantiatedCall(child, ctx)
 		}
 	case ctx.asExpressionSym:
 		if ctx.canRewriteAsExpressions {
@@ -1012,6 +1026,41 @@ func typeScriptCallCouldBeInstantiated(node *Node, ctx *typeScriptNormalizationC
 		arguments != nil &&
 		function.symbol == ctx.instantiationExprSym &&
 		arguments.symbol == ctx.argsSym
+}
+
+// typeScriptAwaitExpressionCouldHoistInstantiatedCall reports whether node is
+// an await_expression directly wrapping a generic (type-argumented) call —
+// e.g. "await axios.get<Info>(x)". The official tree-sitter-typescript
+// grammar resolves this call/instantiation/await ambiguity (see its
+// define-grammar.js conflicts entry for
+// [call_expression, instantiation_expression, binary_expression,
+// await_expression]) by attaching the type_arguments and arguments to an
+// OUTER call_expression whose "function" field is the await_expression
+// (which itself wraps only the callee) — i.e. "(await callee)<T>(args)",
+// not "await (callee<T>(args))". gt's GLR/normalization path instead always
+// wraps the entire call in await_expression, which matches the oracle only
+// when there are no type arguments. This predicate identifies the
+// type-argumented case so rewriteTypeScriptAwaitInstantiatedCall can
+// re-root the tree to match.
+func typeScriptAwaitExpressionCouldHoistInstantiatedCall(node *Node, ctx *typeScriptNormalizationContext) bool {
+	if node == nil || ctx == nil || !ctx.hasAwaitExpressionSym || node.symbol != ctx.awaitExpressionSym || len(node.children) != 2 {
+		return false
+	}
+	kw := node.children[0]
+	call := node.children[1]
+	if kw == nil || call == nil || kw.isNamed() || !call.isNamed() || call.symbol != ctx.callSym {
+		return false
+	}
+	switch len(call.children) {
+	case 2:
+		function := call.children[0]
+		return function != nil && function.symbol == ctx.instantiationExprSym
+	case 3:
+		typeArgs := call.children[1]
+		return typeArgs != nil && typeArgs.symbol == ctx.typeArgsSym
+	default:
+		return false
+	}
 }
 
 func normalizeTypeScriptIdentifierKeywordAliases(node *Node, ctx *typeScriptNormalizationContext) {
@@ -1619,6 +1668,13 @@ func newTypeScriptNormalizationContext(source []byte, lang *Language) (typeScrip
 			ctx.instantiationExprSym = syms[0]
 			ctx.instantiationExprNamed = symbolIsNamed(lang, ctx.instantiationExprSym)
 			ctx.canRewriteInstantiatedCalls = ctx.functionFieldID != 0 && ctx.typeArgsFieldID != 0 && ctx.argumentsFieldID != 0
+		}
+		if ctx.canRewriteInstantiatedCalls {
+			if awaitSym, ok := lang.SymbolByName("await_expression"); ok {
+				ctx.awaitExpressionSym = awaitSym
+				ctx.awaitExpressionNamed = symbolIsNamed(lang, ctx.awaitExpressionSym)
+				ctx.hasAwaitExpressionSym = true
+			}
 		}
 	}
 
@@ -2619,6 +2675,59 @@ func rewriteTypeScriptInstantiatedCall(node *Node, ctx *typeScriptNormalizationC
 	}
 	call := newParentNodeInArena(node.ownerArena, ctx.callSym, ctx.callNamed, children, fieldIDs, node.productionID)
 	return call
+}
+
+// rewriteTypeScriptAwaitInstantiatedCall re-roots "await callee<T>(args)"
+// from gt's default await_expression(call_expression(callee, T, args)) shape
+// to the oracle's call_expression(function: await_expression(callee), T,
+// args) shape — see typeScriptAwaitExpressionCouldHoistInstantiatedCall for
+// why the official grammar resolves the ambiguity this way. node must be the
+// await_expression; its wrapped call may still be in the raw (pre-collapse)
+// [instantiation_expression, arguments] shape or the already-collapsed
+// [function, type_arguments, arguments] shape — both are normalized here.
+func rewriteTypeScriptAwaitInstantiatedCall(node *Node, ctx *typeScriptNormalizationContext) *Node {
+	if !typeScriptAwaitExpressionCouldHoistInstantiatedCall(node, ctx) {
+		return nil
+	}
+	kw := node.children[0]
+	call := node.children[1]
+	if len(call.children) == 2 {
+		if collapsed := rewriteTypeScriptInstantiatedCall(call, ctx); collapsed != nil {
+			call = collapsed
+		}
+	}
+	if len(call.children) != 3 {
+		return nil
+	}
+	function := call.children[0]
+	typeArgs := call.children[1]
+	arguments := call.children[2]
+	if function == nil || typeArgs == nil || arguments == nil || typeArgs.symbol != ctx.typeArgsSym {
+		return nil
+	}
+
+	arena := node.ownerArena
+	awaitChildren := phpAllocChildren(arena, 2)
+	awaitChildren[0] = kw
+	awaitChildren[1] = function
+	newAwait := newParentNodeInArena(arena, ctx.awaitExpressionSym, ctx.awaitExpressionNamed, awaitChildren, nil, node.productionID)
+
+	callChildren := phpAllocChildren(arena, 3)
+	callChildren[0] = newAwait
+	callChildren[1] = typeArgs
+	callChildren[2] = arguments
+	var fieldIDs []FieldID
+	if ctx.functionFieldID != 0 || ctx.typeArgsFieldID != 0 || ctx.argumentsFieldID != 0 {
+		if arena != nil {
+			fieldIDs = arena.allocFieldIDSlice(3)
+		} else {
+			fieldIDs = make([]FieldID, 3)
+		}
+		fieldIDs[0] = ctx.functionFieldID
+		fieldIDs[1] = ctx.typeArgsFieldID
+		fieldIDs[2] = ctx.argumentsFieldID
+	}
+	return newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, callChildren, fieldIDs, call.productionID)
 }
 
 func rewriteTypeScriptAsAssignmentOrTernary(node *Node, ctx *typeScriptNormalizationContext) *Node {
