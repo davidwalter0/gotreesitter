@@ -237,13 +237,382 @@ func TestCBlobMacroCallingConventionVoidReturnUnaffected(t *testing.T) {
 	}
 }
 
-// TestCBlobMacroCallingConventionMultiParamLeftUntouched asserts the
-// conservative fallback: parameter-list shapes outside the empirically
-// verified set (here: 2 parameters) are left completely unmodified rather
-// than guessed, since the oracle's GLR error-recovery shape for arbitrary
-// multi-parameter lists was not validated.
-func TestCBlobMacroCallingConventionMultiParamLeftUntouched(t *testing.T) {
+// TestCBlobMacroCallingConventionTwoParamPointerLastConstQualified covers
+// the dominant real-world GL/EGL two-parameter shape (a receiver plus a
+// `const`-qualified pointer output/input, e.g. gl2.h's
+// PFNGLGETATTRIBLOCATIONPROC / PFNGLGETUNIFORMLOCATIONPROC): the final
+// parameter's pointer declarator is unconditionally kept bare, and
+// everything else (first parameter, `,`, `const`, the pointer's base type)
+// is merged into one ERROR node — byte-for-byte verified against the
+// pinned oracle (github.com/tree-sitter/tree-sitter-c @ ae19b676). This
+// exact input previously asserted the conservative "left untouched"
+// fallback (pre-multi-param-extension); the fallback assertion for
+// genuinely out-of-scope shapes now lives in
+// TestCBlobMacroCallingConventionLeadingPointerParamLeftUntouched and
+// TestCBlobMacroCallingConventionFourParamLeftUntouched below.
+func TestCBlobMacroCallingConventionTwoParamPointerLastConstQualified(t *testing.T) {
 	src := []byte("typedef GLint (GL_APIENTRYP PFNGLGETATTRIBLOCATIONPROC) (GLuint program, const GLchar *name);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "GLint", "GL_APIENTRYP", "PFNGLGETATTRIBLOCATIONPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" {
+		t.Fatalf("expected parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	if got, want := declarator.ChildCount(), 4; got != want {
+		t.Fatalf("declarator child count = %d, want %d (full tree: %s)", got, want, root.SExpr(lang))
+	}
+	// ChildCount() (unlike SExpr, which hides anonymous nodes) counts every
+	// child including the `,` separator and the bare, unnamed `const`
+	// token that was unwrapped from gt's own type_qualifier node — both
+	// verified present (in this exact position) in the pinned oracle via
+	// the corpus_parity dump.v1 JSON, not just the `tree-sitter parse`
+	// CLI's default (named-only) rendering.
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 5 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 5 children", errNode)
+	}
+	if got := errNode.Child(0); got == nil || got.Type(lang) != "type_identifier" || got.Text(src) != "GLuint" {
+		t.Fatalf("ERROR.Child(0) = %v, want type_identifier \"GLuint\"", got)
+	}
+	if got := errNode.Child(1); got == nil || got.Type(lang) != "identifier" || got.Text(src) != "program" {
+		t.Fatalf("ERROR.Child(1) = %v, want identifier \"program\"", got)
+	}
+	if got := errNode.Child(2); got == nil || got.IsNamed() || got.Type(lang) != "," {
+		t.Fatalf("ERROR.Child(2) = %v, want bare unnamed \",\" separator", got)
+	}
+	if got := errNode.Child(3); got == nil || got.IsNamed() || got.Type(lang) != "const" {
+		t.Fatalf("ERROR.Child(3) = %v, want bare unnamed \"const\" token (unwrapped from type_qualifier)", got)
+	}
+	if got := errNode.Child(4); got == nil || got.Type(lang) != "identifier" || got.Text(src) != "GLchar" {
+		t.Fatalf("ERROR.Child(4) = %v, want identifier \"GLchar\" (demoted)", got)
+	}
+	ptr := declarator.Child(2)
+	if ptr == nil || ptr.Type(lang) != "pointer_declarator" || ptr.ChildCount() != 2 {
+		t.Fatalf("declarator.Child(2) = %v, want pointer_declarator with 2 children", ptr)
+	}
+	if got := ptr.Child(1); got == nil || got.Type(lang) != "type_identifier" || got.Text(src) != "name" || ptr.FieldNameForChild(1, lang) != "declarator" {
+		t.Fatalf("pointer_declarator's inner declarator = %v (field %q), want type_identifier \"name\" field \"declarator\"", got, ptr.FieldNameForChild(1, lang))
+	}
+}
+
+// TestCBlobMacroCallingConventionTwoParamPlainFrontSplit covers the
+// two-plain-parameter shape where the first parameter's type is at least
+// as long as the last parameter's type (byte length) — the oracle
+// front-splits: only the first type stays bare, the rest (including the
+// last parameter, entirely) is merged into one ERROR. Matches the real
+// egl.h entry PFNEGLDESTROYCONTEXTPROC (`EGLDisplay`=10 vs `EGLContext`=10,
+// a tie, which also resolves to front-split).
+func TestCBlobMacroCallingConventionTwoParamPlainFrontSplit(t *testing.T) {
+	src := []byte("typedef EGLBoolean (EGLAPIENTRYP PFNEGLDESTROYCONTEXTPROC) (EGLDisplay dpy, EGLContext ctx);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "EGLBoolean", "EGLAPIENTRYP", "PFNEGLDESTROYCONTEXTPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	bare := declarator.Child(1)
+	if bare == nil || bare.Type(lang) != "type_identifier" || bare.Text(src) != "EGLDisplay" {
+		t.Fatalf("declarator.Child(1) = %v, want bare type_identifier \"EGLDisplay\"", bare)
+	}
+	errNode := declarator.Child(2)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 4 {
+		t.Fatalf("declarator.Child(2) = %v, want ERROR with 4 children", errNode)
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"identifier", "dpy", true}, {",", ",", false},
+		{"identifier", "EGLContext", true}, {"identifier", "ctx", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+}
+
+// TestCBlobMacroCallingConventionTwoParamPlainBackSplit covers the mirror
+// case: when the *last* parameter's type is strictly longer than the
+// first's, the oracle back-splits instead — everything up to and
+// including the last type stays in one ERROR (with the last type
+// exceptionally retaining type_identifier, since it is adjacent to the
+// bare boundary), and only the last parameter's declarator name (promoted
+// to type_identifier) is bare. Synthetic (`GLbyte`=6 < `GLenumLongType`=13)
+// since no real corpus two-parameter entry happens to hit this side of the
+// split; confirmed byte-exact against the pinned oracle via a one-off
+// corpus_parity Docker run (same code path as the real-corpus sweep, not
+// the `tree-sitter parse` CLI, whose default rendering hides `,` tokens
+// and misled an earlier draft of this fix into dropping them).
+func TestCBlobMacroCallingConventionTwoParamPlainBackSplit(t *testing.T) {
+	src := []byte("typedef GLenum (GL_APIENTRYP PFNGLTESTPROC) (GLbyte a, GLenumLongType b);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "GLenum", "GL_APIENTRYP", "PFNGLTESTPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 4 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 4 children", errNode)
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"type_identifier", "GLbyte", true}, {"identifier", "a", true},
+		{",", ",", false}, {"type_identifier", "GLenumLongType", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+	bare := declarator.Child(2)
+	if bare == nil || bare.Type(lang) != "type_identifier" || bare.Text(src) != "b" {
+		t.Fatalf("declarator.Child(2) = %v, want bare type_identifier \"b\" (promoted)", bare)
+	}
+}
+
+// TestCBlobMacroCallingConventionThreeParamPointerLastConstQualified
+// covers the real egl.h entry PFNEGLCREATEPBUFFERSURFACEPROC: three
+// parameters, the last `const`-qualified and pointer-shaped. Unlike the
+// plain-last three-parameter cases below, a pointer-shaped last parameter
+// always back-splits regardless of byte lengths.
+func TestCBlobMacroCallingConventionThreeParamPointerLastConstQualified(t *testing.T) {
+	src := []byte("typedef EGLSurface (EGLAPIENTRYP PFNEGLCREATEPBUFFERSURFACEPROC) (EGLDisplay dpy, EGLConfig config, const EGLint *attrib_list);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "EGLSurface", "EGLAPIENTRYP", "PFNEGLCREATEPBUFFERSURFACEPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	// ChildCount() counts the `,` separators and the bare, unnamed `const`
+	// token too (see the two-parameter const-qualified test above for
+	// why): one comma after each leading parameter, then `const`, then
+	// the demoted last-parameter type.
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 8 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 8 children", errNode)
+	}
+	wantErr := []struct {
+		idx       int
+		typ, text string
+		named     bool
+	}{
+		{0, "type_identifier", "EGLDisplay", true}, {1, "identifier", "dpy", true},
+		{2, ",", ",", false},
+		{3, "identifier", "EGLConfig", true}, {4, "identifier", "config", true},
+		{5, ",", ",", false},
+		{6, "const", "const", false},
+		{7, "identifier", "EGLint", true},
+	}
+	for _, w := range wantErr {
+		got := errNode.Child(w.idx)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", w.idx, got, w.typ, w.text, w.named)
+		}
+	}
+	ptr := declarator.Child(2)
+	if ptr == nil || ptr.Type(lang) != "pointer_declarator" || ptr.ChildCount() != 2 {
+		t.Fatalf("declarator.Child(2) = %v, want pointer_declarator with 2 children", ptr)
+	}
+	if got := ptr.Child(1); got == nil || got.Type(lang) != "type_identifier" || got.Text(src) != "attrib_list" {
+		t.Fatalf("pointer_declarator's inner declarator = %v, want type_identifier \"attrib_list\"", got)
+	}
+}
+
+// TestCBlobMacroCallingConventionThreeParamPointerLastUnqualified covers
+// the unqualified-pointer variant (no `const`) at three parameters, same
+// unconditional back-split rule, no qualifier token to fold into the
+// ERROR node. Synthetic (no real corpus three-parameter, unqualified-
+// pointer-last entry), confirmed byte-exact against the pinned oracle via
+// a one-off corpus_parity Docker run (see the two-parameter back-split
+// test above for why the CLI alone isn't trusted here).
+func TestCBlobMacroCallingConventionThreeParamPointerLastUnqualified(t *testing.T) {
+	src := []byte("typedef GLenum (GL_APIENTRYP PFNGLTESTPROC) (GLuint program, GLuint index, GLint *value);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "GLenum", "GL_APIENTRYP", "PFNGLTESTPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 7 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 7 children", errNode)
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"type_identifier", "GLuint", true}, {"identifier", "program", true},
+		{",", ",", false},
+		{"identifier", "GLuint", true}, {"identifier", "index", true},
+		{",", ",", false},
+		{"identifier", "GLint", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+	ptr := declarator.Child(2)
+	if ptr == nil || ptr.Type(lang) != "pointer_declarator" {
+		t.Fatalf("declarator.Child(2) = %v, want pointer_declarator", ptr)
+	}
+	if got := ptr.Child(1); got == nil || got.Type(lang) != "type_identifier" || got.Text(src) != "value" {
+		t.Fatalf("pointer_declarator's inner declarator = %v, want type_identifier \"value\"", got)
+	}
+}
+
+// TestCBlobMacroCallingConventionThreeParamPlainFrontSplit covers the real
+// egl.h entry PFNEGLBINDTEXIMAGEPROC: three plain parameters where the
+// first type (`EGLDisplay`=10) is longer than the last (`EGLint`=6), so
+// the oracle front-splits — only the first type stays bare.
+func TestCBlobMacroCallingConventionThreeParamPlainFrontSplit(t *testing.T) {
+	src := []byte("typedef EGLBoolean (EGLAPIENTRYP PFNEGLBINDTEXIMAGEPROC) (EGLDisplay dpy, EGLSurface surface, EGLint buffer);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "EGLBoolean", "EGLAPIENTRYP", "PFNEGLBINDTEXIMAGEPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	bare := declarator.Child(1)
+	if bare == nil || bare.Type(lang) != "type_identifier" || bare.Text(src) != "EGLDisplay" {
+		t.Fatalf("declarator.Child(1) = %v, want bare type_identifier \"EGLDisplay\"", bare)
+	}
+	errNode := declarator.Child(2)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 7 {
+		t.Fatalf("declarator.Child(2) = %v, want ERROR with 7 children", errNode)
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"identifier", "dpy", true},
+		{",", ",", false},
+		{"identifier", "EGLSurface", true}, {"identifier", "surface", true},
+		{",", ",", false},
+		{"identifier", "EGLint", true}, {"identifier", "buffer", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+}
+
+// TestCBlobMacroCallingConventionThreeParamPlainBackSplit covers the real
+// egl.h entry PFNEGLCOPYBUFFERSPROC: structurally identical to
+// PFNEGLBINDTEXIMAGEPROC above (three plain parameters) but the last
+// type (`EGLNativePixmapType`=20) is longer than the first
+// (`EGLDisplay`=10), flipping the split direction to back-split — proof
+// the rule is a length comparison, not a fixed structural shape.
+func TestCBlobMacroCallingConventionThreeParamPlainBackSplit(t *testing.T) {
+	src := []byte("typedef EGLBoolean (EGLAPIENTRYP PFNEGLCOPYBUFFERSPROC) (EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	macroType := typeDef.ChildByFieldName("type", lang)
+	assertMacroTypeSpecifier(t, src, lang, macroType, "EGLBoolean", "EGLAPIENTRYP", "PFNEGLCOPYBUFFERSPROC")
+
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "parenthesized_declarator" || declarator.ChildCount() != 4 {
+		t.Fatalf("expected 4-child parenthesized_declarator, got %s", root.SExpr(lang))
+	}
+	errNode := declarator.Child(1)
+	if errNode == nil || errNode.Type(lang) != "ERROR" || errNode.ChildCount() != 7 {
+		t.Fatalf("declarator.Child(1) = %v, want ERROR with 7 children", errNode)
+	}
+	wantErr := []struct {
+		typ, text string
+		named     bool
+	}{
+		{"type_identifier", "EGLDisplay", true}, {"identifier", "dpy", true},
+		{",", ",", false},
+		{"identifier", "EGLSurface", true}, {"identifier", "surface", true},
+		{",", ",", false},
+		{"type_identifier", "EGLNativePixmapType", true},
+	}
+	for i, w := range wantErr {
+		got := errNode.Child(i)
+		if got == nil || got.Type(lang) != w.typ || got.Text(src) != w.text || got.IsNamed() != w.named {
+			t.Fatalf("ERROR.Child(%d) = %v, want %s %q (named=%v)", i, got, w.typ, w.text, w.named)
+		}
+	}
+	bare := declarator.Child(2)
+	if bare == nil || bare.Type(lang) != "type_identifier" || bare.Text(src) != "target" {
+		t.Fatalf("declarator.Child(2) = %v, want bare type_identifier \"target\" (promoted)", bare)
+	}
+}
+
+// TestCBlobMacroCallingConventionLeadingPointerParamLeftUntouched asserts
+// the conservative fallback still holds for a shape outside the verified
+// set: a *leading* (non-final) parameter with a pointer declarator (real
+// corpus entry PFNGLQUERYMATRIXXOESPROC, GLES/glext.h). Only the final
+// parameter is allowed to be pointer-shaped; a pointer anywhere else bails
+// to the untouched no-op, since that combination was not validated against
+// the pinned oracle.
+func TestCBlobMacroCallingConventionLeadingPointerParamLeftUntouched(t *testing.T) {
+	src := []byte("typedef GLbitfield (GL_APIENTRYP PFNGLQUERYMATRIXXOESPROC) (GLfixed *mantissa, GLint *exponent);\n")
+	root, lang := cBlobMustParse(t, src)
+
+	typeDef := root.NamedChild(0)
+	if typeDef == nil || typeDef.Type(lang) != "type_definition" {
+		t.Fatalf("expected type_definition, got %s", root.SExpr(lang))
+	}
+	typeField := typeDef.ChildByFieldName("type", lang)
+	if typeField == nil || typeField.Type(lang) != "type_identifier" {
+		t.Fatalf("expected type field to stay a bare type_identifier (no-op fallback), got %s", root.SExpr(lang))
+	}
+	declarator := typeDef.ChildByFieldName("declarator", lang)
+	if declarator == nil || declarator.Type(lang) != "function_declarator" {
+		t.Fatalf("expected declarator field to stay function_declarator (no-op fallback), got %s", root.SExpr(lang))
+	}
+}
+
+// TestCBlobMacroCallingConventionFourParamLeftUntouched asserts the
+// deliberate four-parameter cap: even though this exact shape (three
+// plain parameters plus a `const`-qualified pointer last) parses cleanly
+// at three parameters, real oracle probing shows four parameters can
+// cascade into an unpredictable, structurally different recovery for some
+// byte-length combinations (this is the real egl.h entry
+// PFNEGLCREATECONTEXTPROC, confirmed via `tree-sitter parse --cst` against
+// the pinned grammar to produce MISSING tokens and a declaration split off
+// from the typedef) — with no cheap structural signal to tell a clean
+// four-parameter case apart from a cascading one ahead of time, four (and
+// more) parameters are left untouched entirely rather than risk emitting
+// a confidently-wrong tree.
+func TestCBlobMacroCallingConventionFourParamLeftUntouched(t *testing.T) {
+	src := []byte("typedef EGLContext (EGLAPIENTRYP PFNEGLCREATECONTEXTPROC) (EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list);\n")
 	root, lang := cBlobMustParse(t, src)
 
 	typeDef := root.NamedChild(0)
