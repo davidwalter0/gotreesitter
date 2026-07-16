@@ -17,6 +17,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_recovered_top_level_chunks", func() {
 			normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 		})
+		run("c_extern_macro_multi_declarator", func() {
+			normalizeCExternMacroMultiDeclarator(root, source, p, lang)
+		})
 		run("cpp_malformed_class_function_definition", func() {
 			normalizeCppMalformedClassFunctionDefinition(root, source, lang)
 		})
@@ -63,10 +66,14 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_macro_calling_convention_type_specifier", func() {
 			normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
 		})
+		run("c_preproc_arg_leading_comment", func() {
+			normalizeCPreprocArgLeadingComment(root, source, lang)
+		})
 		return
 	}
 	normalizeCTranslationUnitRoot(root, lang)
 	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
+	normalizeCExternMacroMultiDeclarator(root, source, p, lang)
 	normalizeCppMalformedClassFunctionDefinition(root, source, lang)
 	normalizeCppInlineErrorReturnType(root, source, lang)
 	normalizeCppOutOfLineDefaultedEmptyParamMember(root, source, lang)
@@ -80,6 +87,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPointerAssignmentInversion(root, lang)
 	normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
+	normalizeCPreprocArgLeadingComment(root, source, lang)
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of two preorder walks in
