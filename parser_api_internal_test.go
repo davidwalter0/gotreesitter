@@ -979,8 +979,17 @@ func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
 	if shouldRetryAcceptedErrorParse(tree, 128, 18) {
 		t.Fatal("shouldRetryAcceptedErrorParse(cpp complete accepted error) = true, want false")
 	}
-	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != 0 {
-		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want 0", got)
+	// A complete accepted-error cpp tree still skips the STACK-widening retry
+	// ladder (shouldRetryAcceptedErrorParse stays false via
+	// certifiedAcceptedErrorRetrySkipsComplete), but now takes a bounded
+	// MERGE-per-key widening retry: cpp's steady-state cap=1 prunes the GLR
+	// alternative the C oracle selects for the qualified-identifier call/
+	// declaration and qualified-template ambiguities, cascading whole files to a
+	// root ERROR. The merge-widening retry clears that cascade (fullParseRetry-
+	// MergePerKeyOverride's cpp case, made BEFORE the skip-complete gate). See
+	// cppFullParseRetryMaxMergePerKey.
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != cppFullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want %d", got, cppFullParseRetryMaxMergePerKey)
 	}
 }
 
