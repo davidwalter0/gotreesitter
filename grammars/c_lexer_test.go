@@ -1040,6 +1040,92 @@ func TestParseCWithTokenSource(t *testing.T) {
 	}
 }
 
+// cTestPointAtOffset computes the byte-based tree-sitter Point for a byte
+// offset into src by scanning from the start: row = newline count, column =
+// byte distance from the last newline (or start of source).
+func cTestPointAtOffset(src []byte, offset int) gotreesitter.Point {
+	var row, lineStart uint32
+	for i := 0; i < offset; i++ {
+		if src[i] == '\n' {
+			row++
+			lineStart = uint32(i + 1)
+		}
+	}
+	return gotreesitter.Point{Row: row, Column: uint32(offset) - lineStart}
+}
+
+// TestCTokenSourceCommentMultibyteColumnIsByteBased is a regression test for
+// CTokenSource.commentToken/consumeBlockComment: the COMMENT token's endPoint
+// (and every later token's start/end Point on the same line) must be
+// byte-based, not rune-based. Both commentToken's line/block-comment scan
+// loops and consumeBlockComment call sourceCursor.advanceRune, which used to
+// bump Point.Column by 1 per rune instead of by the rune's UTF-8 byte width —
+// so a comment containing a multi-byte character (e.g. "café", an em-dash)
+// undercounted its own endPoint and shifted every subsequent node's column on
+// that line. Byte offsets were always correct; only line:column diverged.
+//
+// This mirrors a real divergence found in a corpus file (AFL++'s afl.c, which
+// has "// ... __AFL_INIT() — deferred fork server mode." style comments): the
+// pre-fix Go parser undercounted both comment endPoints by 2 columns (the
+// em-dash is 3 UTF-8 bytes vs. 1 rune) relative to the tree-sitter-c oracle,
+// with byte ranges identical.
+func TestCTokenSourceCommentMultibyteColumnIsByteBased(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "block comment with multibyte char",
+			src:  "int x; /* café */ int y;\n",
+		},
+		{
+			name: "line comment with em-dash (afl.c shape)",
+			src:  "// Manual expansion of __AFL_INIT() — deferred fork server mode.\nint z;\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := CLanguage()
+			parser := gotreesitter.NewParser(lang)
+			src := []byte(tc.src)
+			ts, err := NewCTokenSource(src, lang)
+			if err != nil {
+				t.Fatalf("NewCTokenSource failed: %v", err)
+			}
+			tree, err := parser.ParseWithTokenSource(src, ts)
+			if err != nil {
+				t.Fatalf("parse failed: %v", err)
+			}
+			if tree.RootNode().HasError() {
+				t.Fatalf("expected no parse errors: %s", tree.RootNode().SExpr(lang))
+			}
+
+			checked := 0
+			var walk func(n *gotreesitter.Node)
+			walk = func(n *gotreesitter.Node) {
+				wantStart := cTestPointAtOffset(src, int(n.StartByte()))
+				wantEnd := cTestPointAtOffset(src, int(n.EndByte()))
+				if got := n.StartPoint(); got != wantStart {
+					t.Errorf("node %s [%d..%d]: StartPoint = %+v, want %+v (byte-based)",
+						n.Type(lang), n.StartByte(), n.EndByte(), got, wantStart)
+				}
+				if got := n.EndPoint(); got != wantEnd {
+					t.Errorf("node %s [%d..%d]: EndPoint = %+v, want %+v (byte-based)",
+						n.Type(lang), n.StartByte(), n.EndByte(), got, wantEnd)
+				}
+				checked++
+				for i := 0; i < n.ChildCount(); i++ {
+					walk(n.Child(i))
+				}
+			}
+			walk(tree.RootNode())
+			if checked == 0 {
+				t.Fatal("walked zero nodes")
+			}
+		})
+	}
+}
+
 func TestCTokenSourceLineCommentContinuationCRLF(t *testing.T) {
 	lang := CLanguage()
 	src := []byte("// hello \\\r\n   still a comment\r\nthis_is_not a_comment;\r\n")
