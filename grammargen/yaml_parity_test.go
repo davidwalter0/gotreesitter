@@ -140,6 +140,61 @@ func TestYAMLBlockScalarSequenceParity(t *testing.T) {
 	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, src)
 }
 
+// TestYAMLMultiDocumentStreamRangeParity guards against a table-generation
+// regression where a freshly imported/generated yaml Language (as opposed to
+// the checked-in ts2go blob) mis-lexed the "---" directives-end marker right
+// after an implicit top-level document's block_mapping closed. The external
+// scanner was never offered the directives-end token as valid at that state
+// (yaml carries 100+ external tokens, past the >=24-external heuristic in
+// lr.go that otherwise routes table generation to the less context-precise
+// LALR-merged builder), so it mis-lexed the remainder of the stream as one
+// run-on token. Recovery then collapsed every following document into the
+// first document's span: root/document's range ballooned to end-of-file even
+// though only the first document's children survived as its own children.
+// Fixed via g.PreferPreciseExternalLexStates = true for yaml in
+// applyImportGrammarShapeHints (import_grammarjson.go).
+func TestYAMLMultiDocumentStreamRangeParity(t *testing.T) {
+	genLang, refLang := loadGeneratedYAMLLanguagesForParity(t)
+	src := "a: 1\n---\nb: 2\n"
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, src)
+}
+
+// TestYAMLMultiDocumentStreamRangeParityLogFile mirrors the upstream
+// tree-sitter-yaml examples/log-file.yaml fixture (three "---"-separated
+// documents, the first with no leading directives-end marker of its own)
+// that surfaced the divergence in TestYAMLMultiDocumentStreamRangeParity
+// against a real-world multi-document stream.
+func TestYAMLMultiDocumentStreamRangeParityLogFile(t *testing.T) {
+	genLang, refLang := loadGeneratedYAMLLanguagesForParity(t)
+	src := "---\n" +
+		"Time: 2001-11-23 15:01:42 -5\n" +
+		"User: ed\n" +
+		"Warning:\n" +
+		"  This is an error message\n" +
+		"  for the log file\n" +
+		"---\n" +
+		"Time: 2001-11-23 15:02:31 -5\n" +
+		"User: ed\n" +
+		"Warning:\n" +
+		"  A slightly different error\n" +
+		"  message.\n" +
+		"---\n" +
+		"Date: 2001-11-23 15:03:17 -5\n" +
+		"User: ed\n" +
+		"Fatal:\n" +
+		"  Unknown variable \"bar\"\n" +
+		"Stack:\n" +
+		"  - file: TopClass.py\n" +
+		"    line: 23\n" +
+		"    code: |\n" +
+		"      x = MoreObject(\"345\\n\")\n" +
+		"  - file: MoreClass.py\n" +
+		"    line: 58\n" +
+		"    code: |-\n" +
+		"      foo = bar\n"
+	assertGeneratedAndReferenceDeepParity(t, genLang, refLang, src)
+}
+
 func loadGeneratedYAMLLanguagesForParity(t *testing.T) (*gotreesitter.Language, *gotreesitter.Language) {
 	t.Helper()
 
