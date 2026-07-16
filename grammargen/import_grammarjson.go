@@ -98,6 +98,21 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// through _query and _series_matcher to complete higher-precedence
 		// operands before lower-precedence operator shifts.
 		g.PreserveHiddenChoicePassthrough = []string{"_query", "_series_matcher"}
+	case "yaml":
+		// YAML's grammar carries 100+ external tokens (indentation-sensitive
+		// block/flow markers, document boundaries, scalar continuations), well
+		// past the >=24-external heuristic in lr.go that otherwise routes table
+		// generation to the LALR-merged builder. Merged external lex rows lose
+		// the predecessor context the scanner needs to disambiguate a document
+		// separator ("---") from plain-scalar continuation right after an
+		// implicit top-level document's block_mapping closes: the scanner is
+		// never offered the directives-end token as valid at that state, mis-
+		// lexes the remainder of the stream as one run-on token, and the
+		// resulting recovery collapses every following document into the
+		// first document's span (root/document range balloons to EOF while
+		// only the first document's children survive). Force the precise
+		// core-based LR(1) builder so external lex rows stay state-specific.
+		g.PreferPreciseExternalLexStates = true
 	}
 }
 
