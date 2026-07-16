@@ -20,6 +20,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("cpp_malformed_class_function_definition", func() {
 			normalizeCppMalformedClassFunctionDefinition(root, source, lang)
 		})
+		run("cpp_inline_error_return_type", func() {
+			normalizeCppInlineErrorReturnType(root, source, lang)
+		})
 		// Fused walk covers two preorder passes (builtin primitive identifiers +
 		// preproc newline spans). It formerly also carried declaration-bounds
 		// extension and variadic-ellipsis materialization, both cut as dead
@@ -47,6 +50,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCTranslationUnitRoot(root, lang)
 	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 	normalizeCppMalformedClassFunctionDefinition(root, source, lang)
+	normalizeCppInlineErrorReturnType(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
