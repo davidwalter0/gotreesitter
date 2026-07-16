@@ -33,6 +33,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_sizeof_unknown_type_identifiers", func() {
 			normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 		})
+		run("c_sizeof_cast_merged_signed_literal", func() {
+			normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
+		})
 		run("c_cast_unknown_type_identifiers", func() {
 			normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 		})
@@ -52,6 +55,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCppMalformedClassFunctionDefinition(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
+	normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 	normalizeCPointerAssignmentInversion(root, lang)
