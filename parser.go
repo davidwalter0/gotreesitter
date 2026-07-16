@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -212,18 +213,28 @@ type Parser struct {
 	// where the deep stack-equivalence merge dominates and shared-leaf pointer
 	// identity short-circuits it (measured: swift 4.0x, bash 1.9x). Net-neutral
 	// or slightly negative on fast languages (go +4.9%), so it stays per-language.
-	leafInternByLang                   bool
-	forceRawSpanTable                  []bool
-	spanExtendingInvisibleSymbols      []bool
-	nonSpanExtendingInvisibleSymbols   []bool
-	aliasPreservedWrapperSymbols       []bool
-	included                           []Range
-	logger                             ParserLogger
-	glrTrace                           bool // verbose GLR stack tracing
-	ambiguityProfile                   *AmbiguityProfile
-	maxConflictWidth                   int // widest N-way conflict in the parse table
-	timeoutMicros                      uint64
-	cancellationFlag                   *uint32
+	leafInternByLang                 bool
+	forceRawSpanTable                []bool
+	spanExtendingInvisibleSymbols    []bool
+	nonSpanExtendingInvisibleSymbols []bool
+	aliasPreservedWrapperSymbols     []bool
+	included                         []Range
+	logger                           ParserLogger
+	glrTrace                         bool // verbose GLR stack tracing
+	ambiguityProfile                 *AmbiguityProfile
+	maxConflictWidth                 int // widest N-way conflict in the parse table
+	timeoutMicros                    uint64
+	cancellationFlag                 *uint32
+	// ctx, when non-nil, is polled at the same checkpoints already used for
+	// timeoutMicros/cancellationFlag (see activeParseStopReason in
+	// parser_timeout.go) -- no change to the parse loop itself. Only ParseCtx
+	// sets it, and only for the duration of that call, so ordinary
+	// Parse/ParseWithTokenSource/etc. calls never touch it and keep their
+	// exact current behavior and overhead. Propagated to recovery/snippet
+	// sub-parsers (parseForRecovery, parseWithSnippetParserInheriting) the
+	// same way cancellationFlag is, and cleared by resetSnippetParser so a
+	// pooled parser never inherits a stale context from a previous parse.
+	ctx                                context.Context
 	parseBudgetDepth                   int
 	parseDeadline                      time.Time
 	parseStoppedReason                 ParseStopReason
@@ -1466,6 +1477,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.noResultCompatibilityBenchmarkOnly = false
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
+	parser.ctx = nil
 	parser.parseBudgetDepth = 0
 	parser.parseDeadline = time.Time{}
 	parser.parseStoppedReason = ParseStopNone

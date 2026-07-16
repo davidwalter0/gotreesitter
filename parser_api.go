@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -479,6 +480,7 @@ func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
 	parser.skipRecoveryReparse = true
 	parser.timeoutMicros = p.remainingTimeoutMicros()
 	parser.cancellationFlag = p.cancellationFlag
+	parser.ctx = p.ctx
 	if p.reparseFactory != nil {
 		ts, err := p.reparseFactory(source)
 		if err != nil {
@@ -565,6 +567,7 @@ func parseWithSnippetParserInheriting(lang *Language, source []byte, parent *Par
 	if parent != nil {
 		parser.timeoutMicros = parent.remainingTimeoutMicros()
 		parser.cancellationFlag = parent.cancellationFlag
+		parser.ctx = parent.ctx
 		if reason := parent.activeParseStopReason(); parseStopReasonIsActive(reason) {
 			parser.parseStoppedReason = reason
 			parser.parseBudgetDepth = 1
@@ -1182,6 +1185,53 @@ func errorByteCoverage(root *Node) uint32 {
 // parser safety limit. The partial tree is returned alongside the error.
 func (p *Parser) ParseStrict(source []byte) (*Tree, error) {
 	return strictParseResult(p.Parse(source))
+}
+
+// ParseCtx is like Parse, but also honors ctx cancellation/deadlines. ctx is
+// polled at the same periodic checkpoints already used for
+// SetTimeoutMicros/SetCancellationFlag (see activeParseStopReason in
+// parser_timeout.go) -- the parse loop itself is unchanged. If ctx is nil,
+// it is treated as context.Background(), matching Parse exactly (Parse
+// itself is untouched by this method and keeps working unchanged for every
+// existing caller).
+//
+// An already-cancelled/expired ctx returns (nil, ctx.Err()) immediately,
+// before any parse work begins. A ctx that becomes done mid-parse aborts at
+// the next checkpoint, releases the partial tree (so no arena/tree state
+// leaks), and returns (nil, ctx.Err()) -- context.Canceled or
+// context.DeadlineExceeded. This differs from Parse's own
+// SetTimeoutMicros/SetCancellationFlag contract, which returns a partial
+// tree with a nil error; ParseCtx follows the standard library's context
+// idiom instead. A SetTimeoutMicros/SetCancellationFlag budget configured
+// independently on the same Parser is unaffected: only a stop caused by
+// THIS ctx (ctx.Err() != nil after the call) is translated, so an unrelated
+// budget trip still returns its usual partial tree.
+func (p *Parser) ParseCtx(ctx context.Context, source []byte) (*Tree, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, ErrNoLanguage
+	}
+	prevCtx := p.ctx
+	if ctx.Done() != nil {
+		p.ctx = ctx
+	}
+	defer func() {
+		p.ctx = prevCtx
+	}()
+	tree, err := p.Parse(source)
+	if err != nil {
+		return tree, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil && tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
+		tree.Release()
+		return nil, ctxErr
+	}
+	return tree, nil
 }
 
 // ParseNoTreeBenchmarkOnly parses source while suppressing parent/child tree

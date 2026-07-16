@@ -109,7 +109,7 @@ func (p *Parser) enterParseBudgetAt(start time.Time) func() {
 }
 
 func (p *Parser) needsParseBudget() bool {
-	return p != nil && (p.parseBudgetDepth > 0 || p.timeoutMicros > 0 || p.cancellationFlag != nil)
+	return p != nil && (p.parseBudgetDepth > 0 || p.timeoutMicros > 0 || p.cancellationFlag != nil || p.ctx != nil)
 }
 
 func (p *Parser) activeParseStopCheck() parseStopCheck {
@@ -128,6 +128,13 @@ func (p *Parser) activeParseStopReason() ParseStopReason {
 	}
 	if parseStopReasonIsActive(p.parseStoppedReason) {
 		return p.parseStoppedReason
+	}
+	if ctx := p.ctx; ctx != nil {
+		select {
+		case <-ctx.Done():
+			return p.markActiveParseStopped(ParseStopCancelled)
+		default:
+		}
 	}
 	if flag := p.cancellationFlag; flag != nil && atomic.LoadUint32(flag) != 0 {
 		return p.markActiveParseStopped(ParseStopCancelled)
