@@ -52,6 +52,22 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// preceding word, so expose this narrow set to the scanner through the
 		// external lex-state rows without broadening extglob_pattern.
 		g.ExternalReduceFollowLookaheads = []string{"file_descriptor", "test_operator", "$", "{", "(", "<<", "<<-"}
+		// Inside `${...}`, the parameter-expansion body starts with the pattern
+		// token `_simple_variable_name` (alias of /\w+/ -> variable_name). Bash's
+		// `word` token is ALSO the keyword-capture token, and LALR merging widens
+		// reduce-follow keywords into the single post-`${` parser state, which
+		// triggers the keyword-capture `word` injection into that state's lex
+		// mode even though `word` has no real parse action there. The broad
+		// `word` (whose charset includes `:`, `=`, `/`, `,`, `-`, ...) then wins
+		// longest-match over the specific `\w+`, swallowing e.g. `x:=y` in
+		// `${x:=y}` and forcing the whole `${...}` into ERROR (default-value,
+		// pattern-substitution, indirect and length-modifier expansions all fail
+		// this way; only bare `${x}` and operator-first `${#x}` survive). Drop
+		// the shadowing keyword-capture word from any state where it has no real
+		// action and no keyword has a real action either, but a real-action
+		// pattern terminal would be shadowed. See dfa.go
+		// computeLexModesWithContext (SuppressKeywordWordShadow gate).
+		g.SuppressKeywordWordShadow = true
 		// Bash's number literals are anonymous regex leaves inside the visible
 		// number rule. They overlap the broad word token on strings like "-9";
 		// tree-sitter's lexer prefers the number pattern on equal length.

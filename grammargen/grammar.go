@@ -86,6 +86,7 @@ type Grammar struct {
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
 	SuppressEquivalentExternalReduceLookaheads bool          // suppress external scanner validity for duplicate reduce-only lookaheads
+	SuppressKeywordWordShadow                  bool          // drop the injected keyword-capture word token from a state's lex mode when it has no real action there and would shadow a real-action pattern terminal (bash ${...} expansion body)
 	ExternalReduceFollowLookaheads             []string      // external token names that may be valid after reducing in the current state
 	PriorityInlinePatterns                     []string      // anonymous pattern terminals that should win same-length ties against named tokens
 	PreserveHiddenChoicePassthrough            []string      // hidden choice rules whose single-symbol reductions must not be flattened away
@@ -346,6 +347,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		Precedences:                                clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,
 		SuppressEquivalentExternalReduceLookaheads: base.SuppressEquivalentExternalReduceLookaheads,
+		SuppressKeywordWordShadow:                  base.SuppressKeywordWordShadow,
 		ExternalReduceFollowLookaheads:             append([]string(nil), base.ExternalReduceFollowLookaheads...),
 		PriorityInlinePatterns:                     append([]string(nil), base.PriorityInlinePatterns...),
 		PreserveHiddenChoicePassthrough:            append([]string(nil), base.PreserveHiddenChoicePassthrough...),

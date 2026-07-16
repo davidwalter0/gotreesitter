@@ -9,6 +9,21 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Bash parameter-expansion bodies (`${var:-default}`, `${var:=x}`, `${var:?e}`,
+  `${var:+x}`, `${var/pat/repl}`, `${var//pat/repl}`, `${var#p}`/`${var%p}`,
+  `${var,,}`/`${var^^}`, `${var@U}`, `${arr[i]}`, and nested forms) now parse in
+  the grammargen-generated lane instead of collapsing the whole `${...}` into an
+  ERROR. Bash routes through LALR state merging (29 external symbols), which
+  collapses the single post-`${` parser state; a reduce-follow-widened keyword in
+  that merged state was injecting bash's keyword-capture `word` token into its
+  lex mode even though `word` has no real action there. `word`'s broad charset
+  (`: = / , - ! ...`) then won longest-match over the specific
+  `_simple_variable_name` (`/\w+/`), swallowing the operator and forcing the
+  expansion into ERROR. A new opt-in grammar flag `SuppressKeywordWordShadow`
+  (set for bash) drops the injected keyword-capture word from any state where it
+  has no real action, no keyword has a real action, and a real-action pattern
+  terminal would be shadowed — mirroring tree-sitter C's precise per-state
+  tables. Bash real-corpus deep-parity rises accordingly.
 - Multiline tree edits now keep node byte and point ranges aligned with the C
   runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
