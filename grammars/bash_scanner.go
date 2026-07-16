@@ -239,12 +239,6 @@ func bshSkip(lexer *gotreesitter.ExternalLexer) {
 	lexer.Advance(true)
 }
 
-func bshSkipHorizontalSpace(lexer *gotreesitter.ExternalLexer) {
-	for lexer.Lookahead() == ' ' || lexer.Lookahead() == '\t' {
-		bshSkip(lexer)
-	}
-}
-
 // bshAdvanceWord consumes a POSIX "word" from the lexer, appending the
 // unquoted content to unquoted. Returns true if the word is non-empty.
 func bshAdvanceWord(lexer *gotreesitter.ExternalLexer) (unquoted []byte, ok bool) {
@@ -338,43 +332,6 @@ func bshDelimiterSize(d []byte) int {
 		}
 	}
 	return len(d)
-}
-
-func bshIsReservedWordBoundary(r rune) bool {
-	return r == 0 || bshIsSpace(r) || r == ';' || r == '&' || r == '|' || r == ')'
-}
-
-func bshScanOpeningParen(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if !bshIsValid(validSymbols, bshTokConcat) {
-		bshSkipHorizontalSpace(lexer)
-	}
-	if lexer.Lookahead() != '(' {
-		return false
-	}
-
-	bshAdvance(lexer)
-	lexer.MarkEnd()
-	lexer.SetResultSymbol(bshSymOpeningParen)
-	return true
-}
-
-func bshScanEsac(lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if !bshIsValid(validSymbols, bshTokConcat) {
-		bshSkipHorizontalSpace(lexer)
-	}
-	for _, want := range []rune{'e', 's', 'a', 'c'} {
-		if lexer.Lookahead() != want {
-			return false
-		}
-		bshAdvance(lexer)
-	}
-	if !bshIsReservedWordBoundary(lexer.Lookahead()) {
-		return false
-	}
-
-	lexer.MarkEnd()
-	lexer.SetResultSymbol(bshSymEsac)
-	return true
 }
 
 // ---- heredoc scanning ----
@@ -1042,17 +999,40 @@ func bshScanBraceStart(s *bshState, lexer *gotreesitter.ExternalLexer, validSymb
 // ---- main scan ----
 
 func bshScan(s *bshState, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	// OPENING_PAREN / ESAC
-	if bshIsValid(validSymbols, bshTokOpeningParen) && !bshInErrorRecovery(validSymbols) {
-		if bshScanOpeningParen(lexer, validSymbols) {
+	// EMPTY_VALUE must be checked before OPENING_PAREN/ESAC below: it
+	// requires observing the RAW (un-skipped) lookahead immediately after
+	// e.g. a bare `VAR=`, to tell an empty assignment value (followed by
+	// whitespace, ';', '&', or EOF) apart from a real value. OPENING_PAREN
+	// and ESAC's scan helpers unconditionally skip horizontal whitespace
+	// as a side effect before deciding whether they match, even when they
+	// ultimately decline -- if they ran first, that skip would consume the
+	// whitespace right after `VAR=` and EMPTY_VALUE's lookahead would then
+	// see the next command's first character instead, letting the
+	// following command name be mis-lexed as the assignment's value (e.g.
+	// `IFS= read -r line` swallowing `read`). Checking EMPTY_VALUE first
+	// avoids the corruption regardless of what OPENING_PAREN/ESAC do later
+	// in this function.
+	if bshIsValid(validSymbols, bshTokEmptyValue) {
+		la := lexer.Lookahead()
+		if bshIsSpace(la) || la == 0 || la == ';' || la == '&' {
+			lexer.SetResultSymbol(bshSymEmptyValue)
 			return true
 		}
 	}
-	if bshIsValid(validSymbols, bshTokEsac) && !bshInErrorRecovery(validSymbols) {
-		if bshScanEsac(lexer, validSymbols) {
-			return true
-		}
-	}
+
+	// NOTE: OPENING_PAREN and ESAC are listed as external symbols in the
+	// upstream grammar's `externals` array, but the real scanner.c never
+	// actively scans for or emits either one -- valid_symbols[OPENING_PAREN]
+	// is only ever read as a disambiguation flag inside VARIABLE_NAME
+	// scanning below, and valid_symbols[ESAC] is never read at all. An
+	// earlier version of this port actively matched '(' here (see
+	// bshScanOpeningParen, since removed): that pre-empted the internal
+	// DFA's longest-match tokenization, e.g. returning a 1-byte '(' before
+	// the DFA got a chance to match the 2-byte '((' arithmetic-command
+	// token, misparsing `(( expr ))` as two nested plain subshells
+	// (`( ( expr ) )`) instead of the grammar's dedicated arithmetic
+	// compound_statement. Do not resurrect active OPENING_PAREN/ESAC
+	// scanning here; let the internal DFA lex '(' and "esac" normally.
 
 	// CONCAT
 	if bshIsValid(validSymbols, bshTokConcat) && !bshInErrorRecovery(validSymbols) {
@@ -1136,15 +1116,6 @@ func bshScan(s *bshState, lexer *gotreesitter.ExternalLexer, validSymbols []bool
 				bshSkip(lexer)
 			}
 			return lexer.Lookahead() == '}'
-		}
-	}
-
-	// EMPTY_VALUE
-	if bshIsValid(validSymbols, bshTokEmptyValue) {
-		la := lexer.Lookahead()
-		if bshIsSpace(la) || la == 0 || la == ';' || la == '&' {
-			lexer.SetResultSymbol(bshSymEmptyValue)
-			return true
 		}
 	}
 
