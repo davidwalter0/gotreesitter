@@ -42,6 +42,21 @@ type precOrderTable struct {
 	// enables conflict resolution to compare shift prec values (which
 	// use STRING-only numbering) against SYMBOL positions.
 	namedPrecPositions map[int]int
+
+	// namedPrecLevelPositions keeps every STRING (named) prec value's
+	// position broken out by precedence level, mirroring
+	// symbolLevelPositions. A grammar's precedences array typically holds
+	// several independent orderings (e.g. one general expression-precedence
+	// table, plus a short dedicated ordering just for a specific declared
+	// conflicts group such as [call, instantiation, unary, binary, ...]).
+	// Two named precedence values are only meaningfully comparable when they
+	// co-occur in the SAME level — comparing their global positions directly
+	// silently conflates unrelated orderings (e.g. "instantiation" only
+	// appears in a short dedicated level, never alongside a specific binary
+	// operator's precedence name, so the two must not be compared via a
+	// shared global number even though buildPrecOrderTable happens to assign
+	// both some value).
+	namedPrecLevelPositions map[int]map[int]int
 }
 
 // applyAliasRenamesToPrecedences returns a copy of the given Precedences
@@ -96,6 +111,7 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 	symbolLevels := make(map[string]int)
 	symbolLevelPositions := make(map[string]map[int]int)
 	namedPrecPositions := make(map[int]int)
+	namedPrecLevelPositions := make(map[int]map[int]int)
 
 	idx := 0
 	for levelIdx, level := range levels {
@@ -121,6 +137,14 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 					if existing, ok := namedPrecPositions[npVal]; !ok || val > existing {
 						namedPrecPositions[npVal] = val
 					}
+					levelPositions := namedPrecLevelPositions[npVal]
+					if levelPositions == nil {
+						levelPositions = make(map[int]int)
+						namedPrecLevelPositions[npVal] = levelPositions
+					}
+					if existing, ok := levelPositions[levelIdx]; !ok || val > existing {
+						levelPositions[levelIdx] = val
+					}
 				}
 			}
 		}
@@ -131,10 +155,11 @@ func buildPrecOrderTable(levels [][]PrecEntry, namedPrecs map[string]int) *precO
 	}
 
 	return &precOrderTable{
-		symbolPositions:      symbolPositions,
-		symbolLevels:         symbolLevels,
-		symbolLevelPositions: symbolLevelPositions,
-		namedPrecPositions:   namedPrecPositions,
+		symbolPositions:         symbolPositions,
+		symbolLevels:            symbolLevels,
+		symbolLevelPositions:    symbolLevelPositions,
+		namedPrecPositions:      namedPrecPositions,
+		namedPrecLevelPositions: namedPrecLevelPositions,
 	}
 }
 
@@ -233,6 +258,54 @@ func (t *precOrderTable) resolveSymbolVsSymbol(symbolA, symbolB string) int {
 		return -1
 	}
 	return 0
+}
+
+// resolveNamedPrecVsNamedPrec checks whether named precedence value precA
+// outranks named precedence value precB according to the precedences table.
+// Mirrors resolveSymbolVsSymbol's level-awareness: two named precedence
+// values are only comparable when they co-occur in the SAME declared
+// precedence level (a grammar's precedences array commonly holds several
+// independent orderings — e.g. a general expression-precedence table plus a
+// short dedicated ordering for one specific declared conflicts group — and
+// two names that never appear together in any single level were never
+// intended to be ranked against each other, even though buildPrecOrderTable
+// assigns every name some global position). Returns:
+//
+//	 1 if precA has higher precedence (earlier in a shared level)
+//	-1 if precB has higher precedence
+//	 0 if not comparable (no shared level, not in table, or same position)
+func (t *precOrderTable) resolveNamedPrecVsNamedPrec(precA, precB int) int {
+	if t == nil || precA == precB {
+		return 0
+	}
+
+	levelsA := t.namedPrecLevelPositions[precA]
+	levelsB := t.namedPrecLevelPositions[precB]
+	if len(levelsA) == 0 || len(levelsB) == 0 {
+		return 0
+	}
+
+	result := 0
+	for level, posA := range levelsA {
+		posB, ok := levelsB[level]
+		if !ok {
+			continue
+		}
+		cmp := 0
+		if posA > posB {
+			cmp = 1
+		} else if posA < posB {
+			cmp = -1
+		}
+		if cmp == 0 {
+			continue
+		}
+		if result != 0 && result != cmp {
+			return 0
+		}
+		result = cmp
+	}
+	return result
 }
 
 // resolveSymbolVsNamedPrec checks whether a SYMBOL entry (symbolName)

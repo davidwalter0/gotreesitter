@@ -3650,8 +3650,6 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 			// precedence/associativity should still resolve the conflict.
 			// Without this, all binary operators with different precedences
 			// would be kept as GLR, causing wrong associativity at runtime.
-			// Inter-symbol conflicts (different LHS) stay as GLR — those
-			// represent genuine ambiguities declared by the grammar author.
 			sameLHS := shiftActionMatchesReduceLHSFamily(shift, prod.LHS, ng, cache)
 			if sameLHS {
 				shiftP := shiftMeta.prec
@@ -3670,6 +3668,36 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 						return []lrAction{shift}, nil
 					}
 				}
+			} else if cmp := ng.PrecedenceOrder.resolveNamedPrecVsNamedPrec(reduceMeta.prec, shiftMeta.prec); cmp != 0 {
+				// Inter-symbol conflict (different LHS), e.g. a unary_expression
+				// reduce racing a shift that continues toward call_expression.
+				// tree-sitter's own generator resolves shift/reduce conflicts by
+				// numeric/named precedence regardless of whether the two sides
+				// share an LHS — declaring symbols in the same `conflicts` group
+				// only suppresses the "unresolved conflict" diagnostic, it does
+				// not disable precedence. Applying it here fixes TypeScript's
+				// `!f()` (unary_expression PrecLeft(21) loses to call_expression
+				// Prec(22): both "unary_void" and "call" appear together in the
+				// grammar's main expression-precedence level, so the call binds
+				// first: `!(f())`) and the parallel `a() || b()` binary_expression
+				// case — both previously fell through to genuine runtime GLR
+				// ambiguity that a later, precedence-unaware tie-break could
+				// resolve either way.
+				//
+				// resolveNamedPrecVsNamedPrec (unlike a raw prec-number compare)
+				// only fires when the two names co-occur in the SAME declared
+				// precedence level, which is what keeps this from misfiring on
+				// other members of the same declared conflict group that were
+				// never meant to be ranked against each other — e.g.
+				// instantiation_expression's "instantiation" tag only appears in
+				// a short dedicated [call, instantiation, unary, binary, ...]
+				// level, never alongside a specific binary-operator precedence
+				// name, so `a<T>() < b` style ambiguity correctly stays genuine
+				// GLR rather than being forced by an unrelated numeric ordering.
+				if cmp > 0 {
+					return []lrAction{reduce}, nil
+				}
+				return []lrAction{shift}, nil
 			}
 			if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
 				return preferred, nil
