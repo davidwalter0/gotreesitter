@@ -1042,6 +1042,27 @@ func bshScanBraceStart(s *bshState, lexer *gotreesitter.ExternalLexer, validSymb
 // ---- main scan ----
 
 func bshScan(s *bshState, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	// EMPTY_VALUE must be checked before OPENING_PAREN/ESAC below: it
+	// requires observing the RAW (un-skipped) lookahead immediately after
+	// e.g. a bare `VAR=`, to tell an empty assignment value (followed by
+	// whitespace, ';', '&', or EOF) apart from a real value. OPENING_PAREN
+	// and ESAC's scan helpers unconditionally skip horizontal whitespace
+	// as a side effect before deciding whether they match, even when they
+	// ultimately decline -- if they ran first, that skip would consume the
+	// whitespace right after `VAR=` and EMPTY_VALUE's lookahead would then
+	// see the next command's first character instead, letting the
+	// following command name be mis-lexed as the assignment's value (e.g.
+	// `IFS= read -r line` swallowing `read`). Checking EMPTY_VALUE first
+	// avoids the corruption regardless of what OPENING_PAREN/ESAC do later
+	// in this function.
+	if bshIsValid(validSymbols, bshTokEmptyValue) {
+		la := lexer.Lookahead()
+		if bshIsSpace(la) || la == 0 || la == ';' || la == '&' {
+			lexer.SetResultSymbol(bshSymEmptyValue)
+			return true
+		}
+	}
+
 	// OPENING_PAREN / ESAC
 	if bshIsValid(validSymbols, bshTokOpeningParen) && !bshInErrorRecovery(validSymbols) {
 		if bshScanOpeningParen(lexer, validSymbols) {
@@ -1136,15 +1157,6 @@ func bshScan(s *bshState, lexer *gotreesitter.ExternalLexer, validSymbols []bool
 				bshSkip(lexer)
 			}
 			return lexer.Lookahead() == '}'
-		}
-	}
-
-	// EMPTY_VALUE
-	if bshIsValid(validSymbols, bshTokEmptyValue) {
-		la := lexer.Lookahead()
-		if bshIsSpace(la) || la == 0 || la == ';' || la == '&' {
-			lexer.SetResultSymbol(bshSymEmptyValue)
-			return true
 		}
 	}
 
