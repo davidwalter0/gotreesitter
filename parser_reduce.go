@@ -7955,6 +7955,20 @@ func (p *Parser) shouldKeepVisibleAnonymousTokenChild(parentSym, childSym Symbol
 	if p.wrapsSameNamedAnonymousToken(parentSym, childSym) || p.isSharedAnonymousToken(childSym) {
 		return true
 	}
+	// forestGapCollapseSymbols (glr_forest.go) allowlists named single-token
+	// rules that tree-sitter C collapses to a childless leaf even though the
+	// rule name differs from its token text (go blank_identifier -> '_'), so
+	// the same-name test below misses them. That allowlist was seeded by
+	// diffing against the C oracle and is shared verbatim with
+	// forestCollapsibleNamedKeywordLeaf's identical override on the
+	// GLR-forest tree-construction path — this production-reduce path builds
+	// the same node shape for a plain (non-forest) parse and needs the same
+	// override, or it diverges from the oracle exactly where forest already
+	// doesn't (gt-RUNTIME go-2: `import _ "pkg"` kept a spurious child under
+	// blank_identifier).
+	if forestGapCollapse(p.language, parentSym) {
+		return false
+	}
 	// Only the inlined-token artifact collapses to a childless named leaf: a
 	// named rule whose body is a single literal that tree-sitter lexes directly as
 	// the rule symbol (e.g. go `nil`/`true`/`false`/`iota`). In the loaded
