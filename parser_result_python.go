@@ -41,6 +41,117 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 	})
 }
 
+// pythonRHSPatternConversion holds the target expression-family symbols used to
+// rewrite pattern-family nodes that a GLR mis-resolution placed on the
+// right-hand side of an assignment (a pure expression context). Sources are
+// matched by type NAME (not symbol id) because tree-sitter-python assigns
+// list_pattern / tuple_pattern two distinct symbol ids each — one from the
+// direct rule and one from the alias() used in _left_hand_side — so an
+// id-equality test would miss half the nodes. Each conversion target is
+// independently gated so a grammar missing one symbol still converts the others.
+type pythonRHSPatternConversion struct {
+	active bool
+
+	expressionList      Symbol
+	expressionListNamed bool
+
+	list      Symbol
+	listNamed bool
+	haveList  bool
+
+	tuple      Symbol
+	tupleNamed bool
+	haveTuple  bool
+
+	listSplat      Symbol
+	listSplatNamed bool
+	haveSplat      bool
+}
+
+func newPythonRHSPatternConversion(lang *Language) pythonRHSPatternConversion {
+	var conv pythonRHSPatternConversion
+	expressionList, ok := symbolByName(lang, "expression_list")
+	if !ok {
+		return conv
+	}
+	conv.active = true
+	conv.expressionList = expressionList
+	conv.expressionListNamed = symbolIsNamed(lang, expressionList)
+	if s, ok := symbolByName(lang, "list"); ok {
+		conv.list, conv.listNamed, conv.haveList = s, symbolIsNamed(lang, s), true
+	}
+	if s, ok := symbolByName(lang, "tuple"); ok {
+		conv.tuple, conv.tupleNamed, conv.haveTuple = s, symbolIsNamed(lang, s), true
+	}
+	if s, ok := symbolByName(lang, "list_splat"); ok {
+		conv.listSplat, conv.listSplatNamed, conv.haveSplat = s, symbolIsNamed(lang, s), true
+	}
+	return conv
+}
+
+// convertPythonRHSPatternsToExpressions recursively rewrites pattern-family
+// nodes to their expression-family counterparts within an assignment's
+// right-hand-side value subtree. On the RHS of "=", canonical
+// tree-sitter-python never emits patterns; gt's GLR occasionally resolves an
+// ambiguous, un-anchored container (empty [] / (), or an element that is itself
+// only a bare identifier) to the pattern reading — grammar.js declares these as
+// genuine GLR ambiguities ([$.list, $.list_pattern], [$.tuple, $.tuple_pattern],
+// [$.primary_expression, $.list_splat_pattern]).
+//
+// Recursion descends ONLY through pattern-family nodes and the expression_list
+// that wraps the RHS values. It never descends into an already-correct
+// expression node, so legitimate pattern scopes that are only reachable through
+// a non-pattern boundary — comprehension for-targets (inside list_comprehension
+// / generator_expression), lambda parameters, and chained-assignment left sides
+// (inside a nested assignment) — are never touched.
+func convertPythonRHSPatternsToExpressions(n *Node, lang *Language, conv pythonRHSPatternConversion) bool {
+	if n == nil {
+		return false
+	}
+	changed := false
+	recurse := false
+	switch n.Type(lang) {
+	case "pattern_list":
+		n.symbol = conv.expressionList
+		n.setNamed(conv.expressionListNamed)
+		changed, recurse = true, true
+	case "list_pattern":
+		if conv.haveList {
+			n.symbol = conv.list
+			n.setNamed(conv.listNamed)
+			changed = true
+		}
+		recurse = true
+	case "tuple_pattern":
+		if conv.haveTuple {
+			n.symbol = conv.tuple
+			n.setNamed(conv.tupleNamed)
+			changed = true
+		}
+		recurse = true
+	case "list_splat_pattern":
+		if conv.haveSplat {
+			n.symbol = conv.listSplat
+			n.setNamed(conv.listSplatNamed)
+			changed = true
+		}
+		recurse = true
+	case "expression_list":
+		// Already an expression_list container (typically the RHS wrapper):
+		// its elements may still be mis-resolved patterns, so descend.
+		recurse = true
+	}
+	if recurse {
+		childCount := resultChildCount(n)
+		for i := 0; i < childCount; i++ {
+			if convertPythonRHSPatternsToExpressions(resultChildAt(n, i), lang, conv) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
 // pythonCollapsedKeywordSetup holds the resolved symbols for one collapsed-
 // keyword preorder pass (e.g. pass_statement/"pass"). Used inside the fused
 // dispatcher to avoid re-resolving symbols per node.
@@ -129,17 +240,11 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		hasRaise = ok
 	}
 
-	var patternListSym, expressionListSym Symbol
-	var expressionListNamed bool
+	var rhsPatternConv pythonRHSPatternConversion
 	hasAssignment := false
 	if flags.assignmentList {
-		var ok1, ok2 bool
-		patternListSym, ok1 = symbolByName(lang, "pattern_list")
-		expressionListSym, ok2 = symbolByName(lang, "expression_list")
-		if ok1 && ok2 {
-			hasAssignment = true
-			expressionListNamed = symbolIsNamed(lang, expressionListSym)
-		}
+		rhsPatternConv = newPythonRHSPatternConversion(lang)
+		hasAssignment = rhsPatternConv.active
 	}
 
 	var yieldSym Symbol
@@ -338,6 +443,9 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 		nodeType := n.Type(lang)
 
 		// Assignment rewrite — exclusive of block rewrites (different shape).
+		// The child immediately after the first "=" is the RHS value (a pure
+		// expression context). Recursively convert any pattern-family nodes a
+		// GLR mis-resolution left there back into expressions.
 		if hasAssignment && nodeType == "assignment" {
 			sawEquals := false
 			for i := 0; i < childCount; i++ {
@@ -349,10 +457,10 @@ func normalizePythonFusedPreorder(root *Node, source []byte, parser *Parser, lan
 					sawEquals = true
 					continue
 				}
-				if sawEquals && child.symbol == patternListSym {
-					child.symbol = expressionListSym
-					child.setNamed(expressionListNamed)
-					rewritten++
+				if sawEquals {
+					if convertPythonRHSPatternsToExpressions(child, lang, rhsPatternConv) {
+						rewritten++
+					}
 					return
 				}
 			}
