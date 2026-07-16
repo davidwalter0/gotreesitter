@@ -39,6 +39,9 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_bare_type_identifier_expression_statements", func() {
 			normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 		})
+		run("c_pointer_assignment_inversion", func() {
+			normalizeCPointerAssignmentInversion(root, lang)
+		})
 		return
 	}
 	normalizeCTranslationUnitRoot(root, lang)
@@ -48,6 +51,7 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
+	normalizeCPointerAssignmentInversion(root, lang)
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of two preorder walks in
