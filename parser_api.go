@@ -72,6 +72,12 @@ const (
 	ParserLogParse ParserLogType = iota
 	// ParserLogLex emits token-source and token-consumption logs.
 	ParserLogLex
+	// ParserLogConfig emits non-fatal configuration diagnostics, such as a
+	// malformed GOT_* environment-variable override that was ignored in
+	// favor of its built-in default (see envConfigWarnings in
+	// parser_config.go). These are memoized process-wide, so the same
+	// warning may repeat on every Parse call while a logger is attached.
+	ParserLogConfig
 )
 
 // ParserLogger receives parser debug logs when configured via SetLogger.
