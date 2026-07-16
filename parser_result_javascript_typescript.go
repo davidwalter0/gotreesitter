@@ -102,6 +102,8 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		}
 		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
+		normalizeTypeScriptRecoveredNestedGenericCall(root, source, parser, lang)
+		normalizeTypeScriptRecoveredCurriedGenericCallDeclaration(root, source, parser, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 		if syntaxStats.typeScriptCompatibility.built {
 			normalizeTypeScriptCompatibilityCandidates(syntaxStats.typeScriptCompatibility, root, source, lang)
@@ -158,6 +160,12 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	})
 	runVoid("ts_recovered_namespace_root", func() {
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
+	})
+	runVoid("ts_recovered_nested_generic_call", func() {
+		normalizeTypeScriptRecoveredNestedGenericCall(root, source, parser, lang)
+	})
+	runVoid("ts_recovered_curried_generic_call_decl", func() {
+		normalizeTypeScriptRecoveredCurriedGenericCallDeclaration(root, source, parser, lang)
 	})
 	runVoid("ts_top_level_declaration_bounds", func() {
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
