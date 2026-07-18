@@ -38,8 +38,8 @@ var inferredTagsQueryOverrides = map[string]string{
 		"(class_definition (identifier) @name) @definition.class",
 		"(call (identifier) @name) @reference.call",
 		"(call (attribute (identifier) @name)) @reference.call",
-		"(module (expression_statement (assignment left: (identifier) @name))) @definition.constant",
-		"(module (assignment left: (identifier) @name)) @definition.constant",
+		"(module (expression_statement (assignment left: (identifier) @name) @definition.constant))",
+		"(module (assignment left: (identifier) @name) @definition.constant)",
 	}, "\n"),
 
 	// javascript: starts from the same generic-table-derived lines this
@@ -116,8 +116,8 @@ var inferredTagsQueryOverrides = map[string]string{
 		"(call_expression (identifier) @name) @reference.call",
 		"(call_expression (field_identifier) @name) @reference.call",
 		"(preproc_def name: (identifier) @name) @definition.constant",
-		"(translation_unit (declaration (init_declarator declarator: (identifier) @name))) @definition.variable",
-		"(translation_unit (declaration declarator: (identifier) @name)) @definition.variable",
+		"(translation_unit (declaration (init_declarator declarator: (identifier) @name)) @definition.variable)",
+		"(translation_unit (declaration declarator: (identifier) @name) @definition.variable)",
 	}, "\n"),
 }
 

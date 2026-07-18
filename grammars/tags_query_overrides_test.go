@@ -237,3 +237,50 @@ func TestTagsQueryOverridesCompile(t *testing.T) {
 		})
 	}
 }
+
+// TestTagsQueryOverrideCapturePlacement pins the @definition capture to the
+// DEFINITION node itself, not the outer structural anchor. Regression guard:
+// the first version of the python/c overrides placed @definition.constant on
+// the enclosing (module ...)/(translation_unit ...) pattern root, so every
+// module-level assignment reported the file-spanning module node — consumers
+// that key a tag's identity on Tag.Range (e.g. dedupe by definition-node
+// span) collapsed all module assigns into one entry at row 0.
+func TestTagsQueryOverrideCapturePlacement(t *testing.T) {
+	t.Run("python", func(t *testing.T) {
+		tagger := resolveTaggerForTest(t, "python")
+		src := "PREFIX = \"hi\"\n\nenabled = True\n"
+		tags := tagger.Tag([]byte(src))
+
+		rows := map[string]uint32{}
+		for _, tag := range tags {
+			if tag.Kind == "definition.constant" {
+				rows[tag.Name] = tag.Range.StartPoint.Row
+			}
+		}
+		if len(rows) != 2 {
+			t.Fatalf("distinct module-assign tags = %d, want 2 (dedupe-by-range collapse?): %v", len(rows), rows)
+		}
+		if rows["PREFIX"] != 0 || rows["enabled"] != 2 {
+			t.Errorf("tag rows = %v, want PREFIX:0 enabled:2 (capture must sit on the assignment, not module)", rows)
+		}
+	})
+
+	t.Run("c", func(t *testing.T) {
+		tagger := resolveTaggerForTest(t, "c")
+		src := "#define MAX 10\nint global_var = 1;\nint bare;\n"
+		tags := tagger.Tag([]byte(src))
+
+		rows := map[string]uint32{}
+		for _, tag := range tags {
+			if strings.HasPrefix(tag.Kind, "definition.") {
+				rows[tag.Kind+":"+tag.Name] = tag.Range.StartPoint.Row
+			}
+		}
+		if got, want := rows["definition.variable:global_var"], uint32(1); got != want {
+			t.Errorf("global_var row = %d, want %d (capture must sit on the declaration, not translation_unit)", got, want)
+		}
+		if got, want := rows["definition.variable:bare"], uint32(2); got != want {
+			t.Errorf("bare row = %d, want %d", got, want)
+		}
+	})
+}
