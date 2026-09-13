@@ -488,7 +488,7 @@ func (q *Query) matchChildStepsRecursiveAll(
 				return
 			}
 			if chosen == count {
-				if count > 0 && !q.stepAnchorsSatisfied(step, namedPosByIndex, span, prev, parentLastNamedPos) {
+				if count > 0 && !q.stepAnchorsSatisfied(step, namedPosByIndex, span, prev, parentLastNamedPos, childPos == 0) {
 					return
 				}
 				q.matchChildStepsRecursiveAll(
@@ -660,18 +660,43 @@ func quantifierBounds(quantifier queryQuantifier) (int, int, bool) {
 // A trailing anchor requires that no named sibling follows the span's last
 // child. Both rules apply whether the matched children are named or not,
 // which is how C matches `(identifier) . "="`.
+//
+// isFirstChildStep distinguishes the two situations a leading anchor can be
+// in, which must NOT be conflated:
+//
+//   - This is the first child step, so `.` sits at the start of the pattern
+//     and genuinely means "the first named child". prev is the zero value,
+//     and its namedBoundary of 0 is the constraint.
+//   - An earlier child step exists but matched ZERO nodes (a `*` or `?` that
+//     took its empty branch). advancePrevMatch passes prev through untouched
+//     in that case, so prev is STILL the zero value and looks identical to
+//     the situation above -- but here there is nothing to be adjacent to, and
+//     the anchor must constrain nothing.
+//
+// Conflating them makes `(x)*` and `(x)?` behave as `(x)+`: the anchor falls
+// back to "first named child" and the pattern silently stops matching
+// wherever the optional part is absent. See
+// TestMatchAnchorAfterZeroMatchedQuantifier.
 func (q *Query) stepAnchorsSatisfied(
 	step *QueryStep,
 	namedPosByIndex []int,
 	span childStepNamedSpan,
 	prev childStepPrevMatch,
 	parentLastNamedPos int,
+	isFirstChildStep bool,
 ) bool {
 	if step.anchorBefore {
 		if span.firstIdx < 0 {
 			return false
 		}
-		if prev.unnamedWildcard && prev.lastIdx >= 0 {
+		// prev.lastIdx < 0 means no earlier step matched anything. That is a
+		// real "start of children" constraint only when no earlier step
+		// EXISTS; otherwise every earlier step matched empty and there is no
+		// boundary to anchor against.
+		anchoredToStart := isFirstChildStep || prev.lastIdx >= 0
+		if !anchoredToStart {
+			// Nothing precedes this span, so the anchor is vacuous.
+		} else if prev.unnamedWildcard && prev.lastIdx >= 0 {
 			if span.firstIdx != prev.lastIdx+1 {
 				return false
 			}
@@ -992,7 +1017,7 @@ func (m *childStepMatcher) matchChoiceCombinations(count int, candidatePos int, 
 }
 
 func (m *childStepMatcher) anchorsSatisfied(span childStepNamedSpan) bool {
-	return m.q.stepAnchorsSatisfied(m.step, m.namedPosByIndex, span, m.prev, m.parentLastNamedPos)
+	return m.q.stepAnchorsSatisfied(m.step, m.namedPosByIndex, span, m.prev, m.parentLastNamedPos, m.childPos == 0)
 }
 
 func childStepNamedSpanForIndex(namedPosByIndex []int, childIdx int) childStepNamedSpan {

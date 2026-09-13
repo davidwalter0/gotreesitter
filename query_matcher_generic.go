@@ -320,7 +320,7 @@ func matchChildStepsRecursiveAllWithReader[N comparable, C any, R queryNodeReade
 				return
 			}
 			if chosen == count {
-				if count > 0 && !q.stepAnchorsSatisfied(step, namedPositions, span, prev, parentLastNamedPos) {
+				if count > 0 && !q.stepAnchorsSatisfied(step, namedPositions, span, prev, parentLastNamedPos, childPos == 0) {
 					return
 				}
 				matchChildStepsRecursiveAllWithReader(q, parent, namedPositions, parentLastNamedPos, steps, childSteps, childPos+1, nextIdx, advancePrevMatch(prev, step, namedPositions, span), lang, source, predicates, current, budget, reader, emitForCount)
