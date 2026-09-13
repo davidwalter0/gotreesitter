@@ -10,7 +10,7 @@ It does not change parser behavior or grant a compatibility exception.
 Use Revision R1 of `spec.campaign.v7` as the campaign authority.
 Use `spec.derivation-set-equivalence.v1` as the mechanism specification.
 
-The D0 instrument landed in PR [#646](https://github.com/odvcencio/gotreesitter/pull/646).
+The D0 instrument landed in PR [#646](https://github.com/davidwalter0/gotreesitter/pull/646).
 The merge commit is `8070e1ad51f4cfdb7acf6008ac7695cf7e97cd66`.
 
 The instrument is inert in the default build.

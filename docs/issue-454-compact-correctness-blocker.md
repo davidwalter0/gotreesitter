@@ -2,7 +2,7 @@
 
 Status: **KEEP LIVE**. The PHP recovery-leaf candidate restores locked-C
 correctness. Compact admission and performance work remain open. Keep issue
-[#454](https://github.com/odvcencio/gotreesitter/issues/454) open.
+[#454](https://github.com/davidwalter0/gotreesitter/issues/454) open.
 
 ## Scope
 

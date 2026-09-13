@@ -95,4 +95,4 @@
 === RUN   TestGoFullParseBenchmarkSourceStaysWithinDefaultNodeBudget
 --- PASS: TestGoFullParseBenchmarkSourceStaysWithinDefaultNodeBudget (0.02s)
 PASS
-ok  	github.com/odvcencio/gotreesitter	0.677s
+ok  	github.com/davidwalter0/gotreesitter	0.677s

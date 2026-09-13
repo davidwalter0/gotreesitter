@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unsafe"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 func g18RootRefs(t *testing.T, compact *core.Core) core.DropCohortRefSet {

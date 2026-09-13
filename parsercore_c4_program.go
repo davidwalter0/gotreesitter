@@ -23,7 +23,7 @@ import (
 	"os"
 	"sort"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // parserCoreCorridorOpcode is the 6-bit opcode field of one corridor

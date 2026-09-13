@@ -10,7 +10,7 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // Derivation-set differential instrument, stage D0 of

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func w2DumpSexp(h interface{ Write([]byte) (int, error) }, lang *gotreesitter.Language, n *gotreesitter.Node, depth int) (nodes int) {

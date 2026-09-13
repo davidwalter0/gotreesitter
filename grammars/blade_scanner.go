@@ -2,7 +2,7 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import gotreesitter "github.com/davidwalter0/gotreesitter"
 
 // --- Shared HTML scanning helpers ---
 

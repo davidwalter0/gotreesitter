@@ -28,8 +28,8 @@ import (
 	"runtime/pprof"
 	"sort"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // corpusFile pairs a source file with the language used to parse it.

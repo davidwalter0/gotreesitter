@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestAdmissionCandidateBoundedRecursiveInsertionCorpus(t *testing.T) {

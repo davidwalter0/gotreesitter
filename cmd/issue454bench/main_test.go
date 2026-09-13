@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	ts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestCompareTreesRejectsDifferentTreesWithEqualNodeCounts(t *testing.T) {

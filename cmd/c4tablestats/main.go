@@ -27,7 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 // receipt is the committed artifact. Schema and blob digests are part of it so

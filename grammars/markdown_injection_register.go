@@ -5,7 +5,7 @@ package grammars
 import (
 	"strings"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 const markdownFenceInjectionQuery = `

@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 

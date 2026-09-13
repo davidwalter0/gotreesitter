@@ -4,6 +4,7 @@
   "purpose": "class with methods, function nested in a method, empty class",
   "query_definition_kinds": [
     "class",
+    "constant",
     "function",
     "method"
   ],

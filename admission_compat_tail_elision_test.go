@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // This file gates spec.campaign.v7 tranche A5/C1 (compat-tail elision):

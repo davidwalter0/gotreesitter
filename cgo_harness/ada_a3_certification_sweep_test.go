@@ -5,7 +5,7 @@ package cgoharness
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestAdaA3CompactCertificationFullCorpusSweep is the A3

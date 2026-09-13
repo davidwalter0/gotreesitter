@@ -8,7 +8,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestJuliaScannerASCIIEquivalence(t *testing.T) {
@@ -62,5 +62,5 @@ func TestJuliaScannerASCIIEquivalence(t *testing.T) {
 	}
 }
 
-//go:linkname newJuliaASCIIExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newJuliaASCIIExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newJuliaASCIIExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer

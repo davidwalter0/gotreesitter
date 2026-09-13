@@ -56,7 +56,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 const emitcWalkerMainC = `#include <stdio.h>

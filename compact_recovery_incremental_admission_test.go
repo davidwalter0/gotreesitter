@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // jsLog6RecoverySource is the pinned js_log_6 witness from the same manifest.

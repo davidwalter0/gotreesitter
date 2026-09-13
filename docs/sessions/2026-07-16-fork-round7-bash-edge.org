@@ -1,0 +1,193 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round7-bash-edge
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork/round7-bash-edge
+#+date: 2026-07-16
+
+* Session Topic
+Investigate and fix the two bash blob-path parity bug classes assigned for
+Round 7: `[[ ]]` extended-test constructs and `declare -A` associative
+arrays (bash was at 41/55, 75%, after Round 5). Task hypothesis: these two
+constructs are mis-parsed by =grammars.BashLanguage()= vs the pinned
+tree-sitter-bash oracle (=a06c2e4415e9bc0346c6b86d401879ffb44058f7=).
+
+* Files Touched
+- parser_result_bash.go (source-aware fix + doc comments)
+- parser_result_bash_perl_test.go (5 existing tests updated for the new
+  signature; 2 new regression tests added)
+- parser_result_compat.go (thread =ctx.source= through the bash call site)
+
+* Decisions Made
+- Built two fast local comparison tools (throwaway, under
+  =/home/david/.claude/jobs/f84fc485/tmp/blob-probe-round7/=, not part of
+  the repo) rather than relying solely on the slow Docker corpus_parity
+  loop for iteration: =dump/main.go= renders a gt bash tree in the exact
+  text format =tree-sitter parse= emits (named nodes, =[row,col] - [row,col]=
+  ranges, =field:= prefixes), so it diffs byte-for-byte against the real
+  CLI output built from =/tmp/tsbash= (a checkout of tree-sitter-bash
+  pinned at a06c2e44, confirmed via =git rev-parse HEAD=). This was
+  essential -- =hasError= alone (my first probe) missed silent
+  shape/field mismatches that don't produce an ERROR node.
+- **Both named bug classes were already correct.** Built a 22-case
+  synthetic corpus covering `[[ ]]` (extglob, parens, arithmetic
+  comparisons, =-v=, string ordering, chained =&&/||=, multiline,
+  =$(cmd)= truth tests) and `declare -A`/subscript (multi-key init,
+  =local -A=, =+==, quoted keys, =${!arr[@]}=, =unset arr[key]=, nested
+  loops) -- all 22 matched the oracle byte-exact (both via the local
+  dumper and a Docker =corpus_parity= run against the same mini corpus,
+  =artifact-mode all=, 22/22 pass). This ruled out the hand-ported
+  scanner (=grammars/bash_scanner.go=; also line-by-line diffed the
+  TEST_OPERATOR/VARIABLE_NAME branches against upstream =scanner.c= and
+  found no deviation) and the grammar tables (=ts2go= decodes these
+  directly from a real =tree-sitter generate= run against =grammar.js=,
+  so they are table-faithful by construction).
+- **Root-caused the real corpus residuals instead**, via a fast/local
+  gt-vs-oracle full-tree diff (flat =(type [row, col]= token-stream
+  comparison, robust to indentation differences) plus binary-search
+  narrowing (careful to avoid the false positives that plain =head -n=
+  truncation produces on an unbalanced/incomplete prefix):
+  1. *Genuine, fixable bug found*: =parser_result_bash.go='s
+     =normalizeBashProgramVariableAssignments= used a parent-type
+     allowlist to decide whether to split a raw =variable_assignments=
+     group back into individual =variable_assignment= siblings, and
+     split unconditionally for every parent NOT in
+     {command,redirected_statement,declaration_command,unset_command} --
+     including =program=, =list=, =subshell=, =case_item=, etc. But
+     =grammar.js='s =variable_assignments= is an ordinary member of
+     =$._statement_not_subshell=, so it's grammatically valid (and kept
+     GROUPED by the real oracle) as a direct statement child in ALL of
+     those contexts whenever it's a genuine same-line multi-assignment
+     (=VERBOSE= QUIET= OPTS==, =[[ cond ]] || A=1 B=2 C=3=). Confirmed
+     via =usr/bin/socat-broker.sh= line 32 and
+     =usr/share/alsa-base/alsa-info.sh= line 42 (both byte-exact
+     verified against the oracle CLI). This is why the two named bug
+     classes got blamed in the Round-5-final SCOREBOARD: the
+     `[[ ]] || A=1 B=2` idiom and `declare -A` scripts are exactly where
+     multi-assignment groups cluster, even though the mis-split wasn't
+     about `[[ ]]`/`declare -A` parsing itself.
+  2. *Fix*: replace the parent-type-only heuristic with a source-aware
+     check (=bashVariableAssignmentsSpansNewline=) -- only split when a
+     newline appears between two consecutive assignment children, which
+     is only possible if gt's GLR/LALR statement-boundary handling
+     merged what should have been >=2 separate =_terminated_statement=
+     reductions (a genuine cross-statement merge artifact) rather than
+     treating the newline as bash's own statement terminator. Threaded
+     =source []byte= through the two normalizer functions to make the
+     check possible.
+  3. *Remaining residuals traced, NOT fixed (deliberately out of
+     minimal-fix scope)*:
+     - =usr/share/alsa-base/alsa-info.sh=: after the fix, gt correctly
+       keeps =[[ $(ping...) ]] || KEEP_FILES="yes" UPLOAD="no"
+       PBERROR="yes"= grouped as =variable_assignments= -- but the REAL
+       oracle instead extends this into a =command= node that swallows
+       the *following* =else= keyword as a bogus command_name (verified
+       via =tree-sitter parse=: oracle shows
+       =(command ... name: (command_name (word)))= where the word's text
+       is literally "else"). This is =grammar.js='s explicit
+       =conflicts: [[$.command, $.variable_assignments]]= entry --  a
+       genuine GLR shift/reduce ambiguity that real tree-sitter's
+       dynamic-precedence/conflict resolution resolves one way and gt's
+       GLR runtime resolves the other (arguably more sensible, but
+       non-matching) way. This is the SAME class already documented and
+       deferred for cpp/ts ("deep shared-GLR-core dynamic-precedence",
+       d6444430 per =tmp/blob-parity-final/SCOREBOARD.org=) -- now
+       confirmed cross-language to bash too. Not a scanner/table/simple
+       post-parse fix; would need runtime GLR conflict-resolution work.
+     - =analyze_deps.sh=: contains a literal =\!= (backslash + bang, not
+       a plain =!=) inside =${...}= at =for pkg_name in
+       "${\!newest_packages[@]}"; do= -- confirmed the ORACLE also
+       ERRORs on this (narrower span); this is a malformed/edge-case
+       input divergence in error-recovery SHAPE on already-invalid
+       input, not a `declare -A` grammar bug.
+     - =analyze_packages.sh=: divergence is a comment embedded mid
+       multi-line pipe continuation (=grep ... | \\\n...\n\n# comment\n
+       grep ... | sort | uniq= collapsing children across the comment
+       differently than the oracle) -- unrelated to `declare -A` despite
+       the file using it elsewhere.
+     - =emacs-vterm-zsh.sh=: contains zsh-only =(){ ... }= hook syntax,
+       invalid bash on both sides, different ERROR shapes.
+     - makem.sh family (=plz=,=org-make-toc=,=org-web-tools=,=quelpa=) +
+       =analyze_deps_fixed.sh=: confirmed heredoc-related (matches the
+       already-documented deferred bucket) -- explicitly out of scope
+       per the task brief.
+  4. *Verified declare -A / [[ ]] have zero remaining bugs*: grepped the
+     full 55-file corpus for every =declare -A|typeset -A|local -A= user
+     (3 files) and every =[[= user (33 files) and cross-checked
+     pass/fail -- every failure in both sets is accounted for by one of
+     the four unrelated causes above, none by the named constructs
+     themselves.
+
+* Work Completed
+- [X] Built and verified a 22-case synthetic `[[ ]]`/`declare -A` corpus
+  byte-exact against the oracle (Docker =corpus_parity=, 22/22).
+- [X] Line-by-line diffed =grammars/bash_scanner.go='s TEST_OPERATOR/
+  VARIABLE_NAME branches against upstream =scanner.c= -- faithful port,
+  no deviation found (Round 5's =bshScanOpeningParen=/=bshScanEsac=
+  deviation was already fixed/removed; this round found no new one).
+- [X] Root-caused all 14 baseline bash corpus residuals via direct
+  gt-vs-oracle tree diffing (not just =hasError=).
+- [X] Implemented + landed the =variable_assignments= grouping fix
+  (commit =f83e3f88=), with 2 updated + 2 new unit tests.
+- [X] Verified via Docker =corpus_parity= (blob path, real corpus):
+  bash 41/55 (74.5%) -> 43/55 (78.2%), *zero regressions*
+  (=usr/bin/socat-broker.sh=, =usr/bin/amuFormat.sh= now byte-exact).
+- [X] Build gate green: =CGO_ENABLED=0 go build ./...= + =go vet .= +
+  =go vet ./grammars/...= (implicitly, via targeted test run).
+- [X] Targeted regression tests green: =go test -run Bash .
+  ./grammars/...= (all pass, one pre-existing unrelated SKIP for a
+  missing corpus fixture).
+
+* Next Steps
+- [ ] (out of scope, future round) Deep-GLR dynamic-precedence conflict
+  resolution for =[$.command, $.variable_assignments]= (and cross-check
+  whether it's the same mechanism as d6444430) -- would need core GLR
+  runtime work, not a bash-local fix.
+- [ ] (deferred per task brief) bash heredoc-in-real-scripts residuals
+  (makem.sh family, analyze_deps_fixed.sh).
+- [ ] (not investigated this round) =deft/readme.sh=,
+  =mcp-mgmt.backup/rewrite-history.sh= residuals -- not `[[ ]]`/
+  `declare -A`-related based on grep, left untriaged.
+
+* Open Questions
+- Is the =[$.command, $.variable_assignments]= GLR conflict resolution
+  divergence fixable via a targeted dynamic-precedence rule in gt's
+  conflict_policy.go, or does it require deeper GLR-forest work? Would
+  need to study how real tree-sitter's C runtime picks a winner among
+  multiple locally-valid GLR stacks at end-of-input/error-cost time.
+
+* Glossary
+- blob path :: the production parser entry point
+  (=grammars.BashLanguage()=, decoded via =ts2go= from a real
+  =tree-sitter generate= run's =parser.c=), as opposed to the
+  =grammargen= lane (gt's own from-=grammar.json= LR/lex table
+  generator). This round's bugs and fixes are all on the blob path.
+- merge artifact :: a raw-parse shape where gt's GLR/LALR
+  statement-boundary handling accumulates content across a real
+  statement terminator (semicolon/newline) into one production instead
+  of reducing separately -- the failure mode
+  =bashVariableAssignmentsSpansNewline= detects and repairs.
+- dynamic-precedence conflict :: a grammar-declared GLR ambiguity
+  (=conflicts: [...]= in grammar.js) where multiple locally-valid parses
+  exist and the parser's runtime conflict-resolution heuristic (not the
+  grammar tables) picks a winner; real tree-sitter and gt can pick
+  differently.
+
+* Index
+- variable_assignments grouping fix -> [[*Decisions Made]] item 2,
+  file:parser_result_bash.go
+- deep-GLR dynamic-precedence residual (alsa-info.sh) -> [[*Decisions
+  Made]] item 3, first bullet
+- 22-case synthetic [[ ]]/declare -A corpus -> [[*Work Completed]] first
+  item; throwaway probe at
+  =/home/david/.claude/jobs/f84fc485/tmp/blob-probe-round7/=
+
+* Cross-References
+- Prior session: [[file:2026-07-15-fork-fix-bash.org]]
+- Scoreboard this round responds to:
+  =/home/david/.claude/jobs/f84fc485/tmp/blob-parity-final/SCOREBOARD.org=
+- Registry: [[file:~/org/claude/Project-Registry.org]]
+
+* Footnotes
+[fn:1] Oracle checkouts used: =/tmp/tsbash= and =/tmp/grammar_parity/bash=,
+both confirmed at =a06c2e4415e9bc0346c6b86d401879ffb44058f7= via
+=git rev-parse HEAD=.

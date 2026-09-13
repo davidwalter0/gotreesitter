@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // The release disables the unsafe whole-root shortcut, not ordinary reuse.

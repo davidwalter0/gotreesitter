@@ -1,0 +1,151 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round8-column-endpoint
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork-round8-column-endpoint
+#+date: 2026-07-16
+
+* Session Topic
+Fix the 4th UTF-8 Point.Column rune-counting path in the pure-Go tree-sitter
+fork: the COMMENT node's endPoint, undercounted whenever a comment contains a
+multi-byte UTF-8 character. Same bug family as the three already-fixed paths
+(DFA lexer c3701e45, error-tree parseErrorTreeWithArena 0a346aa4, JSON
+token-source json_lexer.go ee9e3a6d).
+
+* Method / Tooling
+- Read the three prior fix commits to establish the pattern (advance byte
+  offset by rune's UTF-8 width, but only bump Column by 1 instead of by that
+  width).
+- Traced C's production comment path: grammars.CLanguage() blob parsing via
+  plain Parser.Parse() uses the embedded DFA lexer (already correct); but
+  grammars.ParseFile / the registry's TokenSourceFactory ("c" ->
+  NewCTokenSourceOrEOF) is the actual production path real callers use, and it
+  bypasses the DFA lexer entirely in favor of the hand-rolled CTokenSource.
+- Found the bug in the shared grammars/token_source_common.go sourceCursor.advanceRune:
+  advances offset by utf8.DecodeRune's byte width but bumped col by 1 (rune
+  count). This cursor backs CTokenSource.commentToken/consumeBlockComment (c,
+  cpp), JavaTokenSource.commentToken, HTMLTokenSource.commentToken,
+  AuthzedTokenSource.lineComment/blockComment, and the generic/lua/toml
+  lexers — one shared primitive, high leverage fix.
+- Repro'd with a vendored tree-sitter-c oracle checkout at /tmp/tsc_oracle
+  (tree-sitter CLI 0.26.11) via `tree-sitter parse`.
+- Verified against the real corpus file used by the round7-c-fullstack
+  session (afl.c, AFL++ source) using the local corpus at
+  /home/david/.claude/jobs/f84fc485/tmp/blob-parity/corpus/c/, the existing
+  Docker image gotreesitter/cgo-harness:go1.25-local, and cgo_harness's
+  corpus_parity tool against the pinned tree-sitter-c oracle.
+
+* Root Cause
+grammars/token_source_common.go:55 sourceCursor.advanceRune — advanced
+c.offset by the decoded rune's byte width (correct) but c.col by a flat 1
+(rune count, not byte count). tree-sitter's Point.Column is a byte offset
+from line start. Any comment containing a multi-byte UTF-8 char undercounts
+its own endPoint by (byte width - 1) per such char, and — since the cursor's
+column state feeds every subsequent token on the same line — shifts every
+later node's start/end column on that line too. Row and byte offsets were
+always correct.
+
+* Fix
+grammars/token_source_common.go: c.col += uint32(size) instead of c.col++,
+matching the identical fix already applied to JSONTokenSource.advanceOneRune
+(commit ee9e3a6d).
+
+* Verification
+- Repro (block comment): "int x; /* café */ int y;\n" via grammars.ParseFile
+  ("sample.c") — comment endPoint now [0,18] matching the tree-sitter-c
+  oracle exactly (was [0,17] pre-fix); "int y;" declaration columns shift
+  from [0,18]-[0,24] (wrong) to [0,19]-[0,25] (oracle-correct). Byte ranges
+  unchanged in both cases.
+- Repro (line comment, em-dash): "// —dash comment\nint z;\n" — comment
+  endPoint now [0,18] matching oracle (was [0,16] pre-fix, deficit 2 = the
+  em-dash's 3 UTF-8 bytes vs. 1 rune).
+- Cross-language sanity: go/python/js multi-byte comments checked via
+  ParseFile — all already byte-correct (they use the DFA-embedded lexer,
+  fixed earlier at c3701e45), unaffected by this change; internal byte-math
+  (endCol - startCol == byte length on same row) holds for all three.
+- Real corpus (afl.c, AFL++ source, via Docker corpus_parity against the
+  pinned tree-sitter-c oracle): pre-fix had exactly 2 divergences beyond the
+  known pre-existing "primitive_type vs identifier" ERROR-demote issue (a
+  separate, deferred bug — see round7-c-fullstack session trace), both
+  category "range" (column) on comment endPoints at rows 75 and 101 — both
+  contain "— " (em-dash). Post-fix: both range divergences gone; only the
+  pre-existing, out-of-scope type divergence remains (740/740 nodes
+  otherwise identical, byte ranges unchanged on the 2 affected nodes).
+  afl.c is NOT fully unblocked (aggregate c parity stays 23/55, unchanged —
+  the ERROR-demote issue is a separate, independent bug per the round7 trace:
+  "demote alone flips nothing"), but the UTF-8 column bug's contribution to
+  afl.c's divergence is fully eliminated.
+- Regression tests added:
+  - grammars/token_source_common_test.go:
+    TestSourceCursorAdvanceRuneUsesByteBasedColumns — pins sourceCursor.advanceRune
+    to byte-based columns (single-line multibyte, multi-line with em-dash,
+    astral-plane 4-byte char). Verified fails pre-fix, passes post-fix.
+  - grammars/c_lexer_test.go:
+    TestCTokenSourceCommentMultibyteColumnIsByteBased — full parse via
+    CTokenSource + ParseWithTokenSource, walks the whole tree asserting
+    byte-based Points for every node, for both a block comment with "café"
+    and a line comment with the exact afl.c em-dash shape. Verified fails
+    pre-fix, passes post-fix.
+- Build gate: CGO_ENABLED=0 go build ./... and go vet . ./grammars/... both
+  green. gofmt clean on all changed files.
+- Targeted test sweep (no host-wide/-race run): go test ./grammars/... -run
+  'TestC|TestParseC|TestNewC|TestJava|TestHTML|TestAuthzed|TestLua|TestToml|TestGeneric|TestJSON|TestSourceCursor'
+  — all pass, no regressions across every lexer sharing sourceCursor.
+
+* Work Completed
+- Fixed grammars/token_source_common.go sourceCursor.advanceRune (byte-based
+  column advance).
+- Added TestSourceCursorAdvanceRuneUsesByteBasedColumns (unit-level, direct
+  cursor test).
+- Added TestCTokenSourceCommentMultibyteColumnIsByteBased (integration-level,
+  full CTokenSource parse, whole-tree Point assertions).
+- Verified against real corpus (afl.c) via Docker corpus_parity: 2 range
+  divergences eliminated, byte ranges unchanged, no new divergences
+  introduced (740/740 nodes match apart from the known unrelated
+  ERROR-demote issue).
+- Confirmed go/python/js unaffected (already byte-correct via the prior DFA
+  lexer fix).
+
+* Next Steps
+- Out of scope here, left as-is (per round7-c-fullstack trace): afl.c's
+  separate `primitive_type` vs `identifier` ERROR-demote divergence (row 51)
+  needs its own narrow discriminator — not universal (149 legit keeps
+  elsewhere in the corpus).
+- Consider whether html_lexer.go / lua_lexer.go / generic_lexer.go /
+  toml_lexer.go call sites of advanceRune (not on the default
+  TokenSourceFactory path today, per token_source_factory_builtin.go's
+  comments) should get the same corpus-level parity re-check if/when they
+  become default paths.
+
+* Glossary
+- Point.Column :: tree-sitter's column field — a BYTE offset from the start
+  of the line, not a codepoint/rune count.
+- sourceCursor :: grammars/token_source_common.go's shared byte/row/column
+  tracking primitive used by several hand-rolled TokenSource lexers (c, cpp,
+  java, html, authzed, lua, toml, generic).
+- TokenSourceFactory :: per-language override registered in the grammars
+  registry; when set, grammars.ParseFile/ParseFilePooled route through it
+  instead of the embedded DFA-generated blob lexer. C/C++/Java/Authzed/JSON
+  are registered by default; Lua/HTML/generic are not (see
+  token_source_factory_builtin.go).
+- blob path :: grammars.CLanguage() (or any LangEntry) production entry —
+  what real callers of grammars.ParseFile get, as opposed to a raw
+  gotreesitter.NewParser(lang).Parse() call that bypasses the registry.
+
+* Index
+- Root cause :: [[*Root Cause]], file:grammars/token_source_common.go
+- Fix :: [[*Fix]]
+- afl.c corpus verification :: [[*Verification]]
+- Regression tests :: file:grammars/token_source_common_test.go,
+  file:grammars/c_lexer_test.go
+
+* Cross-References
+- Prior session (same bug family): [[id:gotreesitter-2026-07-16-fork-round7-c-fullstack]]
+- Registry: [[file:~/org/claude/Project-Registry.org]]
+
+* Footnotes
+[fn:1] Oracle used: tree-sitter CLI 0.26.11 against a vendored
+tree-sitter-c checkout at /tmp/tsc_oracle (grammar.js present, no
+prebuilt parser — built on demand by `tree-sitter parse -p`).
+[fn:2] Corpus + Docker image (gotreesitter/cgo-harness:go1.25-local) were
+already present locally from the round7-c-fullstack session; no network
+fetch was needed for this verification.

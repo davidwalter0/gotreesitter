@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // outlineWitnessCase pins one language's real coverage as DATA: a tiny

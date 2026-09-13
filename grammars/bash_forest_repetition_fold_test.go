@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
+	ts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestBashForestRepetitionFoldDispatch guards the forest-side mirror of C's

@@ -3159,16 +3159,19 @@ func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
 	}
 	// The scratch lexer saves the failed-attempt cursor for exact error recovery.
 	// Its position, point, and range index add 24 bytes to the previous 2256.
-	if got, want := unsafe.Sizeof(Parser{}), uintptr(2280); got != want {
+	// 2296: 2280 plus the fork's ParseCtx cancellation context (16 bytes).
+	if got, want := unsafe.Sizeof(Parser{}), uintptr(2296); got != want {
 		t.Fatalf("Parser size = %d, want %d", got, want)
 	}
 	// Compact incremental results add 48 bytes of route, reuse, and work telemetry.
 	// 3096: 3088 plus TransientScratchBytesAllocated appended at the end.
-	if got, want := unsafe.Sizeof(ParseRuntime{}), uintptr(3096); got != want {
+	// 3104: 3096 plus the fork's always-on MergePerKeyCapOverflow counter.
+	if got, want := unsafe.Sizeof(ParseRuntime{}), uintptr(3104); got != want {
 		t.Fatalf("ParseRuntime size = %d, want %d", got, want)
 	}
 	// 3296: 3288 plus the ParseRuntime growth above.
-	if got, want := unsafe.Sizeof(Tree{}), uintptr(3296); got != want {
+	// 3304: 3296 plus the fork's MergePerKeyCapOverflow growth above.
+	if got, want := unsafe.Sizeof(Tree{}), uintptr(3304); got != want {
 		t.Fatalf("Tree size = %d, want %d", got, want)
 	}
 	if got, want := unsafe.Offsetof(Parser{}.cNodeMemoPeakTier), unsafe.Offsetof(Parser{}.crecoveryCostCompetitionRelevant)+2; got != want {

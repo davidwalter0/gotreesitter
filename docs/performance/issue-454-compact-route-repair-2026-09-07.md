@@ -4,7 +4,7 @@ Date: 2026-09-07.
 
 ## Summary
 
-Issue [#454](https://github.com/odvcencio/gotreesitter/issues/454) compared
+Issue [#454](https://github.com/davidwalter0/gotreesitter/issues/454) compared
 v0.52.0 with v0.48.1 on 137 KiB editor fixtures. Clean full parses ran 2 to 3
 times slower on 41 of 48 grammars. Seven grammars lost most incremental reuse.
 A single-byte Go delete did not terminate. All three items trace to the compact

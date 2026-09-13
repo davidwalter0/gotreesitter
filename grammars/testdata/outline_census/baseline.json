@@ -815,7 +815,7 @@
       "language": "javascript",
       "tier": "T1",
       "tags_query_non_empty": true,
-      "smoke_capture_count": 2,
+      "smoke_capture_count": 4,
       "smoke_capture_names": [
         "definition.function",
         "name"

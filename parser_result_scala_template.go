@@ -1211,6 +1211,8 @@ func scalaRecoverBlockStatementNode(source []byte, start, end uint32, parser *Pa
 				}
 			}
 		}
+	} else if tree != nil {
+		tree.Release()
 	}
 	if bytes.HasPrefix(source[start:end], []byte("val ")) {
 		return scalaRecoverValDefinitionIfExpressionFromRange(source, start, end, parser, lang, arena)

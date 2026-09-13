@@ -68,7 +68,7 @@
       "within_tolerance": true,
       "unclassified_top": [
         {
-          "Function": "github.com/odvcencio/gotreesitter.(*nodeArena).reset",
+          "Function": "github.com/davidwalter0/gotreesitter.(*nodeArena).reset",
           "NS": 10000000
         }
       ]
@@ -260,7 +260,7 @@
       "within_tolerance": true,
       "unclassified_top": [
         {
-          "Function": "github.com/odvcencio/gotreesitter.hiddenTreeHasFieldIDs",
+          "Function": "github.com/davidwalter0/gotreesitter.hiddenTreeHasFieldIDs",
           "NS": 10000000
         }
       ]
@@ -328,7 +328,7 @@
       "within_tolerance": true,
       "unclassified_top": [
         {
-          "Function": "github.com/odvcencio/gotreesitter.maxRetainedNodeCapacityForClass",
+          "Function": "github.com/davidwalter0/gotreesitter.maxRetainedNodeCapacityForClass",
           "NS": 10000000
         }
       ]

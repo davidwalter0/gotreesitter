@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // recoveryCostSourceTable is an inert table: pricing a published subtree

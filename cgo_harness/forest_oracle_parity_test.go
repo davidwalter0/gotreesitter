@@ -22,7 +22,7 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestForestVsCOracleParity asserts that, for every real-corpus file the forest

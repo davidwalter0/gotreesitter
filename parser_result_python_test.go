@@ -412,13 +412,13 @@ func TestNormalizePythonCompatibilityRecordsRuntimeStats(t *testing.T) {
 	parser := &Parser{}
 	root := newParentNodeInArena(nil, 1, true, nil, nil, 0)
 
-	// A backslash-newline continuation is the only source-level trigger left
-	// (trailingSelfCalls was removed with foldPythonTrailingSelfCallIntoNestedFunction),
-	// so use it to exercise exactly one gated pass end-to-end.
+	// A backslash-newline continuation is the only source-level trigger for
+	// this input (it contains no "*", so the list_splat-binding pass is checked
+	// but not run), so it exercises exactly one gated pass end-to-end.
 	normalizePythonCompatibilityWithParser(root, []byte("\\\n"), parser, lang)
 
 	stats := parser.normalizationStats
-	if got, want := stats.passesChecked, uint64(13); got != want {
+	if got, want := stats.passesChecked, uint64(14); got != want {
 		t.Fatalf("passesChecked = %d, want %d", got, want)
 	}
 	if got, want := stats.passesRun, uint64(1); got != want {

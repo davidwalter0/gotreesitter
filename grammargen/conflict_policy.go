@@ -3,7 +3,7 @@ package grammargen
 import (
 	"sort"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func buildConflictPolicies(tables *LRTables, ng *NormalizedGrammar) []gotreesitter.ConflictPolicy {

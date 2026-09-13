@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // TestAdmissionCandidateScorecard206 is the admission scorecard's missing half:

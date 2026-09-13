@@ -5,8 +5,8 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // This file is gts_parsercorephase0-tagged (positive opt-in), matching

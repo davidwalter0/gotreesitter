@@ -8,7 +8,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestTypeScriptScannerASCIIDigitInvariant(t *testing.T) {
@@ -73,5 +73,5 @@ func TestTypeScriptScannerASCIIDigitInvariant(t *testing.T) {
 	}
 }
 
-//go:linkname newTypeScriptDigitExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newTypeScriptDigitExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newTypeScriptDigitExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer

@@ -1,6 +1,6 @@
 goos: linux
 goarch: amd64
-pkg: github.com/odvcencio/gotreesitter
+pkg: github.com/davidwalter0/gotreesitter
 cpu: Intel(R) Core(TM) Ultra 9 285
                                           │ /tmp/gts-performance-evidence-loop/memo-trio-base.txt │ /tmp/gts-performance-evidence-loop/memo-trio-head.txt │
                                           │                        sec/op                         │            sec/op              vs base                │

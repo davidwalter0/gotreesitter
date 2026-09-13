@@ -21,6 +21,23 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
+	// cppFullParseRetryMaxMergePerKey widens C++'s merge-per-key survivor budget
+	// only on the retry rung, when a fresh full parse at the steady-state cap
+	// (1, see the "cpp" case in effectiveParseMergePerKeyCap) accepts with an
+	// error. Same PrecDynamic-tie family as the "go"/"java"/"typescript" retry
+	// overrides: C++'s cap=1 steady state prunes the winning GLR alternative for
+	// two qualified-identifier ambiguities — a call whose arguments are all
+	// `Ns::Name` qualified_identifiers (`EXPECT_EQ(A::x, B::y)`, mis-read as a
+	// local function declaration) and a qualified template return/arg
+	// (`fml::RefPtr<fml::TaskRunner> C::M()`, mis-read as a `<`/`>` comparison
+	// chain). At cap=1 a single such construct cascades the whole file to a root
+	// ERROR (task_runners.cc, dl_paint_unittests.cc and the flutter-engine /
+	// libcertifier unittest corpus). Keeping more same-key survivors alive on the
+	// retry preserves the branch the C oracle selects. Clean files never retry
+	// (fullParseRetryMergePerKeyOverride returns 0 for treeParseClean trees), so
+	// the steady-state cap=1 fast path and the C++ parse/highlight/query gates are
+	// untouched; only accepted-error parses pay the second pass.
+	cppFullParseRetryMaxMergePerKey = 16
 	// goAcceptedErrorMergePerKeyRetry widens Go's merge-per-key survivor
 	// budget only on the retry rung, when a fresh full parse at the
 	// steady-state cap (3, see the "go" case in effectiveParseMergePerKeyCap)
@@ -901,14 +918,17 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		return mergePerKeyCap
 	}
 	switch lang.Name {
-	case "dart":
-		// Dart's generic/postfix ambiguity keeps redundant same-key survivors
-		// alive across full parses. Three survivors preserve the current
-		// parse/highlight parity surface while reducing merge-equivalence churn;
-		// explicit env overrides stay available for grammar diagnosis.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 3 {
-			return 3
-		}
+	// Dart intentionally has NO case here (removed 2026-08-05): the former
+	// cap=3 narrowing halved the global default (maxStacksPerMergeKey=6,
+	// glr.go) and caused full-parse GLR merges to discard the correct
+	// same-key survivor on inputs needing all 6 — observed as 5+ nested
+	// constructor calls with a multi-line `const` named argument (valid
+	// Dart), which collapses the entire root node to a single file-spanning
+	// ERROR, silently deleting every declaration in the file from the parse
+	// result. Dart now falls through to the unmodified global default like
+	// any other unlisted language (see the final `return mergePerKeyCap`
+	// below). Explicit env overrides (GOT_GLR_MAX_MERGE_PER_KEY) still work
+	// exactly as before, since they were never specific to this narrowing.
 	case "go":
 		// Go's full-tree path is false-equivalence heavy around expression/type
 		// ambiguity. Three same-key survivors preserve the current parse,
@@ -1529,6 +1549,38 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	}
 	if mergePerKey := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); mergePerKey != 0 {
 		return mergePerKey
+	}
+	if tree.language != nil && tree.language.Name == "cpp" &&
+		rt.StopReason == ParseStopAccepted && retryTreeHasError(tree) &&
+		!rt.Truncated && retryTreeCoversExpectedEOF(tree) {
+		// See cppFullParseRetryMaxMergePerKey's doc comment and the "cpp" case in
+		// effectiveParseMergePerKeyCap. C++'s steady-state cap=1 prunes the GLR
+		// alternative the C oracle selects for qualified-identifier call vs.
+		// declaration (`EXPECT_EQ(A::x, B::y)`) and qualified template return
+		// (`fml::RefPtr<fml::TaskRunner> C::M()`) ambiguities, cascading whole
+		// files to a root ERROR. Widen the merge budget only for the retry of an
+		// accepted-but-erroring fresh parse, so clean files keep the cheap cap=1
+		// path with no retry at all.
+		//
+		// Scoped to COMPLETE accepted-error trees (reaches expected EOF, not
+		// truncated) — the exact shape of the cpp cascade. Truncated accepted-
+		// error trees fall through to the generic fullParseRetryMaxMergePerKey
+		// (wider) path below, unchanged.
+		//
+		// This decision is made BEFORE certifiedAcceptedErrorRetrySkipsComplete
+		// on purpose: cpp's runtime profile sets SkipCompleteAcceptedErrorRetry
+		// (grammars/runtime_profiles.go) because the OLD retry ladder — which
+		// never widened cpp's merge-per-key — did not improve the selected tree
+		// for complete accepted-error files. The merge-per-key widening added
+		// here does improve them (it clears the whole-file cascade: +9 files on
+		// the flutter-engine/libcertifier cpp blob-parity corpus, zero
+		// regressions), so the skip-complete certification, which predates it,
+		// must not suppress this pass. Only the merge-widening pass runs; the
+		// stack-widening ladder stays gated by shouldRetryAcceptedErrorParse
+		// (still honoring skip-complete), and preferRetryTree keeps the original
+		// tree whenever the widened retry fails to improve it, so a file that
+		// does not benefit pays at most one extra parse and never regresses.
+		return cppFullParseRetryMaxMergePerKey
 	}
 	if certifiedAcceptedErrorRetrySkipsComplete(tree, sourceLen) {
 		return 0

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // buildFollowTokensFunc returns a function that, given a parser state,
@@ -1350,6 +1350,7 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 			suppressAfterWhitespaceSymbols(g, ng),
 			patternSyms,
 			zeroWidthSyms,
+			ng.SuppressKeywordWordShadow,
 		)
 		if err != nil {
 			endPhase(map[string]any{"error": true})

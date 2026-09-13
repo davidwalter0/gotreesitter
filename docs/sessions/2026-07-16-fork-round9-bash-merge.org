@@ -1,0 +1,122 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-16-fork-round9-bash-merge
+:END:
+#+title: Session 2026-07-16 — gotreesitter/fork-round9-bash-merge
+#+date: 2026-07-16
+
+* Session Topic
+Test whether the round-8 cpp retry-rung merge-per-key widening extends to the
+bash BLOB path (grammars.BashLanguage()); bash blob-parity is 43/55. Outcome:
+NEGATIVE — the merge-selection cap lever is inert for bash. No production change
+landed; the finding is pinned as a witness test and feeds d6444430.
+
+* Files Touched
+- grammars/bash_expansion_body_defect_witness_test.go — new self-healing witness
+- parser_retry.go — UNCHANGED (a temporary bash retry-rung experiment was added,
+  measured, and reverted; final diff is empty)
+
+* Result (verified, authoritative via corpus_parity vs pinned oracle)
+The merge-per-key lever does NOT help bash. bash blob-parity holds at exactly
+43/55 across the entire sweep, against the pinned tree-sitter-bash oracle
+(a06c2e44), blob path grammars.BashLanguage():
+
+| lever                    | values swept              | bash parity |
+|--------------------------+---------------------------+-------------|
+| GOT_GLR_MAX_MERGE_PER_KEY | 1, 2, 4, 16, 32           | 43/55 (flat)|
+| GOT_GLR_MAX_STACKS        | 2, 48, 256                | 43/55 (flat)|
+
+Not one file flips: no ERROR cleared, no shape corrected. before == after.
+
+* Why cap-widening is dead for bash (the "X" — feeds d6444430)
+1. *bash's steady-state merge-per-key cap is already 6* (the global
+   maxStacksPerMergeKey default; bash has NO case in effectiveParseMergePerKeyCap),
+   NOT the tight 1 cpp uses. cpp's fix relaxed a hard 1->16; bash is already
+   wide at 6, and 6->32 changes nothing. The premise "cap hard-set to 1" is a
+   cpp property, not a bash one.
+2. *The 5 blob accept-with-error files are table-coverage defects, not
+   merge-selection defects.* Reduced triggers:
+   - =x="${y:+$y; }"= -> ERROR, but =x="${y:+z}"= -> clean. The parameter-
+     expansion-body operator/suffix (`:+`, and by the RCA also `:-`, `//`,
+     indirect `!`, substring) has no valid parse path once the replacement
+     carries a `$`-expansion + `;`. This is the documented
+     spec.bash-expansion-table-defect.rca class, here on the BLOB lane (the
+     existing grammargen-lane witness is TestBashParameterExpansionOperatorReducer).
+   - =echo ${sp:i++%${#sp}:1}= -> ERROR (substring `${var:off:len}` w/ arithmetic).
+   - =add-zsh-hook -Uz chpwd (){ print x }= -> ERROR (zsh anonymous function;
+     genuine grammar gap, .sh misclassification).
+   No survivor budget can preserve a branch the LR automaton never generates, so
+   widening merge-per-key / stacks is structurally inert.
+3. *The round-9 hypothesis (alsa-info.sh = command/variable_assignments merge
+   class) is DISPROVEN.* Every isolated command-vs-variable_assignments shape
+   parses clean on the blob: =migrated="..."= then keyword, then function,
+   =[[ $a > $b ]]=, =echo ... < /dev/null | grep=. alsa-info.sh's failure is a
+   whole-file recovery cascade (root ERROR [0:27247]) whose sub-blocks —
+   including the exact tail =if\nWGET=$(...); [[..]] && [[..]] && [[ `..` ]]\nthen..fi=
+   — each parse clean in isolation. It is an accumulated GLR/recovery
+   interaction, not a single mis-resolved conflict, and it is not cap-driven.
+4. *The cpp retry-rung transplanted verbatim delivers zero.* bash sits in the
+   identical retry-suppressed position cpp was (runtime profile sets
+   SkipCompleteAcceptedErrorRetry). A temporary bash branch in
+   fullParseRetryMergePerKeyOverride (return cppFullParseRetryMaxMergePerKey for
+   a bash complete accept-with-error tree) FIRED its widened retry
+   (RETRYDBG pass maxStacks=8 mergePerKey=16 stop=accepted hasErr=true) and
+   still produced hasErr=true. preferRetryTree keeps the original: a pure no-op
+   with a wasted second parse on 5 files. Reverted.
+
+* Decisions Made
+- Land NO retry rung. Unlike cpp (+9 files), a bash retry rung improves zero
+  files and only adds a futile second-parse cost on the 5 error files — it would
+  violate the "never regress a clean/passing file" spirit (cost without benefit).
+- Pin the finding as a self-healing blob-lane witness
+  (bash_expansion_body_defect_witness_test.go): 5 clean controls (the
+  command/variable_assignments shapes the hypothesis blamed) guard against
+  regression; 2 known-defect reducers assert the CORRECT error-free outcome and
+  t.Skip today, auto-greening when the table defect is fixed.
+- Route the real fix to d6444430 (GLR/table core): the expansion-body operator
+  table defect + the zsh construct + alsa's recovery-cascade interaction.
+
+* Work Completed
+- Full merge-per-key (1..32) + stack (2..512) sweep on the 5 blob error files via
+  a HasError probe (pure Go, no cgo): all stay ERROR at every value.
+- Authoritative corpus_parity (Docker, cgo, pinned oracle) baseline 43/55 and
+  cap/stack sweep: 43/55 flat everywhere — no shape flips either.
+- Direct cpp-identical retry-rung experiment: fired, still hasErr=true, reverted.
+- Reduced all 5 error files to minimal triggers; disproved the merge-class
+  hypothesis; identified the table-defect + zsh + recovery-cascade mechanisms.
+- Self-healing witness test added; all ./grammars Bash* tests green;
+  CGO_ENABLED=0 go build ./... and go vet . green.
+
+* Next Steps / Residual (d6444430 GLR/table-core effort)
+- Fix the bash parameter-expansion-body operator/suffix table defect on both
+  lanes (blob + grammargen): `:+`/`:-`/`//`/indirect/substring inside `${...}`
+  with `$`-expansion + `;`. Minimal blob reducers: `x="${y:+$y; }"`,
+  `echo ${sp:i++%${#sp}:1}`.
+- alsa-info.sh whole-file recovery cascade: sub-blocks parse clean; needs a
+  recovery/GLR-core investigation, not a cap.
+- zsh anonymous function `(){ }` in .sh corpus: grammar-coverage gap.
+- 7 remaining bash failures are clean-parse shape/type divergences (goErr=False,
+  cErr=False); a retry rung cannot address clean trees by construction.
+
+* Glossary
+- merge-per-key cap :: max GLR survivor stacks retained per merge key; bash
+  steady-state = 6 (global default), NOT cpp's 1.
+- table-coverage defect :: the LR automaton has no valid parse path for a
+  construct; no survivor budget can recover it (distinct from merge pruning).
+- self-healing pin :: a test asserting the correct outcome that t.Skips while a
+  known defect holds and auto-passes once fixed, no edit.
+- accept-with-error :: parse reaches EOF and returns ParseStopAccepted but the
+  root subtree contains an ERROR/MISSING node.
+
+* Index
+- bash merge cap :: parser_retry.go effectiveParseMergePerKeyCap (no bash case -> default 6)
+- retry override :: parser_retry.go fullParseRetryMergePerKeyOverride (cpp case; no bash case)
+- runtime profile SkipCompleteAcceptedErrorRetry :: grammars/runtime_profiles.go "bash"
+- witness :: file:grammars/bash_expansion_body_defect_witness_test.go
+- expansion-table RCA :: hypha://m31labs/gotreesitter/object/spec.bash-expansion-table-defect.rca
+
+* Cross-References
+- Prior round: [[id:gotreesitter-2026-07-16-fork-round8-cpp-cascade]]
+- Grammargen-lane witness: grammargen/bash_parity_test.go (TestBashParameterExpansionOperatorReducer)
+
+* Footnotes
+[fn:1] corpus: /home/david/.claude/jobs/f84fc485/tmp/blob-parity/corpus/bash/ (55 files); oracle tree-sitter-bash @ a06c2e4415e9bc0346c6b86d401879ffb44058f7.

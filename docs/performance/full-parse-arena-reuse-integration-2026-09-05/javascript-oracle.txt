@@ -7,4 +7,4 @@
 --- PASS: TestParityIncrementalParse (0.03s)
     --- PASS: TestParityIncrementalParse/javascript (0.03s)
 PASS
-ok  	github.com/odvcencio/gotreesitter/cgo_harness	1.395s
+ok  	github.com/davidwalter0/gotreesitter/cgo_harness	1.395s

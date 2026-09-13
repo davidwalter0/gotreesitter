@@ -3,7 +3,7 @@
 Pure-Go [tree-sitter](https://tree-sitter.github.io/) runtime. No CGo, no C toolchain. It cross-compiles to any `GOOS`/`GOARCH` target Go supports, including `wasip1`.
 
 ```sh
-go get github.com/odvcencio/gotreesitter
+go get github.com/davidwalter0/gotreesitter
 ```
 
 gotreesitter loads the same parse-table format that tree-sitter's C runtime uses. `ts2go` extracts grammar tables from upstream `parser.c` files, compresses them into binary blobs, and deserializes them on first use. 206 grammars ship in the registry.
@@ -28,8 +28,8 @@ gotreesitter eliminates the C dependency entirely. The parser, lexer, query engi
 import (
     "fmt"
 
-    "github.com/odvcencio/gotreesitter"
-    "github.com/odvcencio/gotreesitter/grammars"
+    "github.com/davidwalter0/gotreesitter"
+    "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func main() {
@@ -264,7 +264,7 @@ state, node provenance, and lexer dependency proofs permit it.
 The v0.52.0 release disables the unsafe same-length token-invariant shortcut.
 Ordinary subtree reuse and no-edit reuse remain available. Restoring the shortcut
 requires complete lexical dependency proofs under
-[issue #1087](https://github.com/odvcencio/gotreesitter/issues/1087).
+[issue #1087](https://github.com/davidwalter0/gotreesitter/issues/1087).
 The unreleased implementation restores bounded reuse after authenticating earlier
 lexical reads and the edited token. Unknown coverage or an exhausted proof
 budget requires reparsing. The generated Go edit benchmark improves 16.65 times
@@ -601,7 +601,7 @@ It is authored with grammargen's Go domain-specific language (DSL). It does
 not import another tree-sitter grammar.
 
 ```go
-import _ "github.com/odvcencio/gotreesitter/grammars/lean"
+import _ "github.com/davidwalter0/gotreesitter/grammars/lean"
 ```
 
 The import registers `.lean`, `lean`, and `lean4` detection. Direct users can
@@ -663,8 +663,8 @@ still require coordinate updates in affected trailing subtrees. This is not an
 absolute `O(edit)` guarantee. The v0.52.0 release disables the unsafe same-length
 token-invariant shortcut while preserving ordinary subtree reuse and no-edit reuse.
 The unreleased implementation restores this shortcut with authenticated lexical dependencies.
-[Pull request #1093](https://github.com/odvcencio/gotreesitter/pull/1093) closed
-[issue #1087](https://github.com/odvcencio/gotreesitter/issues/1087).
+[Pull request #1093](https://github.com/davidwalter0/gotreesitter/pull/1093) closed
+[issue #1087](https://github.com/davidwalter0/gotreesitter/issues/1087).
 Read the [restoration report](docs/performance/token-invariant-restoration-2026-09-05.md) for correctness and performance evidence.
 General reuse with external scanners requires explicit certification, with
 boundary checkpoints where configured. Uncertified cases use the legacy
@@ -841,13 +841,13 @@ including authenticated nested nonterminals, and bounded Go end-of-file recovery
 These changes do not complete compact parser graduation.
 
 The v0.52.0 release disables the unsafe shortcut as a temporary mitigation for
-[issue #1087](https://github.com/odvcencio/gotreesitter/issues/1087).
+[issue #1087](https://github.com/davidwalter0/gotreesitter/issues/1087).
 Ordinary subtree reuse and no-edit reuse remain available.
 The owner approved the temporary slowdown. The measured single-byte edit rises
 from 1.706 us to 3,350.460 us. Full-parse and no-edit timing changes are not
 significant. See the [release performance report](docs/performance/release-v0.52.0-2026-09-05.md).
 The unreleased implementation restores the shortcut with authenticated lexical dependency proofs.
-[Pull request #1093](https://github.com/odvcencio/gotreesitter/pull/1093) closed that issue.
+[Pull request #1093](https://github.com/davidwalter0/gotreesitter/pull/1093) closed that issue.
 Read the [restoration report](docs/performance/token-invariant-restoration-2026-09-05.md) for the separate measurements.
 Lexical error-leaf flags and TypeScript recovery divergences remain graduation work.
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 func TestMarkdownInlineConflictPolicyRoutes(t *testing.T) {

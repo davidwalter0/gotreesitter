@@ -129,7 +129,7 @@ Then check out the target commit in detached mode:
 ~~~sh
 sudo mkdir -p /srv/gotreesitter-perf
 sudo chown "$USER":"$USER" /srv/gotreesitter-perf
-git clone https://github.com/odvcencio/gotreesitter.git \
+git clone https://github.com/davidwalter0/gotreesitter.git \
   /srv/gotreesitter-perf/gotreesitter
 cd /srv/gotreesitter-perf/gotreesitter
 git fetch --tags --prune origin

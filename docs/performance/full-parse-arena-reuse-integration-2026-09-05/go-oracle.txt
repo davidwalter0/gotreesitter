@@ -59,4 +59,4 @@
     --- PASS: TestGoTokenInvariantLookaheadNumericReuseLockedC/forced_legacy (0.00s)
     --- PASS: TestGoTokenInvariantLookaheadNumericReuseLockedC/compact_enabled (0.00s)
 PASS
-ok  	github.com/odvcencio/gotreesitter/cgo_harness	1.005s
+ok  	github.com/davidwalter0/gotreesitter/cgo_harness	1.005s

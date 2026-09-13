@@ -1,7 +1,7 @@
 package grammars
 
 import (
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // This file carries lexer helpers that more than one grammar shares. It has no

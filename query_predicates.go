@@ -65,7 +65,11 @@ func matchesPredicateWithReader[N comparable, C any, R queryNodeReader[N, C]](q 
 	case predicateIsExported:
 		text, ok := captureTextWithReader(pred.leftCapture, captures, source, reader)
 		return ok && textIsExported(text)
-	case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip:
+	case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateGeneral:
+		// predicateGeneral is a non-standard predicate: it is never
+		// evaluated in-engine, so it never rejects a match here. Callers
+		// retrieve it via Query.GeneralPredicates and evaluate it
+		// themselves against the match's captures.
 		return true
 	default:
 		return false
@@ -107,7 +111,7 @@ func predicatesStillViableWithReader[N comparable, C any, R queryNodeReader[N, C
 func predicatesCanRejectMatch(predicates []QueryPredicate) bool {
 	for _, pred := range predicates {
 		switch pred.kind {
-		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateIs, predicateIsNot:
+		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateIs, predicateIsNot, predicateGeneral:
 		default:
 			return true
 		}

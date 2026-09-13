@@ -6,8 +6,8 @@ import (
 	"runtime/debug"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // recoveryMemoryBoundWitnesses are four adversarial inputs, all reachable

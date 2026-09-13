@@ -32,7 +32,7 @@ import (
 	"os"
 	"sync"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // parserCoreCorridorEnabled gates the corridor lane. Stage 2 shipped it

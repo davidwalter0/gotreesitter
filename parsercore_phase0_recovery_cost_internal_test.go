@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // parsercore_phase0_recovery_cost_internal_test.go carries campaign v7

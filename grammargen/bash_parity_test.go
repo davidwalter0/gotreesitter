@@ -40,8 +40,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // Bash real-corpus parity floor (real_corpus_parity_floors.json v3, grammar

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // TestIssue454CIncrementalDeleteMatchesFresh is the named regression case for

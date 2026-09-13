@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // Compile-time proof that Go's scanner encodes the quiescence marker.

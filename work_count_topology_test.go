@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 const erlangIssue984Source = "000\"0A!A \"A\"=0:A0!)A\"0%0000"

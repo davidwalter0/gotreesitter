@@ -2,7 +2,7 @@
 
 package gotreesitter
 
-import core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+import core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 
 // mergeRecoveredReductionSiblingOwned preserves C's existing sibling order.
 // Equal stored costs permit a merge; they do not select an ambiguity winner.

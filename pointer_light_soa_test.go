@@ -1,6 +1,6 @@
 package gotreesitter_test
 
-import "github.com/odvcencio/gotreesitter"
+import "github.com/davidwalter0/gotreesitter"
 
 // --- Wave7/plight measurement-spike prototype -----------------------------
 //

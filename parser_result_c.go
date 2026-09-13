@@ -17,8 +17,26 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_recovered_top_level_chunks", func() {
 			normalizeCRecoveredTopLevelChunks(root, source, p, lang)
 		})
+		run("c_extern_macro_multi_declarator", func() {
+			normalizeCExternMacroMultiDeclarator(root, source, p, lang)
+		})
 		run("cpp_malformed_class_function_definition", func() {
 			normalizeCppMalformedClassFunctionDefinition(root, source, lang)
+		})
+		run("cpp_inline_error_return_type", func() {
+			normalizeCppInlineErrorReturnType(root, source, lang)
+		})
+		run("cpp_out_of_line_defaulted_empty_param_member", func() {
+			normalizeCppOutOfLineDefaultedEmptyParamMember(root, source, lang)
+		})
+		run("cpp_nested_template_declaration", func() {
+			normalizeCppNestedTemplateDeclaration(root, source, lang)
+		})
+		run("cpp_nested_template_call", func() {
+			normalizeCppNestedTemplateCall(root, source, lang)
+		})
+		run("cpp_sizeof_decltype_scope", func() {
+			normalizeCppSizeofDecltypeScope(root, source, lang)
 		})
 		// Fused walk covers two preorder passes (builtin primitive identifiers +
 		// preproc newline spans). It formerly also carried declaration-bounds
@@ -33,21 +51,43 @@ func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lan
 		run("c_sizeof_unknown_type_identifiers", func() {
 			normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
 		})
+		run("c_sizeof_cast_merged_signed_literal", func() {
+			normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
+		})
 		run("c_cast_unknown_type_identifiers", func() {
 			normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 		})
 		run("c_bare_type_identifier_expression_statements", func() {
 			normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
 		})
+		run("c_pointer_assignment_inversion", func() {
+			normalizeCPointerAssignmentInversion(root, lang)
+		})
+		run("c_macro_calling_convention_type_specifier", func() {
+			normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
+		})
+		run("c_preproc_arg_leading_comment", func() {
+			normalizeCPreprocArgLeadingComment(root, source, lang)
+		})
 		return
 	}
 	normalizeCTranslationUnitRoot(root, lang)
 	normalizeCRecoveredTopLevelChunks(root, source, p, lang)
+	normalizeCExternMacroMultiDeclarator(root, source, p, lang)
 	normalizeCppMalformedClassFunctionDefinition(root, source, lang)
+	normalizeCppInlineErrorReturnType(root, source, lang)
+	normalizeCppOutOfLineDefaultedEmptyParamMember(root, source, lang)
+	normalizeCppNestedTemplateDeclaration(root, source, lang)
+	normalizeCppNestedTemplateCall(root, source, lang)
+	normalizeCppSizeofDecltypeScope(root, source, lang)
 	normalizeCFusedDeclVariadicWalk(root, source, lang)
 	normalizeCSizeofUnknownTypeIdentifiers(root, source, lang)
+	normalizeCSizeofCastMergedSignedLiteral(root, source, lang)
 	normalizeCCastUnknownTypeIdentifiers(root, source, lang)
 	normalizeCBareTypeIdentifierExpressionStatements(root, source, lang)
+	normalizeCPointerAssignmentInversion(root, lang)
+	normalizeCMacroCallingConventionTypeSpecifier(root, source, lang)
+	normalizeCPreprocArgLeadingComment(root, source, lang)
 }
 
 // normalizeCFusedDeclVariadicWalk performs the work of two preorder walks in

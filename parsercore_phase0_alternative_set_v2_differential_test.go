@@ -37,10 +37,10 @@ import (
 	"strings"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 type v2DifferentialResult struct {

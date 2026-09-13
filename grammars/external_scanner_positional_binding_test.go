@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // parseHasError parses src with lang and reports whether the resulting tree has

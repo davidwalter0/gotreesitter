@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammargen"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammargen"
 )
 
 type sourceFlags struct {

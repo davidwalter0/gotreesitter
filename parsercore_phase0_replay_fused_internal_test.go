@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // TestCompactFusedReplayMatchesTopDownReplay proves that the parse states the

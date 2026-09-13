@@ -3,8 +3,8 @@ package parse_test
 import (
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestDescendantForByteRangeCParity locks the tree-sitter C boundary/out-of-

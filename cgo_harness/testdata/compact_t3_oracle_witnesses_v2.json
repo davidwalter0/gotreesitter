@@ -2,7 +2,7 @@
   "schema": "compact-t3-c-oracle-witnesses-v2",
   "version": 2,
   "parity_scope": "full_structural",
-  "tracking_issue": "https://github.com/odvcencio/gotreesitter/issues/587",
+  "tracking_issue": "https://github.com/davidwalter0/gotreesitter/issues/587",
   "witness_count": 20,
   "language_counts": {
     "html": 10,

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter/grammargen"
+	"github.com/davidwalter0/gotreesitter/grammargen"
 )
 
 const minimumTreeSitterCLIMinor = 26

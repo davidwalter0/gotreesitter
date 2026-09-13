@@ -311,13 +311,25 @@ type glrMergeScratch struct {
 	// tests. Parser paths use the three split fields above.
 	cRecoveryCost     bool
 	audit             *runtimeAudit
-	equivEpoch        uint32
-	gssPointerEpoch   uint32
-	equivCache        []glrNodeEquivCacheEntry
-	stackEquivCache   []glrStackEquivCacheEntry
-	spineEquivCache   []glrSpineEquivCacheEntry
-	frontierHashCache []glrStackFrontierHashCacheEntry
-	cErrorCost        map[*Node]glrCErrorCostEntry
+	// mergePerKeyCapOverflow counts merge-key survivor-cap overflow events for
+	// the current parse: each time an incoming same-key candidate arrives at
+	// a merge key that already holds perKeyCap survivors, forcing it to be
+	// dropped or to replace the weakest retained candidate. Unlike audit
+	// (opt-in via EnableRuntimeAudit, single-threaded profiling only), this
+	// counter is ALWAYS tracked — it is the always-on signal surfaced via
+	// ParseRuntime.MergePerKeyCapOverflow / Tree.MergePerKeyCapExceeded, so a
+	// language whose per-key cap is too tight for a given input is
+	// observable without enabling any debug mode. Reset once per parse in
+	// Parser.configureParseScratch; see recordParseRuntimeLoopStats for
+	// where it is copied onto the finished tree's ParseRuntime.
+	mergePerKeyCapOverflow uint64
+	equivEpoch             uint32
+	gssPointerEpoch        uint32
+	equivCache             []glrNodeEquivCacheEntry
+	stackEquivCache        []glrStackEquivCacheEntry
+	spineEquivCache        []glrSpineEquivCacheEntry
+	frontierHashCache      []glrStackFrontierHashCacheEntry
+	cErrorCost             map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
 	// live on gssNode, validated against gssPrefixAggGen. reset clears the full
@@ -5792,6 +5804,9 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
+		// Always-on counterpart of the build-tag-gated perf counter above:
+		// see glrMergeScratch.mergePerKeyCapOverflow's doc comment.
+		scratch.mergePerKeyCapOverflow++
 		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
@@ -5987,6 +6002,9 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
+		// Always-on counterpart of the build-tag-gated perf counter above:
+		// see glrMergeScratch.mergePerKeyCapOverflow's doc comment.
+		scratch.mergePerKeyCapOverflow++
 		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
@@ -6163,6 +6181,9 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
+		// Always-on counterpart of the build-tag-gated perf counter above:
+		// see glrMergeScratch.mergePerKeyCapOverflow's doc comment.
+		scratch.mergePerKeyCapOverflow++
 
 		// Per-key alternative budget reached: replace the weakest
 		// retained candidate only if this stack is better.

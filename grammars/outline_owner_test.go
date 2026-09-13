@@ -3,8 +3,8 @@ package grammars_test
 import (
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestOutlineOwnerRulesResolvesGoReceiverThroughAccessor proves the shipped

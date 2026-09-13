@@ -171,7 +171,7 @@ included-range, and fallback parses, so these fixes stay. See the
 ### Compact route repair (issue #454)
 
 - Repair the three regressions on the compact candidate route that issue
-  [#454](https://github.com/odvcencio/gotreesitter/issues/454) measured on
+  [#454](https://github.com/davidwalter0/gotreesitter/issues/454) measured on
   137 KiB editor fixtures. See the
   [repair report](docs/performance/issue-454-compact-route-repair-2026-09-07.md).
 - Compact error recovery scales linearly. The recovery cost memo grew to the
@@ -200,7 +200,7 @@ included-range, and fallback parses, so these fixes stay. See the
   Run randomized comparisons before reporting gains for the corrected code.
 - Halt a production GLR stack at a no-action point when a sibling stack
   accepts the lookahead, before the previous-shift recovery runs. Pull
-  request [#709](https://github.com/odvcencio/gotreesitter/pull/709) added a
+  request [#709](https://github.com/davidwalter0/gotreesitter/pull/709) added a
   per-stack re-lex that kept the constructor-specifier fork of
   `static inline void f(int *v) {}` alive, and the recovered fork won
   selection with an ERROR node. Five C++ witnesses now match the compact route.
@@ -286,7 +286,7 @@ These changes do not complete compact parser graduation or retire the legacy par
 - The detailed entries below preserve the development history, including
   rejected experiments, superseded measurements, and unresolved parity blockers.
 
-Issue [#1087](https://github.com/odvcencio/gotreesitter/issues/1087) remains open.
+Issue [#1087](https://github.com/davidwalter0/gotreesitter/issues/1087) remains open.
 This release temporarily disables the unsafe same-width token-invariant shortcut.
 Real edits reparse through the supported incremental or full-parse route.
 Ordinary subtree reuse and no-edit reuse remain available.
@@ -303,10 +303,10 @@ The attempted flag correction changed AWK recovery selection and remains deferre
 
 ### Performance tooling and optimizations
 
-- Pull request [#1089](https://github.com/odvcencio/gotreesitter/pull/1089)
+- Pull request [#1089](https://github.com/davidwalter0/gotreesitter/pull/1089)
   restores paired performance evidence and authenticated work counts.
   The paired driver alternates execution order and rejects incomplete evidence.
-- Pull request [#1090](https://github.com/odvcencio/gotreesitter/pull/1090)
+- Pull request [#1090](https://github.com/davidwalter0/gotreesitter/pull/1090)
   caches recovery visible-subtree counts and removes canonicalization callback
   allocations. The cache reduces time across four frozen Go fixtures.
   The callback change reduces allocations without a significant timing change.
@@ -318,6 +318,21 @@ The attempted flag correction changed AWK recovery selection and remains deferre
 The owner authorized a v0.52.0-only exception for an unsupported tag-creation
 actor rule. All other publication gates remain mandatory. See
 [the dated exception](docs/releasing.md#v0520-only-tag-creation-exception).
+- Bash parameter-expansion bodies (`${var:-default}`, `${var:=x}`, `${var:?e}`,
+  `${var:+x}`, `${var/pat/repl}`, `${var//pat/repl}`, `${var#p}`/`${var%p}`,
+  `${var,,}`/`${var^^}`, `${var@U}`, `${arr[i]}`, and nested forms) now parse in
+  the grammargen-generated lane instead of collapsing the whole `${...}` into an
+  ERROR. Bash routes through LALR state merging (29 external symbols), which
+  collapses the single post-`${` parser state; a reduce-follow-widened keyword in
+  that merged state was injecting bash's keyword-capture `word` token into its
+  lex mode even though `word` has no real action there. `word`'s broad charset
+  (`: = / , - ! ...`) then won longest-match over the specific
+  `_simple_variable_name` (`/\w+/`), swallowing the operator and forcing the
+  expansion into ERROR. A new opt-in grammar flag `SuppressKeywordWordShadow`
+  (set for bash) drops the injected keyword-capture word from any state where it
+  has no real action, no keyword has a real action, and a real-action pattern
+  terminal would be shadowed — mirroring tree-sitter C's precise per-state
+  tables. Bash real-corpus deep-parity rises accordingly.
 
 ### Performance
 
@@ -529,7 +544,7 @@ actor rule. All other publication gates remain mandatory. See
   witnesses still differ from locked C. The 20-seed repair comparison found no
   significant primary timing change. Bytes and allocations stayed unchanged.
   One warmed large-witness sample decreased 0.113090 percent. Keep issue #576
-  open. See [the Swift #576 blocker receipt](https://github.com/odvcencio/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-576-compact-correctness-blocker.md).
+  open. See [the Swift #576 blocker receipt](https://github.com/davidwalter0/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-576-compact-correctness-blocker.md).
 
 - Recorded the unreceipted `dispatch.julia` blocker at base
   `b35b86cb84d620305515abf970d5598c9573a48b`. The focused Docker receipt
@@ -1409,7 +1424,7 @@ actor rule. All other publication gates remain mandatory. See
   first `bar` mismatch. The corpus target region remains an `ERROR` span from
   `6828` to `6984`, with `MutableSpan` at `6828..6839`. No parser or grammar
   code ships. Keep issue #576 open. See the
-  [Swift compact-parser blocker receipt](https://github.com/odvcencio/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-576-compact-correctness-blocker.md)
+  [Swift compact-parser blocker receipt](https://github.com/davidwalter0/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-576-compact-correctness-blocker.md)
   for the full provenance probe and reopening condition.
 
 ### Removed
@@ -1590,7 +1605,7 @@ actor rule. All other publication gates remain mandatory. See
   C. Keep Bash `e \\ cho hi` clean. Keep Erlang `\x010` and `\x100` clean with
   root span `1..2`.
 
-- Correct the Markdown scanner documentation for [issue #454](https://github.com/odvcencio/gotreesitter/issues/454).
+- Correct the Markdown scanner documentation for [issue #454](https://github.com/davidwalter0/gotreesitter/issues/454).
   Mark Markdown as `certified reuse`. Changed-token and shape-changing edits
   can still use the production full-parse fallback when reuse gates reject the
   edit. Keep Markdown Inline as `fallback (uncertified)`.
@@ -1638,7 +1653,7 @@ actor rule. All other publication gates remain mandatory. See
 
 ### Continuous integration (CI)
 
-- The project merged [pull request (PR) #732](https://github.com/odvcencio/gotreesitter/pull/732).
+- The project merged [pull request (PR) #732](https://github.com/davidwalter0/gotreesitter/pull/732).
   Its CI-only change separates query-fleet smoke tests from regular shards and
   is not part of this release.
 
@@ -1646,19 +1661,19 @@ actor rule. All other publication gates remain mandatory. See
 
 The following items remain open:
 
-- [Issue #454](https://github.com/odvcencio/gotreesitter/issues/454) tracks
+- [Issue #454](https://github.com/davidwalter0/gotreesitter/issues/454) tracks
   downstream field reports.
 
-- [Issue #576](https://github.com/odvcencio/gotreesitter/issues/576) tracks
+- [Issue #576](https://github.com/davidwalter0/gotreesitter/issues/576) tracks
   Swift recovery divergence.
 
-- [Issue #586](https://github.com/odvcencio/gotreesitter/issues/586) tracks
+- [Issue #586](https://github.com/davidwalter0/gotreesitter/issues/586) tracks
   shared GLR error-cost bounds.
 
-- The [Swift #586 compact-parser receipt](https://github.com/odvcencio/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-586-compact-correctness-blocker.md)
+- The [Swift #586 compact-parser receipt](https://github.com/davidwalter0/gotreesitter/blob/6b6d49341699df9314b77d52ea92dc950e7364e4/docs/swift-586-compact-correctness-blocker.md)
   records a NO-GO recovery-cost and token-producer blocker. Keep the issue open.
 
-- [Issue #728](https://github.com/odvcencio/gotreesitter/issues/728) tracks
+- [Issue #728](https://github.com/davidwalter0/gotreesitter/issues/728) tracks
   external-scanner incremental reuse.
 
 ## [0.50.1] - 2026-08-14
@@ -1863,7 +1878,7 @@ The following items remain open:
 - C enum lists with three or more enumerators no longer publish `ERROR` or
   `MISSING` nodes. A clean forest result can replace a recovered tree only
   after it covers the full source and contains no recovery nodes. This fixes
-  [issue #667](https://github.com/odvcencio/gotreesitter/issues/667).
+  [issue #667](https://github.com/davidwalter0/gotreesitter/issues/667).
 
 - `Node.HasErrorOrMissing` reports both recovery node forms. The
   `grammargen parse -strict` command now rejects either form.
@@ -2084,7 +2099,7 @@ The following items remain open:
 - Anonymous separator nodes in Python import and subscript forms stay
   unfielded.
   The patch restores field-name behavior from the reference C runtime.
-  This fixes [issue #660](https://github.com/odvcencio/gotreesitter/issues/660).
+  This fixes [issue #660](https://github.com/davidwalter0/gotreesitter/issues/660).
 
 ## [0.48.0] - 2026-08-01
 
@@ -2094,8 +2109,8 @@ The following items remain open:
   Twelve files come from swiftlang/swift 6.3 and apple/swift-algorithms 1.2.1.
   A ratcheting expectations test fails on any regression or unrecorded fix.
   Five upstream grammar gaps are recorded in issues
-  [#574](https://github.com/odvcencio/gotreesitter/issues/574) through
-  [#578](https://github.com/odvcencio/gotreesitter/issues/578).
+  [#574](https://github.com/davidwalter0/gotreesitter/issues/574) through
+  [#578](https://github.com/davidwalter0/gotreesitter/issues/578).
 
 - The dispatcher census now reports distinct Ada, Apex, Bash, and Cooklang
   materialization subpasses.
@@ -2212,31 +2227,31 @@ The following items remain open:
   parenthesised member access in the then-branch (a call argument or a
   parenthesised negation). The then-block no longer swallows the trailing
   `else` as a call's trailing closure.
-  This fixes [#560](https://github.com/odvcencio/gotreesitter/issues/560).
+  This fixes [#560](https://github.com/davidwalter0/gotreesitter/issues/560).
 
 - A Swift optional generic type such as `Range<Int>?` now parses cleanly.
   The token source defers the closer to the DFA only when a reduce action
   closes an open `type_arguments` production.
-  This fixes [#556](https://github.com/odvcencio/gotreesitter/issues/556).
+  This fixes [#556](https://github.com/davidwalter0/gotreesitter/issues/556).
 
 - A Swift constrained extension with a multiline `where` clause now parses
   cleanly. The scanner carries the resolved previous rune across comment
   handoffs instead of re-reading a raw source byte.
-  This fixes [#557](https://github.com/odvcencio/gotreesitter/issues/557).
+  This fixes [#557](https://github.com/davidwalter0/gotreesitter/issues/557).
 
 - Swift nested `if let` chains inside methods now parse cleanly.
   The recovery pass brackets only the right-hand side of the binding.
-  This fixes [#558](https://github.com/odvcencio/gotreesitter/issues/558).
+  This fixes [#558](https://github.com/davidwalter0/gotreesitter/issues/558).
 
 - Three or more nested Swift generic type arguments such as `A<B<C<Int>>>`
   now parse cleanly. The split fires only when an unclosed `<` sits open, so
   custom operators such as `>>>` stay intact.
-  This fixes [#559](https://github.com/odvcencio/gotreesitter/issues/559).
+  This fixes [#559](https://github.com/davidwalter0/gotreesitter/issues/559).
 
 - A Swift method that contains a `for` loop over a range, followed by another
   method, now parses cleanly. The recovery pass also fires when the `for`
   statement forms with an error inside it.
-  This fixes [#561](https://github.com/odvcencio/gotreesitter/issues/561).
+  This fixes [#561](https://github.com/davidwalter0/gotreesitter/issues/561).
 
 - Raw error-cost walks now retain each captured child shape reference.
   A later mutable node update cannot create a recursive shape cycle.
@@ -2245,13 +2260,13 @@ The following items remain open:
 - TypeScript and TSX now parse `in`, `out`, and `in out` variance
   annotations on type parameters.
   The source overlay uses the semantics from upstream pull request 361.
-  This fixes [issue #539](https://github.com/odvcencio/gotreesitter/issues/539).
+  This fixes [issue #539](https://github.com/davidwalter0/gotreesitter/issues/539).
 
 - TypeScript and TSX now separate adjacent generic call signatures at a
   newline.
   The grammar uses the dedicated function-signature separator.
   Generic automatic-semicolon behavior remains unchanged.
-  This fixes [issue #540](https://github.com/odvcencio/gotreesitter/issues/540).
+  This fixes [issue #540](https://github.com/davidwalter0/gotreesitter/issues/540).
 
 - Compact reductions now merge only with live scheduler headers.
   Removed historical versions no longer consume the shared boundary link cap.
@@ -2260,7 +2275,7 @@ The following items remain open:
 - Shared DFA token election now prefers one composable close angle over a
   wider close-angle token.
   Nested TypeScript union arguments now retain the generic-call lineage.
-  This fixes [issue #541](https://github.com/odvcencio/gotreesitter/issues/541).
+  This fixes [issue #541](https://github.com/davidwalter0/gotreesitter/issues/541).
   Apex nested generic declarations now match the pinned C tree without a
   result rewrite.
   This retires the Apex generic local declaration compatibility pass.
@@ -2269,18 +2284,18 @@ The following items remain open:
   the candidate's runtime receipt.
   This enables the existing combined stack-and-merge retry for the ZodUnion
   fixture.
-  This fixes [issue #544](https://github.com/odvcencio/gotreesitter/issues/544).
+  This fixes [issue #544](https://github.com/davidwalter0/gotreesitter/issues/544).
 
 - Swift optional bindings now keep the statement body separate from a trailing
   closure. The generator now uses exact advanced LR item precedence.
   Production, compact, and pinned C tests cover the correction.
   The regenerated Swift blob retains its exact runtime profile certification.
-  This fixes [#542](https://github.com/odvcencio/gotreesitter/issues/542).
+  This fixes [#542](https://github.com/davidwalter0/gotreesitter/issues/542).
 
 - The DFA lexer now splits adjacent Swift generic closers by parser state.
   It preserves `>>` when the active state accepts the shift operator.
   The pinned C oracle now matches without divergence.
-  This fixes [#543](https://github.com/odvcencio/gotreesitter/issues/543).
+  This fixes [#543](https://github.com/davidwalter0/gotreesitter/issues/543).
 
 - Native `grammar.js` import now ignores comments in semantic AST children.
   All 206 pinned grammars show import coverage increasing from 62 to 70.
@@ -6317,99 +6332,99 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.52.0...HEAD
-[0.52.0]: https://github.com/odvcencio/gotreesitter/compare/v0.51.0...v0.52.0
-[0.51.0]: https://github.com/odvcencio/gotreesitter/compare/v0.50.1...v0.51.0
-[0.50.1]: https://github.com/odvcencio/gotreesitter/compare/v0.50.0...v0.50.1
-[0.50.0]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...v0.50.0
-[0.49.0]: https://github.com/odvcencio/gotreesitter/compare/v0.48.1...v0.49.0
-[0.48.1]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...v0.48.1
-[0.48.0]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...v0.48.0
-[0.47.1]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...v0.47.1
-[0.47.0]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...v0.47.0
-[0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
-[0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
-[0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
-[0.44.0]: https://github.com/odvcencio/gotreesitter/compare/v0.43.1...v0.44.0
-[0.43.1]: https://github.com/odvcencio/gotreesitter/compare/v0.43.0...v0.43.1
-[0.43.0]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...v0.43.0
-[0.42.0]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...v0.42.0
-[0.41.0]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...v0.41.0
-[0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
-[0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
-[0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
-[0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
-[0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0
-[0.34.0]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...v0.34.0
-[0.33.0]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...v0.33.0
-[0.32.0]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...v0.32.0
-[0.31.0]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...v0.31.0
-[0.30.0]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...v0.30.0
-[0.29.0]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...v0.29.0
-[0.28.0]: https://github.com/odvcencio/gotreesitter/compare/v0.27.0...v0.28.0
-[0.27.0]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...v0.27.0
-[0.26.1]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...v0.26.1
-[0.26.0]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...v0.26.0
-[0.25.0]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...v0.25.0
-[0.24.1]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...v0.24.1
-[0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0
-[0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
-[0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
-[0.22.5]: https://github.com/odvcencio/gotreesitter/compare/v0.22.4...v0.22.5
-[0.22.4]: https://github.com/odvcencio/gotreesitter/compare/v0.22.3...v0.22.4
-[0.22.3]: https://github.com/odvcencio/gotreesitter/compare/v0.22.2...v0.22.3
-[0.22.2]: https://github.com/odvcencio/gotreesitter/compare/v0.22.1...v0.22.2
-[0.22.1]: https://github.com/odvcencio/gotreesitter/compare/v0.22.0...v0.22.1
-[0.22.0]: https://github.com/odvcencio/gotreesitter/compare/v0.21.0...v0.22.0
-[0.21.0]: https://github.com/odvcencio/gotreesitter/compare/v0.20.9...v0.21.0
-[0.20.9]: https://github.com/odvcencio/gotreesitter/compare/v0.20.8...v0.20.9
-[0.20.8]: https://github.com/odvcencio/gotreesitter/compare/v0.20.7...v0.20.8
-[0.20.7]: https://github.com/odvcencio/gotreesitter/compare/v0.20.6...v0.20.7
-[0.20.6]: https://github.com/odvcencio/gotreesitter/compare/v0.20.5...v0.20.6
-[0.20.5]: https://github.com/odvcencio/gotreesitter/compare/v0.20.4...v0.20.5
-[0.20.4]: https://github.com/odvcencio/gotreesitter/compare/v0.20.3...v0.20.4
-[0.20.3]: https://github.com/odvcencio/gotreesitter/compare/v0.20.2...v0.20.3
-[0.20.2]: https://github.com/odvcencio/gotreesitter/compare/v0.20.1...v0.20.2
-[0.20.1]: https://github.com/odvcencio/gotreesitter/compare/v0.20.0...v0.20.1
-[0.20.0]: https://github.com/odvcencio/gotreesitter/compare/v0.20.0-rc4...v0.20.0
-[0.20.0-rc4]: https://github.com/odvcencio/gotreesitter/compare/v0.20.0-rc3...v0.20.0-rc4
-[0.20.0-rc3]: https://github.com/odvcencio/gotreesitter/compare/v0.19.1...v0.20.0-rc3
-[0.19.1]: https://github.com/odvcencio/gotreesitter/compare/v0.19.0...v0.19.1
-[0.19.0]: https://github.com/odvcencio/gotreesitter/compare/v0.18.0...v0.19.0
-[0.18.0]: https://github.com/odvcencio/gotreesitter/compare/v0.17.4...v0.18.0
-[0.17.4]: https://github.com/odvcencio/gotreesitter/compare/v0.17.3...v0.17.4
-[0.17.3]: https://github.com/odvcencio/gotreesitter/compare/v0.17.2...v0.17.3
-[0.17.2]: https://github.com/odvcencio/gotreesitter/compare/v0.17.1...v0.17.2
-[0.17.1]: https://github.com/odvcencio/gotreesitter/compare/v0.17.0...v0.17.1
-[0.17.0]: https://github.com/odvcencio/gotreesitter/compare/v0.16.0...v0.17.0
-[0.16.0]: https://github.com/odvcencio/gotreesitter/compare/v0.15.3...v0.16.0
-[0.15.3]: https://github.com/odvcencio/gotreesitter/compare/v0.15.2...v0.15.3
-[0.15.2]: https://github.com/odvcencio/gotreesitter/compare/v0.15.1...v0.15.2
-[0.15.1]: https://github.com/odvcencio/gotreesitter/compare/v0.15.0...v0.15.1
-[0.15.0]: https://github.com/odvcencio/gotreesitter/compare/v0.14.0...v0.15.0
-[0.14.0]: https://github.com/odvcencio/gotreesitter/compare/v0.13.4...v0.14.0
-[0.13.4]: https://github.com/odvcencio/gotreesitter/compare/v0.13.3...v0.13.4
-[0.13.3]: https://github.com/odvcencio/gotreesitter/compare/v0.13.0...v0.13.3
-[0.13.0]: https://github.com/odvcencio/gotreesitter/compare/v0.12.2...v0.13.0
-[0.12.2]: https://github.com/odvcencio/gotreesitter/compare/v0.12.1...v0.12.2
-[0.12.1]: https://github.com/odvcencio/gotreesitter/compare/v0.12.0...v0.12.1
-[0.12.0]: https://github.com/odvcencio/gotreesitter/compare/v0.11.2...v0.12.0
-[0.11.2]: https://github.com/odvcencio/gotreesitter/compare/v0.11.1...v0.11.2
-[0.11.1]: https://github.com/odvcencio/gotreesitter/compare/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/odvcencio/gotreesitter/compare/v0.10.1...v0.11.0
-[0.10.1]: https://github.com/odvcencio/gotreesitter/compare/v0.10.0...v0.10.1
-[0.10.0]: https://github.com/odvcencio/gotreesitter/compare/v0.9.2...v0.10.0
-[0.9.2]: https://github.com/odvcencio/gotreesitter/compare/v0.9.1...v0.9.2
-[0.9.1]: https://github.com/odvcencio/gotreesitter/compare/v0.9.0...v0.9.1
-[0.9.0]: https://github.com/odvcencio/gotreesitter/compare/v0.8.1...v0.9.0
-[0.8.1]: https://github.com/odvcencio/gotreesitter/compare/v0.8.0...v0.8.1
-[0.8.0]: https://github.com/odvcencio/gotreesitter/compare/v0.7.4...v0.8.0
-[0.7.4]: https://github.com/odvcencio/gotreesitter/compare/v0.7.3...v0.7.4
-[0.7.3]: https://github.com/odvcencio/gotreesitter/compare/v0.7.0...v0.7.3
-[0.7.0]: https://github.com/odvcencio/gotreesitter/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/odvcencio/gotreesitter/compare/v0.5.2...v0.6.0
-[0.5.2]: https://github.com/odvcencio/gotreesitter/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/odvcencio/gotreesitter/compare/v0.4.0...v0.5.1
-[0.4.0]: https://github.com/odvcencio/gotreesitter/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/odvcencio/gotreesitter/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/odvcencio/gotreesitter/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/davidwalter0/gotreesitter/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.51.0...v0.52.0
+[0.51.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.50.1...v0.51.0
+[0.50.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.50.0...v0.50.1
+[0.50.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.49.0...v0.50.0
+[0.49.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.48.1...v0.49.0
+[0.48.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.48.0...v0.48.1
+[0.48.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.47.1...v0.48.0
+[0.47.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.47.0...v0.47.1
+[0.47.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.44.1...v0.45.0
+[0.44.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.44.0...v0.44.1
+[0.44.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.43.1...v0.44.0
+[0.43.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.43.0...v0.43.1
+[0.43.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.42.0...v0.43.0
+[0.42.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.39.0...v0.40.0
+[0.39.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.38.0...v0.39.0
+[0.38.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.37.0...v0.38.0
+[0.37.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.36.0...v0.37.0
+[0.36.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.34.0...v0.36.0
+[0.34.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.33.0...v0.34.0
+[0.33.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.26.1...v0.27.0
+[0.26.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.26.0...v0.26.1
+[0.26.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.24.1...v0.25.0
+[0.24.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.24.0...v0.24.1
+[0.24.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.23.1...v0.24.0
+[0.23.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.23.0...v0.23.1
+[0.23.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.5...v0.23.0
+[0.22.5]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.4...v0.22.5
+[0.22.4]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.3...v0.22.4
+[0.22.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.2...v0.22.3
+[0.22.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.1...v0.22.2
+[0.22.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.22.0...v0.22.1
+[0.22.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.9...v0.21.0
+[0.20.9]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.8...v0.20.9
+[0.20.8]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.7...v0.20.8
+[0.20.7]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.6...v0.20.7
+[0.20.6]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.5...v0.20.6
+[0.20.5]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.4...v0.20.5
+[0.20.4]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.3...v0.20.4
+[0.20.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.2...v0.20.3
+[0.20.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.1...v0.20.2
+[0.20.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.0-rc4...v0.20.0
+[0.20.0-rc4]: https://github.com/davidwalter0/gotreesitter/compare/v0.20.0-rc3...v0.20.0-rc4
+[0.20.0-rc3]: https://github.com/davidwalter0/gotreesitter/compare/v0.19.1...v0.20.0-rc3
+[0.19.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.17.4...v0.18.0
+[0.17.4]: https://github.com/davidwalter0/gotreesitter/compare/v0.17.3...v0.17.4
+[0.17.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.17.2...v0.17.3
+[0.17.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.17.1...v0.17.2
+[0.17.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.15.3...v0.16.0
+[0.15.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.15.2...v0.15.3
+[0.15.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.13.4...v0.14.0
+[0.13.4]: https://github.com/davidwalter0/gotreesitter/compare/v0.13.3...v0.13.4
+[0.13.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.13.0...v0.13.3
+[0.13.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.12.2...v0.13.0
+[0.12.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.11.2...v0.12.0
+[0.11.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.10.1...v0.11.0
+[0.10.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.9.2...v0.10.0
+[0.9.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.7.4...v0.8.0
+[0.7.4]: https://github.com/davidwalter0/gotreesitter/compare/v0.7.3...v0.7.4
+[0.7.3]: https://github.com/davidwalter0/gotreesitter/compare/v0.7.0...v0.7.3
+[0.7.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/davidwalter0/gotreesitter/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/davidwalter0/gotreesitter/compare/v0.4.0...v0.5.1
+[0.4.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/davidwalter0/gotreesitter/compare/v0.1.0...v0.2.0

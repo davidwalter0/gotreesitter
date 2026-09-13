@@ -124,12 +124,23 @@ var inferredTagsQueryOverrides = map[string]string{
 	}, "\n"),
 
 	// --- golden-fixture freezes (see comment above) ---
+	//
+	// Fork additions (davidwalter0): python/javascript/rust/c below carry
+	// net-new definition captures on top of the frozen rows -- module-level
+	// python constants, JS const/let declarators (function vs constant kept
+	// mutually exclusive by an explicit value-type allowlist, since the Tagger
+	// emits one Tag per QueryMatch with no dedupe), rust const/static items,
+	// and C #define plus file-scope variables. Each @definition capture is
+	// pinned to the definition node, never the (module)/(translation_unit)
+	// anchor, and the anchor is what excludes function-local bindings.
 
 	"python": strings.Join([]string{
 		"(function_definition (identifier) @name) @definition.function",
 		"(class_definition (identifier) @name) @definition.class",
 		"(call (identifier) @name) @reference.call",
 		"(call (attribute (identifier) @name)) @reference.call",
+		"(module (expression_statement (assignment left: (identifier) @name) @definition.constant))",
+		"(module (assignment left: (identifier) @name) @definition.constant)",
 	}, "\n"),
 	"javascript": strings.Join([]string{
 		"(function_declaration (identifier) @name) @definition.function",
@@ -137,6 +148,9 @@ var inferredTagsQueryOverrides = map[string]string{
 		"(class_declaration (identifier) @name) @definition.class",
 		"(call_expression (identifier) @name) @reference.call",
 		"(call_expression (member_expression (property_identifier) @name)) @reference.call",
+		"(lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @definition.function",
+		"(lexical_declaration (variable_declarator name: (identifier) @name value: (function_expression))) @definition.function",
+		"(lexical_declaration (variable_declarator name: (identifier) @name value: [(number) (string) (template_string) (true) (false) (null) (undefined) (object) (array) (call_expression) (member_expression) (new_expression) (binary_expression) (unary_expression) (identifier) (regex) (ternary_expression)])) @definition.constant",
 	}, "\n"),
 	"typescript": strings.Join([]string{
 		"(function_declaration (identifier) @name) @definition.function",
@@ -174,6 +188,8 @@ var inferredTagsQueryOverrides = map[string]string{
 		"(call_expression (field_expression (field_identifier) @name)) @reference.call",
 		"(call_expression (scoped_identifier (identifier) @name)) @reference.call",
 		"(macro_invocation (identifier) @name) @reference.call",
+		"(const_item (identifier) @name) @definition.constant",
+		"(static_item (identifier) @name) @definition.constant",
 	}, "\n"),
 	"c": strings.Join([]string{
 		"(function_definition (function_declarator (identifier) @name)) @definition.function",
@@ -182,6 +198,9 @@ var inferredTagsQueryOverrides = map[string]string{
 		"(struct_specifier (type_identifier) @name) @definition.type",
 		"(call_expression (identifier) @name) @reference.call",
 		"(call_expression (field_expression (field_identifier) @name)) @reference.call",
+		"(preproc_def name: (identifier) @name) @definition.constant",
+		"(translation_unit (declaration (init_declarator declarator: (identifier) @name)) @definition.variable)",
+		"(translation_unit (declaration declarator: (identifier) @name) @definition.variable)",
 	}, "\n"),
 	"cpp": strings.Join([]string{
 		"(function_definition (function_declarator (identifier) @name)) @definition.function",

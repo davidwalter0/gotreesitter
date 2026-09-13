@@ -10,9 +10,9 @@ import (
 	"reflect"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 type legacyGoldenCheckpoint struct {

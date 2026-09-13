@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func parseTestTree(t *testing.T, source string) (*gotreesitter.Tree, *gotreesitter.Language) {

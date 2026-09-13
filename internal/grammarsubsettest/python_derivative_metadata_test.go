@@ -5,7 +5,7 @@ package grammarsubsettest
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestPythonDerivativeSubsetDoesNotRegisterPythonMetadata(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestAdmissionCandidateGraphQLRootFieldsCOracle(t *testing.T) {

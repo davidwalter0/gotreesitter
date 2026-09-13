@@ -124,6 +124,7 @@ type NormalizedGrammar struct {
 	PreferPreciseExternalLexStates             bool
 	CompactParseStates                         bool
 	SuppressEquivalentExternalReduceLookaheads bool
+	SuppressKeywordWordShadow                  bool
 	ExternalReduceFollowLookaheads             map[string]bool
 
 	// conflictCache is built lazily by LR conflict resolution so repeated
@@ -713,6 +714,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
 	ng.CompactParseStates = g.CompactParseStates
 	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	ng.SuppressKeywordWordShadow = g.SuppressKeywordWordShadow
 	ng.ExternalReduceFollowLookaheads = stringSetFromSlice(g.ExternalReduceFollowLookaheads)
 
 	// Set tokenCount boundary on symbols so assembly knows where terminals end.
@@ -4552,6 +4554,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	out.SuppressKeywordWordShadow = g.SuppressKeywordWordShadow
 	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
 	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
 	out.PreserveHiddenChoicePassthrough = append(out.PreserveHiddenChoicePassthrough, g.PreserveHiddenChoicePassthrough...)
@@ -5357,6 +5360,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
+	out.SuppressKeywordWordShadow = g.SuppressKeywordWordShadow
 	out.ExternalReduceFollowLookaheads = append(out.ExternalReduceFollowLookaheads, g.ExternalReduceFollowLookaheads...)
 	out.PriorityInlinePatterns = append(out.PriorityInlinePatterns, g.PriorityInlinePatterns...)
 	for _, name := range g.PreserveHiddenChoicePassthrough {

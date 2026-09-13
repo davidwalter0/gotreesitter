@@ -1,6 +1,6 @@
-module github.com/odvcencio/gotreesitter
+module github.com/davidwalter0/gotreesitter
 
-go 1.22.0
+go 1.27.0
 
 require (
 	golang.org/x/sync v0.11.0

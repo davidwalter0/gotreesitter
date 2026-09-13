@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"unicode"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // scalaExternalScannerLocalPortSHA256 identifies the marked scanner port.

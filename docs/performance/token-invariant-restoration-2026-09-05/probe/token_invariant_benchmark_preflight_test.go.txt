@@ -11,9 +11,9 @@ import (
 	"reflect"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 const tokenInvariantBenchmarkSourceSHA256 = "2e0f9d4676549c8560cebc3c53877932f921ab9d77c88518227f3018573af4b7"

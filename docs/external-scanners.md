@@ -174,7 +174,7 @@ and the comments in `external_lexer.go` document why:
 ```go
 package pawn
 
-import gts "github.com/odvcencio/gotreesitter"
+import gts "github.com/davidwalter0/gotreesitter"
 
 // External token indexes: order of grammar.json "externals".
 const (

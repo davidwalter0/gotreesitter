@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 type g4EOFRoute uint8

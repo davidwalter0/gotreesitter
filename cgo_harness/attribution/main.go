@@ -202,7 +202,7 @@ func verifyRepoRoot(root string) error {
 	if err != nil {
 		return fmt.Errorf("-repo %s does not look like the gotreesitter repository root: %w", root, err)
 	}
-	if !strings.Contains(string(data), "module github.com/odvcencio/gotreesitter\n") {
+	if !strings.Contains(string(data), "module github.com/davidwalter0/gotreesitter\n") {
 		return fmt.Errorf("-repo %s go.mod is not the gotreesitter root module", root)
 	}
 	return nil

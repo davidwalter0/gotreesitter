@@ -1,6 +1,6 @@
 package lean
 
-import "github.com/odvcencio/gotreesitter"
+import "github.com/davidwalter0/gotreesitter"
 
 const (
 	leanTokenBlockComment = iota

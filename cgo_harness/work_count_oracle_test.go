@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 const (

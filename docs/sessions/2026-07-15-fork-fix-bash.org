@@ -1,0 +1,102 @@
+:PROPERTIES:
+:ID:       gotreesitter-2026-07-15-fork-fix-bash
+:END:
+#+title: Session 2026-07-15 — gotreesitter/fork-fix-bash
+#+date: 2026-07-15
+
+* Session Topic
+Fix Bash-language parse failures in the pure-Go tree-sitter fork
+=github.com/davidwalter0/gotreesitter=. Bash was the weakest priority
+grammar: a 30-case Docker parity run scored bash at 25.8% deep-parity with
+20/31 eligible samples producing outright PARSE ERRORS on standard valid bash
+(parameter/string expansion =${var:-x}=, =${var/pat/repl}=, =${!indirect}=;
+=case= =;&= fallthrough; redirects =>&2=; real npm shell scripts).
+
+* Files Touched
+- grammargen/import_grammarjson.go  (set bash =SuppressKeywordWordShadow=)
+- grammargen/grammar.go             (add flag + ExtendGrammar copy)
+- grammargen/normalize.go           (add NormalizedGrammar field + 3 propagations)
+- grammargen/dfa.go                 (computeLexModes* param + suppression logic)
+- grammargen/diagnostics.go         (pass ng.SuppressKeywordWordShadow)
+- grammargen/keyword_word_shadow_test.go  (new targeted unit regression)
+- grammargen/{dfa_overlap,diagnostics_generate,extra_chain_lexmode,missing_recovery_lexmode}_test.go
+  (thread new arg through existing computeLexModes test callers)
+
+* Decisions Made
+- The defect is in the pure-Go grammargen table generation (the "gen" lane),
+  NOT the hand-ported bash external scanner. The committed ts2go blob
+  (BashLanguage()) parses all the failing forms correctly, and both lanes share
+  the SAME BashExternalScanner via adaptExternalScanner — so the scanner is not
+  the differentiator; the generated lex tables are.
+- ROOT CAUSE: bash has 29 external symbols, so it is routed through LALR state
+  merging (lr.go:581 `>= 24 externals && !PreferPreciseExternalLexStates`),
+  which collapses the per-context precision tree-sitter's own tables keep. The
+  single merged post-`${` state (state 87 in the 46811-state automaton) carries
+  a reduce-follow-WIDENED keyword (keywords are in the lex-mode widen allowlist)
+  with no real parse action. dfa.go's `if hasKeyword { validSyms[wordSymbolID]
+  = true }` then injects bash's keyword-capture `word` token into that state's
+  lex mode even though `word` has no real action there. `word`'s charset
+  includes `: = / , - !`, so on `${x:=y}` the broad `word` wins longest-match
+  ("x:=y", 4 bytes) over the specific `_simple_variable_name` (=/\w+/ = "x",
+  1 byte), swallows the operator, and forces the whole `${...}` into ERROR.
+  tree-sitter C's precise per-state tables never expose `word` there.
+- FIX (bash-gated, safe): new grammar flag SuppressKeywordWordShadow. In
+  computeLexModes, drop the injected keyword-capture word from a state's lex
+  mode when word has no real action, NO keyword has a real action (so injection
+  came purely from widening), and a real-action pattern terminal would be
+  shadowed. Gated per-grammar because computeLexModes is shared by all grammars
+  (changing it globally would force go/swift/etc. blob regen+reverify).
+- Note: `>&2`, `case ;&`, and the individual expansion forms all parse cleanly
+  in the ts2go blob and in isolation; the corpus-block ERRORs cascade from the
+  expansion mislex corrupting lexer/parser state for everything after.
+
+* Work Completed
+- Root-caused via: (a) ts2go-blob scanner wrapper showing the CORRECT valid_symbols
+  the scanner receives; (b) saving the generated bash blob and walking the
+  post-`${` state's lex-mode DFA vs the REF blob's; confirmed GEN state 87
+  admits `word` (no action) while REF admits only the specific tokens.
+- Implemented the SuppressKeywordWordShadow flag end-to-end.
+- Added TestKeywordWordShadowSuppression / TestKeywordWordShadowKeepsRealWordAction
+  unit regressions (pass without full generation).
+- Build gate green: CGO_ENABLED=0 go build ./... ; go vet . ./grammargen/.
+
+* Results (verified)
+- Host regen of fixed bash: 19/20 hand-picked expansion cases now parse clean
+  with exact S-expr match vs the blob (was: all `:`/`/`/`!` operator forms
+  ERRORed). Only indirect `${!x}` still ERRORs standalone.
+- Docker per-grammar real-corpus parity (aggressive, 30 cases,
+  --generate-timeout 12m): no-error 11/31 -> 17/30, deep-parity 8/31 (25.8%)
+  -> 13/30 (43.3%). Former pure-expansion error samples (literals.txt blocks
+  5,13,16,20,21) now clean.
+- Committed 5758942f on fork/fix-bash (not pushed).
+
+* Next Steps
+- [X] Confirm fixed regeneration + Docker parity %.
+- [X] Commit fix + CHANGELOG entry (conventional `fix(bash):`), local only.
+- [ ] (future, separate classes) case `;&`/`;;&` + extglob `@(...)`; heredocs
+      in real npm scripts; arithmetic `$(( ))`; herestrings `<<<`;
+      comment-adjacency `'w'#not-comment` + backticks; indirect `${!abc}`
+      childCount / arithmetic-subscript edge expansions.
+
+* Open Questions
+- Whether the remaining classes share a second common root (LALR merge losing
+  scanner context) or are independent — needs per-class diagnosis like this one.
+- Bash floor-witness (grammargen/bash_parity_test.go) hardcodes a 5m generation
+  timeout that this loaded host exceeds (bash ~8-12m); pre-existing, unchanged
+  by this fix — the self-healing reducer sub-test auto-passes once generation
+  completes with adequate time (as in Docker).
+
+* Glossary
+- gen lane :: parser built by grammargen's pure-Go LR/lex table generator.
+- ref/ts2go blob :: parser decoded from the checked-in bash.bin (built by the
+  C tree-sitter generator); the parity reference.
+- keyword-capture word :: the grammar's `word` token that keywords are lexed as
+  and then promoted from (bash: `word: $ => $.word`).
+- lex-mode widening :: grammargen adds reduce-follow / missing-recovery
+  lookaheads to a state's lex mode to compensate for LALR merging.
+
+* Cross-References
+- Grammar: tree-sitter-bash @ a06c2e4415e9bc0346c6b86d401879ffb44058f7
+- Prior measurement: ~/.claude/jobs/f84fc485/tmp/parity-round2/{SUMMARY.txt,diag_bash.log,bash-full-log.txt}
+
+* Footnotes

@@ -48,7 +48,7 @@ var ComponentOrder = []Component{
 }
 
 // classifyFunction maps one fully-qualified pprof function name (as written
-// by the Go runtime, e.g. "github.com/odvcencio/gotreesitter.(*Type).Method")
+// by the Go runtime, e.g. "github.com/davidwalter0/gotreesitter.(*Type).Method")
 // to a component, or returns ("", false) when the function is either a shared
 // primitive (transparent -- the walk continues to its caller) or genuinely
 // unrecognized (the walk keeps looking further up the stack; if nothing

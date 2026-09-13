@@ -3,7 +3,7 @@
 package gotreesitter
 
 import (
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // Shipped build of the derivation-set differential instrument (stage D0 of

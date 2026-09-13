@@ -15,7 +15,7 @@ const outlineCensusBaselinePath = "testdata/outline_census/baseline.json"
 
 // TestOutlineTierCensus computes the workstream-D outline-symbol coverage
 // census for every registered language (spec.outline-api.v1 section 5,
-// origin https://github.com/odvcencio/gotreesitter/issues/649) and is the
+// origin https://github.com/davidwalter0/gotreesitter/issues/649) and is the
 // single source of truth for coverage claims in every later workstream-D
 // stage. It ships no outline API and changes no shipped behavior; it is
 // instrument-only.

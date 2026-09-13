@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func requireRecurringBenchmarkTree(b *testing.B, tree *gotreesitter.Tree, err error, wantError bool) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 func newStage3RecoveryCondenseScheduler(t *testing.T, regionEnds []uint32) *diagnosticParserCoreGenericScheduler {

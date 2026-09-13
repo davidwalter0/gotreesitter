@@ -5,9 +5,9 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammargen"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammargen"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 func TestTokenInvariantLookaheadSkippedExtraGap(t *testing.T) {

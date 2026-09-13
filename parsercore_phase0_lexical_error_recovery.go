@@ -2,7 +2,7 @@
 
 package gotreesitter
 
-import core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+import core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 
 // lexicalErrorResumeMatchesSummary checks the first eligible recovery state.
 // A merged marker must not resume through a later closure history.

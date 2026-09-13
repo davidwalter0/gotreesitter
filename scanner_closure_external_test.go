@@ -5,8 +5,8 @@ package gotreesitter_test
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestStatefulScannerCompactLeafReauthentication exercises the real compact

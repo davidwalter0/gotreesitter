@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // assertIncrementalMatchesFreshFullSpan compares an incrementally parsed tree

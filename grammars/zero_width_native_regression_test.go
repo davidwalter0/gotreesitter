@@ -6,7 +6,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // typstHistoricalZeroWidthCommaSource minimizes the pinned
@@ -236,8 +236,8 @@ func assertNoZeroWidthArtifact(
 	inspect(root)
 }
 
-//go:linkname newZeroWidthRetirementLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newZeroWidthRetirementLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newZeroWidthRetirementLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer
 
-//go:linkname zeroWidthRetirementLexerToken github.com/odvcencio/gotreesitter.(*ExternalLexer).token
+//go:linkname zeroWidthRetirementLexerToken github.com/davidwalter0/gotreesitter.(*ExternalLexer).token
 func zeroWidthRetirementLexerToken(*gotreesitter.ExternalLexer) (gotreesitter.Token, bool)

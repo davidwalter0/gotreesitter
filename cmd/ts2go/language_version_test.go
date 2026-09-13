@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 func TestLanguageVersionSurvivesBlobGeneration(t *testing.T) {

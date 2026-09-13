@@ -3,21 +3,13 @@ package gotreesitter
 import "unicode/utf8"
 
 func parseErrorTreeWithArena(source []byte, lang *Language, arena *nodeArena) *Tree {
-	end := Point{}
-	for i := 0; i < len(source); {
-		if source[i] == '\n' {
-			end.Row++
-			end.Column = 0
-			i++
-			continue
-		}
-		_, size := utf8.DecodeRune(source[i:])
-		if size <= 0 {
-			size = 1
-		}
-		i += size
-		end.Column++
-	}
+	// tree-sitter columns are byte offsets from the start of the line, not
+	// codepoint (rune) counts. advancePointByBytes advances Row on each '\n'
+	// and Column by byte width, so a multi-byte UTF-8 character correctly
+	// advances the column by its full byte length instead of 1 — keeping this
+	// language-agnostic error-tree fallback consistent with the lexer's
+	// byte-based position tracking.
+	end := advancePointByBytes(Point{}, source)
 
 	root := NewLeafNode(errorSymbol, true, 0, uint32(len(source)), Point{}, end)
 	root.setHasError(true)

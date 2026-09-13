@@ -17,8 +17,8 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 const (
@@ -30,7 +30,7 @@ const (
 	// shape, byte and point spans, the Missing flag, child fields, and
 	// HasError at every node, not just the root HasError bit.
 	compactT3WitnessParityScope   = "full_structural"
-	compactT3WitnessTrackingIssue = "https://github.com/odvcencio/gotreesitter/issues/587"
+	compactT3WitnessTrackingIssue = "https://github.com/davidwalter0/gotreesitter/issues/587"
 	compactT3WitnessCount         = 20
 	// compactT3WitnessCampaignTargetCount is the 98-witness denominator that
 	// spec.campaign.v7 (2026-08-01) cites from the PR #573 differential-fuzz

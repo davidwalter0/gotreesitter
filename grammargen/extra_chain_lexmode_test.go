@@ -3,7 +3,7 @@ package grammargen
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 func singleExtraShiftTarget(t *testing.T, ng *NormalizedGrammar, acts []lrAction) int {
@@ -81,6 +81,7 @@ func TestNonterminalExtraChainLexModesDoNotInheritTerminalExtras(t *testing.T) {
 		nil,
 		patternTerminalSymSet(ng),
 		zeroWidthTerminalSymSet(ng),
+		false,
 	)
 
 	initialMode := lexModes[stateToMode[0]]
@@ -150,6 +151,7 @@ func TestExtraChainLexModesSkipMainStateLookaheadWidening(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		false,
 	)
 
 	if followCalls[2] != 0 || followCalls[3] != 0 {

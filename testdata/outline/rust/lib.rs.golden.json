@@ -3,6 +3,7 @@
   "fixture": "rust/lib.rs",
   "purpose": "struct, enum refinement by enum_item, trait, function nested in a function",
   "query_definition_kinds": [
+    "constant",
     "function",
     "type"
   ],

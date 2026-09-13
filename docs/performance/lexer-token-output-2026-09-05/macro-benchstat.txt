@@ -1,6 +1,6 @@
 goos: linux
 goarch: amd64
-pkg: github.com/odvcencio/gotreesitter
+pkg: github.com/davidwalter0/gotreesitter
 cpu: Intel(R) Core(TM) Ultra 9 285
                                  │ baseline-macro.txt │      candidate-macro.txt      │
                                  │       sec/op       │   sec/op     vs base          │

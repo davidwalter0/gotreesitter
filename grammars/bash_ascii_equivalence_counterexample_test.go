@@ -8,7 +8,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 func TestBashASCIIDigitEquivalenceCounterexamples(t *testing.T) {
@@ -80,8 +80,8 @@ func TestBashASCIIDigitEquivalenceCounterexamples(t *testing.T) {
 	})
 }
 
-//go:linkname newBashEquivalenceLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newBashEquivalenceLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newBashEquivalenceLexer(source []byte, pos int, row, col uint32) *gts.ExternalLexer
 
-//go:linkname bashEquivalenceLexerToken github.com/odvcencio/gotreesitter.(*ExternalLexer).token
+//go:linkname bashEquivalenceLexerToken github.com/davidwalter0/gotreesitter.(*ExternalLexer).token
 func bashEquivalenceLexerToken(*gts.ExternalLexer) (gts.Token, bool)

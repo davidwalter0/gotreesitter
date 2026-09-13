@@ -52,6 +52,22 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// preceding word, so expose this narrow set to the scanner through the
 		// external lex-state rows without broadening extglob_pattern.
 		g.ExternalReduceFollowLookaheads = []string{"file_descriptor", "test_operator", "$", "{", "(", "<<", "<<-"}
+		// Inside `${...}`, the parameter-expansion body starts with the pattern
+		// token `_simple_variable_name` (alias of /\w+/ -> variable_name). Bash's
+		// `word` token is ALSO the keyword-capture token, and LALR merging widens
+		// reduce-follow keywords into the single post-`${` parser state, which
+		// triggers the keyword-capture `word` injection into that state's lex
+		// mode even though `word` has no real parse action there. The broad
+		// `word` (whose charset includes `:`, `=`, `/`, `,`, `-`, ...) then wins
+		// longest-match over the specific `\w+`, swallowing e.g. `x:=y` in
+		// `${x:=y}` and forcing the whole `${...}` into ERROR (default-value,
+		// pattern-substitution, indirect and length-modifier expansions all fail
+		// this way; only bare `${x}` and operator-first `${#x}` survive). Drop
+		// the shadowing keyword-capture word from any state where it has no real
+		// action and no keyword has a real action either, but a real-action
+		// pattern terminal would be shadowed. See dfa.go
+		// computeLexModesWithContext (SuppressKeywordWordShadow gate).
+		g.SuppressKeywordWordShadow = true
 		// Bash's number literals are anonymous regex leaves inside the visible
 		// number rule. They overlap the broad word token on strings like "-9";
 		// tree-sitter's lexer prefers the number pattern on equal length.
@@ -98,6 +114,21 @@ func applyImportGrammarShapeHints(g *Grammar) {
 		// through _query and _series_matcher to complete higher-precedence
 		// operands before lower-precedence operator shifts.
 		g.PreserveHiddenChoicePassthrough = []string{"_query", "_series_matcher"}
+	case "yaml":
+		// YAML's grammar carries 100+ external tokens (indentation-sensitive
+		// block/flow markers, document boundaries, scalar continuations), well
+		// past the >=24-external heuristic in lr.go that otherwise routes table
+		// generation to the LALR-merged builder. Merged external lex rows lose
+		// the predecessor context the scanner needs to disambiguate a document
+		// separator ("---") from plain-scalar continuation right after an
+		// implicit top-level document's block_mapping closes: the scanner is
+		// never offered the directives-end token as valid at that state, mis-
+		// lexes the remainder of the stream as one run-on token, and the
+		// resulting recovery collapses every following document into the
+		// first document's span (root/document range balloons to EOF while
+		// only the first document's children survive). Force the precise
+		// core-based LR(1) builder so external lex rows stay state-specific.
+		g.PreferPreciseExternalLexStates = true
 	}
 }
 
@@ -145,13 +176,19 @@ func ImportGrammarJSON(data []byte) (*Grammar, error) {
 	// Build named precedence → numeric value mapping from the precedences array.
 	// Each level is an ordered list from highest to lowest precedence.
 	// STRING entries define named precedence values.
-	namedPrecs := buildNamedPrecMap(raw.Precedences)
+	namedPrecs, err := buildNamedPrecMap(raw.Precedences)
+	if err != nil {
+		return nil, fmt.Errorf("precedences: %w", err)
+	}
 
 	// Store the full precedences table (including SYMBOL entries) for use
 	// during LR conflict resolution. SYMBOL entries define rule-level
 	// precedence ordering (e.g. update_expression > logical_and) that
 	// cannot be captured by numeric prec values alone.
-	g.Precedences = importPrecedenceLevels(raw.Precedences)
+	g.Precedences, err = importPrecedenceLevels(raw.Precedences)
+	if err != nil {
+		return nil, fmt.Errorf("precedences: %w", err)
+	}
 
 	conv := &jsonConverter{namedPrecs: namedPrecs}
 
@@ -250,17 +287,23 @@ func ImportGrammarJSON(data []byte) (*Grammar, error) {
 // level, earlier entries have higher precedence. Values are assigned globally
 // across all levels so that entries in earlier levels always outrank entries
 // in later levels.
-func buildNamedPrecMap(rawLevels []json.RawMessage) map[string]int {
+//
+// A precedence level that fails to unmarshal is reported as an error instead
+// of being dropped: precedence data feeds LR/GLR conflict resolution
+// directly, so silently discarding a whole level would let the generator
+// resolve conflicts against an incomplete precedence table with no
+// indication that anything was lost.
+func buildNamedPrecMap(rawLevels []json.RawMessage) (map[string]int, error) {
 	// First pass: collect all STRING entries across all levels in order.
 	type precEntry struct {
 		name      string
 		globalIdx int
 	}
 	var all []precEntry
-	for _, rawLevel := range rawLevels {
+	for i, rawLevel := range rawLevels {
 		var entries []jsonPrecEntry
 		if err := json.Unmarshal(rawLevel, &entries); err != nil {
-			continue
+			return nil, fmt.Errorf("precedence level %d: %w", i, err)
 		}
 		for _, entry := range entries {
 			if entry.Type == "STRING" && entry.Value != "" {
@@ -278,17 +321,19 @@ func buildNamedPrecMap(rawLevels []json.RawMessage) map[string]int {
 			m[e.name] = val
 		}
 	}
-	return m
+	return m, nil
 }
 
 // importPrecedenceLevels converts raw JSON precedence levels into the Grammar
-// IR's PrecEntry format.
-func importPrecedenceLevels(rawLevels []json.RawMessage) [][]PrecEntry {
+// IR's PrecEntry format. A level that fails to unmarshal is reported as an
+// error rather than dropped — see buildNamedPrecMap for why silently losing
+// a precedence level is unsafe for LR/GLR conflict resolution.
+func importPrecedenceLevels(rawLevels []json.RawMessage) ([][]PrecEntry, error) {
 	var levels [][]PrecEntry
-	for _, rawLevel := range rawLevels {
+	for i, rawLevel := range rawLevels {
 		var entries []jsonPrecEntry
 		if err := json.Unmarshal(rawLevel, &entries); err != nil {
-			continue
+			return nil, fmt.Errorf("precedence level %d: %w", i, err)
 		}
 		var level []PrecEntry
 		for _, e := range entries {
@@ -303,7 +348,7 @@ func importPrecedenceLevels(rawLevels []json.RawMessage) [][]PrecEntry {
 			levels = append(levels, level)
 		}
 	}
-	return levels
+	return levels, nil
 }
 
 // grammarJSONExtensions holds gotreesitter-specific settings that extend the

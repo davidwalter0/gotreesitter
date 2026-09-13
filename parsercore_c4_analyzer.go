@@ -18,7 +18,7 @@ package gotreesitter
 import (
 	"sort"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // ParserCoreCorridorTableShape is one grammar's committed table-shape receipt.

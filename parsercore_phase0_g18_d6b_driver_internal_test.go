@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 func cleanupG18D6bDriverTestRunner(t *testing.T, runner *parserCoreFreshFullRunner) {

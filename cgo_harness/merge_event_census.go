@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // Merge-event census (stage M0 of spec.merge-time-election.v1).

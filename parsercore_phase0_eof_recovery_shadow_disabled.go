@@ -2,7 +2,7 @@
 
 package gotreesitter
 
-import core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+import core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 
 func (s *diagnosticParserCoreGenericScheduler) censusEOFRecoveryShadow(
 	_ int,

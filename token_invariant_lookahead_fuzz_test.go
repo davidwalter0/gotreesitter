@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammargen"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammargen"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // This target uses fresh Go parsing as its oracle, not the locked C parser.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // outlineOwnerRuleCache caches OutlineOwnerRules' gated result by language

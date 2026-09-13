@@ -750,6 +750,9 @@ func nodeMaterializeFinalChildRefs(n *Node, reason materializeReason) {
 	}
 	refs := childRange.refs(arena)
 	count := childRange.count()
+	if len(refs) < count {
+		return
+	}
 	children := arena.allocNodeSliceNoClear(count)
 	for i := 0; i < count; i++ {
 		entry := refs[i].stackEntry()
@@ -1340,72 +1343,91 @@ type ParseRuntime struct {
 	MergeStacksIn                                 uint64
 	MergeStacksOut                                uint64
 	MergeSlotsUsed                                uint64
-	GlobalCullStacksIn                            uint64
-	GlobalCullStacksOut                           uint64
-	StackEquivCalls                               uint64
-	StackEquivTrue                                uint64
-	StackEquivDepthMismatch                       uint64
-	StackEquivHashMismatch                        uint64
-	StackEquivStateMismatch                       uint64
-	StackEquivPayloadMismatch                     uint64
-	StackEquivEntryCompares                       uint64
-	StackEquivStateMismatchDepthSum               uint64
-	StackEquivStateMismatchMaxDepth               uint32
-	StackEquivStateMismatchDepthBuckets           [stackEquivMismatchDepthBucketCount]uint64
-	StackEquivPayloadMismatchDepthSum             uint64
-	StackEquivPayloadMismatchMaxDepth             uint32
-	StackEquivPayloadMismatchDepthBuckets         [stackEquivMismatchDepthBucketCount]uint64
-	StackEquivPayloadHeaderSigDiff                uint64
-	StackEquivPayloadHeaderSigSame                uint64
-	StackEquivPayloadShallowSigDiff               uint64
-	StackEquivPayloadShallowSigSame               uint64
-	StackEquivPairKeyed                           uint64
-	StackEquivPairUnkeyed                         uint64
-	StackEquivPairRepeats                         uint64
-	StackEquivPairRepeatTrue                      uint64
-	StackEquivPairRepeatFalse                     uint64
-	StackEquivPairRepeatMismatch                  uint64
-	StackEquivPairStores                          uint64
-	MergeHeaderEqTotal                            uint64
-	MergeDeepTrue                                 uint64
-	MergeDeepFalse                                uint64
-	MergeHeaderDeepDivergent                      uint64
-	EquivCacheLookups                             uint64
-	EquivCacheHits                                uint64
-	EquivCacheStores                              uint64
-	EquivCacheMisses                              uint64
-	EquivCacheTrueHits                            uint64
-	EquivCacheFalseHits                           uint64
-	EquivCacheEpochMisses                         uint64
-	EquivCacheKeyMisses                           uint64
-	EquivCacheVersionMisses                       uint64
-	EquivSkipError                                uint64
-	EquivSkipLeaf                                 uint64
-	EquivSkipFieldMismatch                        uint64
-	EquivExactCalls                               uint64
-	EquivExactTrue                                uint64
-	EquivExactPointerTrue                         uint64
-	EquivExactNilMismatch                         uint64
-	EquivExactHeaderMismatch                      uint64
-	EquivExactChildMismatch                       uint64
-	EquivExactTerminalCalls                       uint64
-	EquivExactTerminalTrue                        uint64
-	EquivExactTerminalFalse                       uint64
-	EquivFrontierCalls                            uint64
-	EquivFrontierTrue                             uint64
-	EquivExactChildCompares                       uint64
-	EquivFrontierChildScans                       uint64
-	EquivFrontierCandidateCompares                uint64
-	EquivStateStats                               []ParseEquivStateRuntime
-	ParseWallNanos                                int64
-	ParserLoopNanos                               int64
-	TokenNextNanos                                int64
-	ActionDispatchNanos                           int64
-	ActionLookupNanos                             int64
-	GLRMergeNanos                                 int64
-	GLRCullNanos                                  int64
-	ReduceTiming                                  *ParseReduceTiming
-	ActionTiming                                  *ParseActionTiming
+	// MergePerKeyCapOverflow counts full-parse merge-key survivor-cap
+	// overflow events: each time a same-key GLR candidate arrived at a
+	// merge key that already held the per-key survivor cap's worth of
+	// alternatives, forcing that candidate to be dropped or to replace the
+	// weakest retained survivor. Unlike MergeStacksIn/MergeStacksOut/
+	// MergeSlotsUsed above (populated only when EnableRuntimeAudit(true) is
+	// active), this field is ALWAYS populated, on every parse, at no
+	// meaningful extra cost — it is a single counter increment at the
+	// existing per-key-cap branch in the merge loop (glr.go).
+	//
+	// A nonzero value does not by itself mean the parse is wrong: culling
+	// down to a bounded per-key survivor set is the normal, intentional way
+	// GLR disambiguation stays cheap, and most overflow events resolve to
+	// the same tree a wider cap would have produced. It means survivors
+	// were discarded under this parse's cap, which is the necessary
+	// precondition for the cap being the reason a real ambiguity resolved
+	// to the wrong branch (as opposed to a grammar or recovery defect). Use
+	// Tree.MergePerKeyCapExceeded() for the plain yes/no signal.
+	MergePerKeyCapOverflow                uint64
+	GlobalCullStacksIn                    uint64
+	GlobalCullStacksOut                   uint64
+	StackEquivCalls                       uint64
+	StackEquivTrue                        uint64
+	StackEquivDepthMismatch               uint64
+	StackEquivHashMismatch                uint64
+	StackEquivStateMismatch               uint64
+	StackEquivPayloadMismatch             uint64
+	StackEquivEntryCompares               uint64
+	StackEquivStateMismatchDepthSum       uint64
+	StackEquivStateMismatchMaxDepth       uint32
+	StackEquivStateMismatchDepthBuckets   [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadMismatchDepthSum     uint64
+	StackEquivPayloadMismatchMaxDepth     uint32
+	StackEquivPayloadMismatchDepthBuckets [stackEquivMismatchDepthBucketCount]uint64
+	StackEquivPayloadHeaderSigDiff        uint64
+	StackEquivPayloadHeaderSigSame        uint64
+	StackEquivPayloadShallowSigDiff       uint64
+	StackEquivPayloadShallowSigSame       uint64
+	StackEquivPairKeyed                   uint64
+	StackEquivPairUnkeyed                 uint64
+	StackEquivPairRepeats                 uint64
+	StackEquivPairRepeatTrue              uint64
+	StackEquivPairRepeatFalse             uint64
+	StackEquivPairRepeatMismatch          uint64
+	StackEquivPairStores                  uint64
+	MergeHeaderEqTotal                    uint64
+	MergeDeepTrue                         uint64
+	MergeDeepFalse                        uint64
+	MergeHeaderDeepDivergent              uint64
+	EquivCacheLookups                     uint64
+	EquivCacheHits                        uint64
+	EquivCacheStores                      uint64
+	EquivCacheMisses                      uint64
+	EquivCacheTrueHits                    uint64
+	EquivCacheFalseHits                   uint64
+	EquivCacheEpochMisses                 uint64
+	EquivCacheKeyMisses                   uint64
+	EquivCacheVersionMisses               uint64
+	EquivSkipError                        uint64
+	EquivSkipLeaf                         uint64
+	EquivSkipFieldMismatch                uint64
+	EquivExactCalls                       uint64
+	EquivExactTrue                        uint64
+	EquivExactPointerTrue                 uint64
+	EquivExactNilMismatch                 uint64
+	EquivExactHeaderMismatch              uint64
+	EquivExactChildMismatch               uint64
+	EquivExactTerminalCalls               uint64
+	EquivExactTerminalTrue                uint64
+	EquivExactTerminalFalse               uint64
+	EquivFrontierCalls                    uint64
+	EquivFrontierTrue                     uint64
+	EquivExactChildCompares               uint64
+	EquivFrontierChildScans               uint64
+	EquivFrontierCandidateCompares        uint64
+	EquivStateStats                       []ParseEquivStateRuntime
+	ParseWallNanos                        int64
+	ParserLoopNanos                       int64
+	TokenNextNanos                        int64
+	ActionDispatchNanos                   int64
+	ActionLookupNanos                     int64
+	GLRMergeNanos                         int64
+	GLRCullNanos                          int64
+	ReduceTiming                          *ParseReduceTiming
+	ActionTiming                          *ParseActionTiming
 
 	ExternalScannerCheckpointRecords                 uint64
 	ExternalScannerCheckpointSlotsAllocated          uint64
@@ -2628,6 +2650,9 @@ func collectFinalNodeStats(n *Node, lang *Language, stats *finalTreeMaterializat
 		stats.childPointers += uint64(childCount)
 		stats.unfieldedParentNodes++
 		refs := childRange.refs(n.ownerArena)
+		if len(refs) < childCount {
+			return
+		}
 		for i := childCount - 1; i >= 0; i-- {
 			*stack = append(*stack, finalTreeStatsItem{entry: refs[i].stackEntry(), arena: n.ownerArena})
 		}
@@ -4346,6 +4371,24 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 		out.StopReason = ParseStopNone
 	}
 	return out
+}
+
+// MergePerKeyCapExceeded reports whether any full-parse GLR merge key
+// exhausted its per-key survivor cap while building this tree, discarding or
+// replacing at least one same-key alternative (see
+// ParseRuntime.MergePerKeyCapOverflow for the event count). This is checked
+// independently of ParseStopReason / ParseStoppedEarly: a parse can still
+// report ParseStopAccepted with no error while this is true, because
+// cap-driven survivor loss can steer GLR disambiguation toward a worse
+// selection (in the extreme, a whole-file ERROR root) without tripping any
+// other stop condition. Callers that need to distinguish "clean parse" from
+// "parse succeeded but the merge cap may have cost it a survivor" should
+// check this alongside HasError(), not instead of it.
+func (t *Tree) MergePerKeyCapExceeded() bool {
+	if t == nil {
+		return false
+	}
+	return t.parseRuntime.MergePerKeyCapOverflow > 0
 }
 
 // RecoveryNodeMemoRuntime returns bounded memo telemetry for this tree. The

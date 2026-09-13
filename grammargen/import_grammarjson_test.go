@@ -1,7 +1,9 @@
 package grammargen
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -220,5 +222,100 @@ func TestImportGrammarJSONCrystalHeredocBodyPreservesInterpolation(t *testing.T)
 	}
 	if lang.StateCount == 0 || lang.StateCount > 1000 {
 		t.Fatalf("generated state count = %d, want a bounded non-zero automaton", lang.StateCount)
+	}
+}
+
+// minimalPrecedenceGrammarJSON is a valid grammar.json body whose
+// "precedences" placeholder is substituted per test case below. It exists so
+// TestImportGrammarJSONRejectsMalformedPrecedenceLevel and
+// TestImportGrammarJSONPreservesWellFormedPrecedenceLevels can focus purely on
+// the shape of a single precedence level without a full grammar fixture.
+const minimalPrecedenceGrammarJSON = `{
+	"name": "prec_test",
+	"rules": {
+		"source_file": {"type": "STRING", "value": "a"}
+	},
+	"extras": [],
+	"conflicts": [],
+	"externals": [],
+	"inline": [],
+	"supertypes": [],
+	"word": "",
+	"reserved": {},
+	"precedences": %s
+}`
+
+// TestImportGrammarJSONRejectsMalformedPrecedenceLevel is the P3 #7
+// regression test: a precedences[] entry that fails to unmarshal into the
+// expected []jsonPrecEntry shape must now fail ImportGrammarJSON with a
+// descriptive error instead of the whole level silently vanishing.
+// Precedence data feeds LR/GLR conflict resolution directly, so a dropped
+// level previously produced a Grammar with an incomplete, un-flagged
+// precedence table.
+func TestImportGrammarJSONRejectsMalformedPrecedenceLevel(t *testing.T) {
+	tests := []struct {
+		name         string
+		precedences  string
+		wantErrParts []string
+	}{
+		{
+			name:         "level is an object, not an array",
+			precedences:  `[{"type": "STRING", "value": "unary"}]`,
+			wantErrParts: []string{"precedences", "precedence level 0"},
+		},
+		{
+			name:         "level is an array of bare strings",
+			precedences:  `[["unary", "binary"]]`,
+			wantErrParts: []string{"precedences", "precedence level 0"},
+		},
+		{
+			name:         "second level is malformed",
+			precedences:  `[[{"type": "STRING", "value": "unary"}], {"type": "STRING", "value": "binary"}]`,
+			wantErrParts: []string{"precedences", "precedence level 1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := []byte(fmt.Sprintf(minimalPrecedenceGrammarJSON, tt.precedences))
+			g, err := ImportGrammarJSON(data)
+			if err == nil {
+				t.Fatalf("ImportGrammarJSON(%s) = %#v, nil; want a precedence-parsing error", tt.precedences, g)
+			}
+			for _, part := range tt.wantErrParts {
+				if !strings.Contains(err.Error(), part) {
+					t.Fatalf("ImportGrammarJSON(%s) error = %q, want it to contain %q", tt.precedences, err, part)
+				}
+			}
+		})
+	}
+}
+
+// TestImportGrammarJSONPreservesWellFormedPrecedenceLevels proves the P3 #7
+// fix does not change behavior for well-formed input: STRING and SYMBOL
+// precedence entries still import exactly as before.
+func TestImportGrammarJSONPreservesWellFormedPrecedenceLevels(t *testing.T) {
+	precedences := `[
+		[{"type": "STRING", "value": "unary"}, {"type": "SYMBOL", "name": "binary_expression"}],
+		[{"type": "STRING", "value": "binary"}]
+	]`
+	data := []byte(fmt.Sprintf(minimalPrecedenceGrammarJSON, precedences))
+
+	g, err := ImportGrammarJSON(data)
+	if err != nil {
+		t.Fatalf("ImportGrammarJSON: %v", err)
+	}
+
+	if len(g.Precedences) != 2 {
+		t.Fatalf("g.Precedences = %#v, want 2 levels", g.Precedences)
+	}
+	if len(g.Precedences[0]) != 2 || g.Precedences[0][0].Name != "unary" || g.Precedences[0][0].IsSymbol {
+		t.Fatalf("g.Precedences[0] = %#v, want [unary(string) binary_expression(symbol)]", g.Precedences[0])
+	}
+	if !g.Precedences[0][1].IsSymbol || g.Precedences[0][1].Name != "binary_expression" {
+		t.Fatalf("g.Precedences[0][1] = %#v, want symbol binary_expression", g.Precedences[0][1])
+	}
+	if len(g.Precedences[1]) != 1 || g.Precedences[1][0].Name != "binary" {
+		t.Fatalf("g.Precedences[1] = %#v, want [binary(string)]", g.Precedences[1])
 	}
 }

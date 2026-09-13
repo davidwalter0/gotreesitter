@@ -6,7 +6,7 @@ import (
 	"errors"
 	"math"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // A frontier includes all lexer probes and the actual reduction lookahead.

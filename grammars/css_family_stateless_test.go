@@ -7,7 +7,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestCSSFamilyScannerStatelessContract(t *testing.T) {
@@ -56,5 +56,5 @@ func TestCSSFamilyScannerStatelessContract(t *testing.T) {
 	}
 }
 
-//go:linkname newCSSContractExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newCSSContractExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newCSSContractExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer

@@ -38,9 +38,9 @@ import (
 	"sort"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 type b4bThreeProofCensusRow struct {

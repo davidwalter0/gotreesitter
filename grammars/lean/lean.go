@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // ReferenceVersion is the Lean release used to define this grammar.

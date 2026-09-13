@@ -3,8 +3,8 @@ package bench_test
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func setupBench() ([]byte, *gotreesitter.InjectionParser, string) {

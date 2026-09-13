@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gotreesitter/corpuscheck"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter/corpuscheck"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func main() {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // Acyclicity sweep + regression pins for the C-recovery cyclic-transient-tree

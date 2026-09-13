@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 var (

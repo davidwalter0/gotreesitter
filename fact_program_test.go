@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func TestFactProgramMatchesLegacyExtractors(t *testing.T) {

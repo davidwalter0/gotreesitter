@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // swiftCorpusStatus records the expected parse outcome for one corpus file.

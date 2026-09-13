@@ -1,6 +1,6 @@
 FROM node:22-bookworm AS node-runtime
 
-FROM golang:1.25-bookworm
+FROM golang:1.27-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \

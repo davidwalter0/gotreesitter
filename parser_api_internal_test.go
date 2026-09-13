@@ -1423,8 +1423,17 @@ func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
 	if shouldRetryAcceptedErrorParse(tree, 128, 18) {
 		t.Fatal("shouldRetryAcceptedErrorParse(cpp complete accepted error) = true, want false")
 	}
-	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != 0 {
-		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want 0", got)
+	// A complete accepted-error cpp tree still skips the STACK-widening retry
+	// ladder (shouldRetryAcceptedErrorParse stays false via
+	// certifiedAcceptedErrorRetrySkipsComplete), but now takes a bounded
+	// MERGE-per-key widening retry: cpp's steady-state cap=1 prunes the GLR
+	// alternative the C oracle selects for the qualified-identifier call/
+	// declaration and qualified-template ambiguities, cascading whole files to a
+	// root ERROR. The merge-widening retry clears that cascade (fullParseRetry-
+	// MergePerKeyOverride's cpp case, made BEFORE the skip-complete gate). See
+	// cppFullParseRetryMaxMergePerKey.
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != cppFullParseRetryMaxMergePerKey {
+		t.Fatalf("fullParseRetryMergePerKeyOverride(cpp complete accepted error) = %d, want %d", got, cppFullParseRetryMaxMergePerKey)
 	}
 }
 
@@ -2784,8 +2793,17 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false, javaTightMergeCapSourceLen); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(java, large default, full) = %d, want 1", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "dart"}, maxStacksPerMergeKey, false); got != 3 {
-		t.Fatalf("effectiveParseMergePerKeyCap(dart, default, full) = %d, want 3", got)
+	// Dart has NO per-language narrowing (removed 2026-08-05): unlike every
+	// other case in this switch, it must pass the cap through UNCHANGED for
+	// any input, not just the current default constant. Assert that
+	// directly with a value distinct from every special constant used
+	// elsewhere in this test (9), so a future accidental re-introduction of
+	// a dart-specific cap fails here even if it happens to pick 6.
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "dart"}, maxStacksPerMergeKey, false); got != maxStacksPerMergeKey {
+		t.Fatalf("effectiveParseMergePerKeyCap(dart, default, full) = %d, want %d (no language-specific narrowing)", got, maxStacksPerMergeKey)
+	}
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "dart"}, 9, false); got != 9 {
+		t.Fatalf("effectiveParseMergePerKeyCap(dart, custom cap, full) = %d, want 9 (passthrough, no override)", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "c"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(c, default, full) = %d, want 1", got)

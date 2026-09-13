@@ -20,4 +20,4 @@
     --- PASS: TestStage6GoCompactCertification/type_switch (0.00s)
     --- PASS: TestStage6GoCompactCertification/recovery (0.00s)
 PASS
-ok  	github.com/odvcencio/gotreesitter/cgo_harness	1.943s
+ok  	github.com/davidwalter0/gotreesitter/cgo_harness	1.943s

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"math"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // diagnosticParserCoreS5ReductionMode selects the C recovery reduction scan.

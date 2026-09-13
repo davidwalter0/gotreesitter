@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter/grammargen"
-	"github.com/odvcencio/gotreesitter/taproot"
+	"github.com/davidwalter0/gotreesitter/grammargen"
+	"github.com/davidwalter0/gotreesitter/taproot"
 )
 
 // tinyGrammar builds a minimal grammar: a program is exactly

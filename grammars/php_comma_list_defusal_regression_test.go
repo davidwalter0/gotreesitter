@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ts "github.com/odvcencio/gotreesitter"
+	ts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestPHPGiantArrayCommaListDefusalStaysLinear pins the quadratic-defusal side

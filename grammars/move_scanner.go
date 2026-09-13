@@ -2,7 +2,7 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import gotreesitter "github.com/davidwalter0/gotreesitter"
 
 // External token indexes for the move grammar
 // (aptos-labs/tree-sitter-move-on-aptos src/scanner.c). The order must match

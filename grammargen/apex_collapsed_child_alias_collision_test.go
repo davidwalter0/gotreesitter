@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
+	gts "github.com/davidwalter0/gotreesitter"
 )
 
 // TestGeneratedApexCollapsedChildAliasCollisionDoesNotRecurse covers the real

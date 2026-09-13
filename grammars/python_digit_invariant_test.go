@@ -9,7 +9,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestPythonScannerASCIIDigitInvariant(t *testing.T) {
@@ -83,5 +83,5 @@ func TestPythonScannerASCIIDigitInvariant(t *testing.T) {
 	}
 }
 
-//go:linkname newPythonDigitExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newPythonDigitExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newPythonDigitExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer

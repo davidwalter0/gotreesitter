@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // parserCoreFreshFullRunner owns reusable state for compact UTF-8 parsing.

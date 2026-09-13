@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {

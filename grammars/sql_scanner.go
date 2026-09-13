@@ -5,7 +5,7 @@ package grammars
 import (
 	"crypto/sha256"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // sqlExternalScannerLocalPortSHA256 identifies the marked local scanner port.

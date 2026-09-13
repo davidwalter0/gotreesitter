@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 

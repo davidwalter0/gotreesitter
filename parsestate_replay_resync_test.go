@@ -3,7 +3,7 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // TestParseStateReplayResync isolates the two error sources: whether

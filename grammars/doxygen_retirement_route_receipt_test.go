@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/internal/benchfixtures"
 )
 
 // TestDoxygenDispatchBlockerRoutes records the exact Doxygen witnesses that

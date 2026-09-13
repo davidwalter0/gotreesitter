@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestCompactJavaScriptS5RecoveryMutationDifferential finds S5-only routes in

@@ -12,7 +12,7 @@ STATS_RUNTIME single_iters=1 multi_iters=0 single_tokens=1 multi_tokens=0 gss_si
 STATS_SURVIVOR gss_alloc=0 gss_retained=0 gss_dropped=0 parent_alloc=0 parent_retained=0 parent_dropped=0 leaf_alloc=0 leaf_retained=0 leaf_dropped=0 merge_in=0 merge_out=0 merge_slots=0 cull_in=0 cull_out=0
 goos: linux
 goarch: amd64
-pkg: github.com/odvcencio/gotreesitter
+pkg: github.com/davidwalter0/gotreesitter
 cpu: Intel(R) Core(TM) Ultra 9 285
 BenchmarkGoParseIncrementalSingleByteEditDFA 	STATS_CFG glr_max_stacks=6 default=6
 STATS edits=5 edit_ns=124259 reuse_ns=1114530 parse_ns=0 reused_subtrees=5 reused_bytes=96470 new_nodes=0 recover_searches=0 recover_state_checks=0 recover_state_skips=0 recover_lookups=0 recover_hits=0 max_stacks=1

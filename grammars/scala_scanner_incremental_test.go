@@ -13,7 +13,7 @@ import (
 	"testing"
 	_ "unsafe"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestScalaScannerCheckpointCodec(t *testing.T) {
@@ -239,5 +239,5 @@ func TestScalaScannerIdentityBindsLocalPortSource(t *testing.T) {
 	}
 }
 
-//go:linkname newScalaExternalLexer github.com/odvcencio/gotreesitter.newExternalLexer
+//go:linkname newScalaExternalLexer github.com/davidwalter0/gotreesitter.newExternalLexer
 func newScalaExternalLexer(source []byte, pos int, row, col uint32) *gotreesitter.ExternalLexer

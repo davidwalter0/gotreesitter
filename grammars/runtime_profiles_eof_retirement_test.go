@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 func TestCompactGraduationGrantDenominatorAfterEOFRetirement(t *testing.T) {

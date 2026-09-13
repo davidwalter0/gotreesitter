@@ -6,7 +6,7 @@ The temporary correctness mitigation makes the measured single-byte edit much sl
 Its median rises from 1.706 microseconds to 3,350.460 microseconds, approximately 1,964 times the baseline.
 The increase is 196,292.73 percent, with `p<0.001` and twenty samples per revision.
 The owner approved disabling the unsafe shortcut before these measurements.
-Issue [#1087](https://github.com/odvcencio/gotreesitter/issues/1087) remains open until complete lexical dependency proofs permit restoration.
+Issue [#1087](https://github.com/davidwalter0/gotreesitter/issues/1087) remains open until complete lexical dependency proofs permit restoration.
 
 Ordinary incremental reuse remains enabled. The no-edit route also remains enabled.
 These results do not establish compact parser graduation.

@@ -975,6 +975,8 @@ func csharpRecoverTopLevelChunkNodesFromRange(source []byte, start, end uint32, 
 			}
 		}
 		tree.Release()
+	} else if tree != nil {
+		tree.Release()
 	}
 	if invocation, ok := csharpRecoverTopLevelInvocationStatementFromRange(source, start, end, p.language, arena); ok {
 		return []*Node{invocation}, true

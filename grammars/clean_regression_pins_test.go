@@ -19,7 +19,7 @@ package grammars
 import (
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // pinParse parses src with the named grammar, selecting the correct backend,

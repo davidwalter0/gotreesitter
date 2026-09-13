@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
 )
 
 // OutlineTier is the computed coverage classification for one registered

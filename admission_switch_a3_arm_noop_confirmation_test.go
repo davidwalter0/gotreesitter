@@ -5,8 +5,8 @@ package gotreesitter_test
 import (
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // This file is the A3 certification-workstream (spec.campaign.v7, finding

@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -333,18 +334,28 @@ type Parser struct {
 	// where the deep stack-equivalence merge dominates and shared-leaf pointer
 	// identity short-circuits it (measured: swift 4.0x, bash 1.9x). Net-neutral
 	// or slightly negative on fast languages (go +4.9%), so it stays per-language.
-	leafInternByLang                   bool
-	forceRawSpanTable                  []bool
-	spanExtendingInvisibleSymbols      []bool
-	nonSpanExtendingInvisibleSymbols   []bool
-	aliasPreservedWrapperSymbols       []bool
-	included                           []Range
-	logger                             ParserLogger
-	glrTrace                           bool // verbose GLR stack tracing
-	ambiguityProfile                   *AmbiguityProfile
-	maxConflictWidth                   int // widest N-way conflict in the parse table
-	timeoutMicros                      uint64
-	cancellationFlag                   *uint32
+	leafInternByLang                 bool
+	forceRawSpanTable                []bool
+	spanExtendingInvisibleSymbols    []bool
+	nonSpanExtendingInvisibleSymbols []bool
+	aliasPreservedWrapperSymbols     []bool
+	included                         []Range
+	logger                           ParserLogger
+	glrTrace                         bool // verbose GLR stack tracing
+	ambiguityProfile                 *AmbiguityProfile
+	maxConflictWidth                 int // widest N-way conflict in the parse table
+	timeoutMicros                    uint64
+	cancellationFlag                 *uint32
+	// ctx, when non-nil, is polled at the same checkpoints already used for
+	// timeoutMicros/cancellationFlag (see activeParseStopReason in
+	// parser_timeout.go) -- no change to the parse loop itself. Only ParseCtx
+	// sets it, and only for the duration of that call, so ordinary
+	// Parse/ParseWithTokenSource/etc. calls never touch it and keep their
+	// exact current behavior and overhead. Propagated to recovery/snippet
+	// sub-parsers (parseForRecovery, parseWithSnippetParserInheriting) the
+	// same way cancellationFlag is, and cleared by resetSnippetParser so a
+	// pooled parser never inherits a stale context from a previous parse.
+	ctx                                context.Context
 	parseBudgetDepth                   int
 	parseDeadline                      time.Time
 	parseStoppedReason                 ParseStopReason
@@ -1774,6 +1785,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.noResultCompatibilityBenchmarkOnly = false
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
+	parser.ctx = nil
 	parser.parseBudgetDepth = 0
 	parser.cNodeMemoOperationDepth = 0
 	parser.cNodeMemoPeakTier = RecoveryNodeMemoTierNone
@@ -3689,6 +3701,9 @@ func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScra
 	parseRuntime.MergeStacksIn = scratch.audit.mergeStacksIn
 	parseRuntime.MergeStacksOut = scratch.audit.mergeStacksOut
 	parseRuntime.MergeSlotsUsed = scratch.audit.mergeSlotsUsed
+	// Always-on, unlike the three audit-gated fields above: see
+	// glrMergeScratch.mergePerKeyCapOverflow's doc comment.
+	parseRuntime.MergePerKeyCapOverflow = scratch.merge.mergePerKeyCapOverflow
 	parseRuntime.GlobalCullStacksIn = scratch.audit.globalCullStacksIn
 	parseRuntime.GlobalCullStacksOut = scratch.audit.globalCullStacksOut
 	parseRuntime.StackEquivCalls = scratch.audit.stackEquivCalls
@@ -4635,6 +4650,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	p.resetPendingStackBuffersAtBoundary()
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
+		for _, warning := range envConfigWarnings() {
+			p.logf(ParserLogConfig, "%s", warning)
+		}
 	}
 	deferParentLinks := reuse == nil && oldTree == nil
 	scratch := acquireParserScratch()
@@ -7358,6 +7376,11 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 	scratch.merge.trace = p.glrTrace
 	scratch.merge.beginEquivEpoch()
 	scratch.merge.ensureMergeHotCaches()
+	// scratch is sync.Pool-backed and reused across Parse() calls, so the
+	// always-on per-key-cap overflow counter must be explicitly zeroed here
+	// (once per parse) rather than relying on zero-value pooling. See
+	// glrMergeScratch.mergePerKeyCapOverflow's doc comment.
+	scratch.merge.mergePerKeyCapOverflow = 0
 	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
 	if p.transientReduceChildren && transientReduceParents {
 		scratch.transientCheckpointBytes = parseTransientReduceCheckpointBytes()

@@ -6,7 +6,7 @@ Go domain-specific language (DSL). It targets Lean 4.32.2.
 Import the package to register `.lean`, `lean`, and `lean4` detection:
 
 ```go
-import _ "github.com/odvcencio/gotreesitter/grammars/lean"
+import _ "github.com/davidwalter0/gotreesitter/grammars/lean"
 ```
 
 Call `lean.Language()` when you only need the language tables.

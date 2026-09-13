@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 // The converged-alternative-set proofs and the stage 2 census.

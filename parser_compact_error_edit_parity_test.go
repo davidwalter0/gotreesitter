@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gts "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 // TestCompactOldTreeTransientErrorEditsMatchFreshParse pins the issue #454

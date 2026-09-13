@@ -3,8 +3,10 @@
   "fixture": "c/registry.c",
   "purpose": "struct, typedef, and function definitions; pins the fleet-wide struct_specifier over-capture that makes 49 percent of the C outline struct uses (spec risk R1)",
   "query_definition_kinds": [
+    "constant",
     "function",
-    "type"
+    "type",
+    "variable"
   ],
   "report": {
     "Symbols": 7,

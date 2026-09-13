@@ -55,8 +55,8 @@ package query_test
 import (
 	"testing"
 
-	gotreesitter "github.com/odvcencio/gotreesitter"
-	"github.com/odvcencio/gotreesitter/grammars"
+	gotreesitter "github.com/davidwalter0/gotreesitter"
+	"github.com/davidwalter0/gotreesitter/grammars"
 )
 
 func swParse(t *testing.T, lang *gotreesitter.Language, src string) *gotreesitter.Tree {

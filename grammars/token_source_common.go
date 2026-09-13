@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/odvcencio/gotreesitter"
+	"github.com/davidwalter0/gotreesitter"
 )
 
 // sourceCursor tracks byte offset and row/column while scanning source bytes.
@@ -63,7 +63,11 @@ func (c *sourceCursor) advanceRune() {
 		c.col = 0
 		return
 	}
-	c.col++
+	// tree-sitter's Point.Column is a byte offset from the start of the
+	// line, not a codepoint count: a multi-byte UTF-8 rune (e.g. in a
+	// comment body) must advance the column by its full byte width,
+	// matching advanceByte's per-byte semantics for the ASCII fast path.
+	c.col += uint32(size)
 }
 
 func (c *sourceCursor) skipWhitespace() {

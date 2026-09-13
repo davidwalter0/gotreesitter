@@ -57,7 +57,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/odvcencio/gotreesitter/internal/grammarpatch"
+	"github.com/davidwalter0/gotreesitter/internal/grammarpatch"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 

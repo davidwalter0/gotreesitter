@@ -441,7 +441,7 @@
       "scope": "production",
       "default": "compiled stack cap",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseMaxGLRStacksValue", "line": 108}
+        {"path": "parser_config.go", "symbol": "parseMaxGLRStacksValue", "line": 115}
       ]
     },
     {
@@ -451,7 +451,7 @@
       "scope": "production",
       "default": "compiled merge cap",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseMaxMergePerKeyValue", "line": 124}
+        {"path": "parser_config.go", "symbol": "parseMaxMergePerKeyValue", "line": 136}
       ]
     },
     {
@@ -461,7 +461,7 @@
       "scope": "production",
       "default": "1",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseNodeLimitScaleFactor", "line": 87}
+        {"path": "parser_config.go", "symbol": "parseNodeLimitScaleFactor", "line": 94}
       ]
     },
     {
@@ -471,7 +471,7 @@
       "scope": "production",
       "default": "512",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseMemoryBudgetMB", "line": 333}
+        {"path": "parser_config.go", "symbol": "parseMemoryBudgetMB", "line": 350}
       ]
     },
     {
@@ -481,7 +481,7 @@
       "scope": "production",
       "default": "2048",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseMemoryHardCeilingMB", "line": 357}
+        {"path": "parser_config.go", "symbol": "parseMemoryHardCeilingMB", "line": 379}
       ]
     },
     {
@@ -503,7 +503,7 @@
       "scope": "production",
       "default": "disabled",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parsePhaseTimingEnabled", "line": 215}
+        {"path": "parser_config.go", "symbol": "parsePhaseTimingEnabled", "line": 232}
       ]
     },
     {
@@ -513,7 +513,7 @@
       "scope": "production",
       "default": "disabled",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseReduceTimingEnabled", "line": 223}
+        {"path": "parser_config.go", "symbol": "parseReduceTimingEnabled", "line": 240}
       ]
     },
     {
@@ -523,7 +523,7 @@
       "scope": "production",
       "default": "disabled",
       "read_sites": [
-        {"path": "parser_config.go", "symbol": "parseActionTimingEnabled", "line": 231}
+        {"path": "parser_config.go", "symbol": "parseActionTimingEnabled", "line": 248}
       ]
     },
     {

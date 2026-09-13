@@ -11,7 +11,7 @@ controlled the GLR forest fast path. v0.20.8 (#134) closed that gap: forest
 opt-in is now a public `Language.WantsForest` field, a
 `grammargen.Grammar.WantsForest` flag, and a declarative `"gotreesitter"`
 object in `grammar.json`. Everything in this document works from your own
-module against an unmodified `github.com/odvcencio/gotreesitter`.
+module against an unmodified `github.com/davidwalter0/gotreesitter`.
 
 The in-tree workflow (README "Adding a language") is for grammars shipped
 inside this repo's 200+ embedded set. You do not need it.
@@ -109,7 +109,7 @@ The rest of this guide uses this toy key/value config language:
 ```go
 package kvconf
 
-import "github.com/odvcencio/gotreesitter/grammargen"
+import "github.com/davidwalter0/gotreesitter/grammargen"
 
 // Grammar returns the kvconf grammar. First rule defined = start rule.
 func Grammar() *grammargen.Grammar {
@@ -154,8 +154,8 @@ import (
     "log"
     "os"
 
-    gts "github.com/odvcencio/gotreesitter"
-    "github.com/odvcencio/gotreesitter/grammargen"
+    gts "github.com/davidwalter0/gotreesitter"
+    "github.com/davidwalter0/gotreesitter/grammargen"
 
     "example.com/kvconf"
 )
@@ -254,7 +254,7 @@ the module layout:
 
 ```
 github.com/pawnkit/gotreesitter-pawn/
-├── go.mod                  // require github.com/odvcencio/gotreesitter vX.Y.Z
+├── go.mod                  // require github.com/davidwalter0/gotreesitter vX.Y.Z
 ├── pawn.bin                // generated blob, checked in
 ├── grammar.json            // the source of truth the blob was generated from
 ├── queries/highlights.scm
@@ -273,8 +273,8 @@ import (
     _ "embed"
     "sync"
 
-    gts "github.com/odvcencio/gotreesitter"
-    "github.com/odvcencio/gotreesitter/grammars"
+    gts "github.com/davidwalter0/gotreesitter"
+    "github.com/davidwalter0/gotreesitter/grammars"
 )
 
 //go:embed pawn.bin
@@ -498,7 +498,7 @@ This is hard-learned; treat it as policy.
   make regeneration a one-command script:
 
   ```sh
-  go run github.com/odvcencio/gotreesitter/cmd/grammargen emit \
+  go run github.com/davidwalter0/gotreesitter/cmd/grammargen emit \
       -json grammar.json -bin pawn.bin
   ```
 

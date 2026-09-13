@@ -5,7 +5,7 @@ package gotreesitter
 import (
 	"testing"
 
-	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+	core "github.com/davidwalter0/gotreesitter/internal/parsercorephase0"
 )
 
 func TestStage6S5PotentialReductionCollectorTreatsAcceptAsShiftable(t *testing.T) {
